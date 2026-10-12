@@ -41,3 +41,21 @@ test('rejects duplicate id across one-off and recurring jobs',()=>{
    estimatedMinutes:25,rateCents:2500
  }]}),/Duplicate/);
 });
+
+test('uses actual completed job durations to improve recurring route estimates',()=>{
+ const baseline=buildDailyWorkflow(input);
+ const learned=buildDailyWorkflow({...input,durationHistoryByAgreement:{
+   pool:[20,21,22,23,24,25,26,27],clean:[80,82,81]
+ }});
+ const pool=learned.predictions.find(p=>p.agreementId==='pool');
+ assert.equal(pool?.confidence,'high');
+ assert.equal(pool?.samples,8);
+ assert.ok((pool?.minutes??100)<45);
+ assert.notEqual(learned.totalServiceMinutes,baseline.totalServiceMinutes);
+ assert.equal(learned.revenueCents,baseline.revenueCents);
+});
+test('invalid historic durations are ignored and estimates stay unchanged without valid history',()=>{
+ const r=buildDailyWorkflow({...input,durationHistoryByAgreement:{pool:[-2,0,Number.NaN,2000]}});
+ assert.equal(r.predictions.find(p=>p.agreementId==='pool')?.minutes,45);
+ assert.equal(r.predictions.find(p=>p.agreementId==='pool')?.confidence,'low');
+});
