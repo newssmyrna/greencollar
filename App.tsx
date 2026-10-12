@@ -4,6 +4,7 @@ import { useHostedAuth } from '@clerk/expo/hosted-auth';
 import { tokenCache } from '@clerk/expo/token-cache';
 import { fetchDayData, type DayData } from './src/data/greencollar-api';
 import { summarizeSavedDay } from './src/data/saved-day';
+import { getBusinesses, createBusiness } from './src/data/business-api';
 import {
   SafeAreaView, ScrollView, View, Text, TextInput,
   Pressable, StyleSheet, StatusBar
@@ -32,14 +33,19 @@ function GreenCollarDashboard() {
   const [savedDay,setSavedDay] = useState<DayData|null>(null);
   const [savedDayError,setSavedDayError] = useState('');
   const [loadingSaved,setLoadingSaved] = useState(false);
+  const [businessName,setBusinessName] = useState('');
+  const [connectedBusiness,setConnectedBusiness] = useState<{id:string;name:string}|null>(null);
   async function loadSavedDay() {
     const api=process.env.EXPO_PUBLIC_GREENCOLLAR_API_URL;
-    const business=process.env.EXPO_PUBLIC_GREENCOLLAR_BUSINESS_ID;
-    if(!api||!business){setSavedDayError('Backend connection and business onboarding are not configured yet.');return;}
+    if(!api){setSavedDayError('API URL not configured yet.');return;}
     setLoadingSaved(true);setSavedDayError('');
     try{
       const token=await getToken();
       if(!token)throw new Error('Sign in first');
+      const businesses=await getBusinesses(api,token);
+      const business=connectedBusiness?.id??businesses[0]?.id;
+      if(!business)throw new Error('Create a business before loading its workday');
+      if(!connectedBusiness)setConnectedBusiness(businesses[0]);
       const date=new Date().toLocaleDateString('en-CA');
       setSavedDay(await fetchDayData(api,business,date,token));
     }catch(e){setSavedDayError(e instanceof Error?e.message:'Unable to load saved data');}
@@ -61,6 +67,20 @@ function GreenCollarDashboard() {
     }]);
     setName(''); setAddress('');
   }
+  async function registerBusiness() {
+    const api=process.env.EXPO_PUBLIC_GREENCOLLAR_API_URL;
+    if(!api){setSavedDayError('API URL not configured yet.');return;}
+    if(!businessName.trim())return;
+    setLoadingSaved(true);setSavedDayError('');
+    try {
+      const token=await getToken();
+      if(!token)throw new Error('Sign in first');
+      const business=await createBusiness(api,token,businessName.trim());
+      setConnectedBusiness(business);
+      setBusinessName('');
+    }catch(e){setSavedDayError(e instanceof Error?e.message:'Unable to create business');}
+    finally{setLoadingSaved(false);}
+  }
   const visible = customers.slice(0, Math.max(0, parseInt(maxJobs, 10) || 0));
   const estimatedMinutes = visible.reduce((total, c) => total + c.minutes, 0);
 
@@ -81,6 +101,8 @@ function GreenCollarDashboard() {
         {tab === 'today' && <>
           <Text style={styles.heading}>Today's overview</Text>
           <Text style={styles.muted}>Prototype customer cards below use synthetic data. Saved Cloudflare records load separately.</Text>
+          {!connectedBusiness && <View style={styles.card}><Text style={styles.cardHeading}>Create or find your business</Text><TextInput style={styles.input} placeholder="Business name" placeholderTextColor="#819b8b" value={businessName} onChangeText={setBusinessName}/><Pressable style={styles.primary} disabled={loadingSaved} onPress={()=>void registerBusiness()}><Text style={styles.primaryText}>Create business</Text></Pressable><Text style={styles.muted}>If you've already created a business, Load saved workday will find it after API authentication is configured.</Text></View>}
+          {connectedBusiness && <Text style={styles.muted}>Business: {connectedBusiness.name}</Text>}
           <Pressable style={styles.primary} disabled={loadingSaved} onPress={()=>void loadSavedDay()}><Text style={styles.primaryText}>{loadingSaved?'Loading...':'Load saved workday'}</Text></Pressable>
           {!!savedDayError && <Text style={styles.muted}>{savedDayError}</Text>}
           {savedDay && <View style={styles.card}><Text style={styles.cardHeading}>Due today · Saved records</Text><Text style={styles.body}>{summarizeSavedDay(savedDay).pendingCount} jobs due · ${(summarizeSavedDay(savedDay).estimatedRevenueCents / 100).toFixed(2)} expected revenue · {summarizeSavedDay(savedDay).estimatedServiceMinutes} service minutes</Text><Text style={styles.muted}>{summarizeSavedDay(savedDay).completedCount} completed · {summarizeSavedDay(savedDay).skippedCount} skipped. Due-work preview only; no road routing or fuel estimate yet.</Text>{summarizeSavedDay(savedDay).due.slice(0,12).map(j=><Text key={j.id} style={styles.body}>{j.customer} · {j.service} · {j.address}</Text>)}</View>}
