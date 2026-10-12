@@ -82,3 +82,10 @@ Next owner/action: reviewer verifies UI-only refresh and cleanup; device tester 
 A completed saved visit shows its scheduled estimate when the saved workday contains the matching agreement, beside the actual whole minutes recorded by the timer. The operator must explicitly confirm that exact session and workday before the completion write is enabled. Changing operator, timer session, completion timestamp, actual duration or workday invalidates the confirmation. Demo timers need no server confirmation.
 
 This phase does not edit or overwrite timer duration, alter the completion payload, change agreement pricing, or infer billable amounts. A correction workflow requires a separately persisted audit trail and remains future work. The review acknowledgment is in-memory and must be repeated after reopening the app. Device acceptance remains pending.
+
+
+## Verify completion acknowledgments
+
+The mobile client treats a visit as saved only when the completion endpoint returns a valid acknowledgment matching the submitted agreement, scheduled date, completed status, and actual minutes. Non-success responses remain errors; malformed or mismatched success responses keep the local timer unsaved and direct the operator to reload the saved workday before retrying. Writes are never automatically repeated. Server readback can reconcile a committed write if its response was lost or malformed.
+
+This response check does not change the tenant-scoped server write or billing snapshot. Device/network interruption and real server readback remain acceptance checks.
