@@ -6,6 +6,7 @@ import { fetchDayData, type DayData } from './src/data/greencollar-api';
 import { summarizeSavedDay } from './src/data/saved-day';
 import { getBusinesses, createBusiness } from './src/data/business-api';
 import { listSavedCustomers, createSavedCustomer, type SavedCustomer } from './src/data/customer-api';
+import { startWork, pauseWork, resumeWork, completeWork, getElapsedMinutes, completionRecord, type WorkSession } from './src/domain/work-session';
 import {
   SafeAreaView, ScrollView, View, Text, TextInput,
   Pressable, StyleSheet, StatusBar
@@ -74,6 +75,18 @@ function GreenCollarDashboard() {
   const [hours, setHours] = useState('8');
   const [maxJobs, setMaxJobs] = useState('6');
   const [planned, setPlanned] = useState(false);
+  const [workSession,setWorkSession]=useState<WorkSession|null>(null);
+  const [timerNow,setTimerNow]=useState(Date.now());
+  const [timerError,setTimerError]=useState('');
+  function timerAction(action:'start'|'pause'|'resume'|'complete') {
+    try {
+      const now=Date.now();setTimerNow(now);setTimerError('');
+      if(action==='start'){setWorkSession(startWork('demo-job',now));return;}
+      if(!workSession)throw new Error('Start a job first');
+      const next=action==='pause'?pauseWork(workSession,now):action==='resume'?resumeWork(workSession,now):completeWork(workSession,now);
+      setWorkSession(next);
+    }catch(e){setTimerError(e instanceof Error?e.message:'Timer error');}
+  }
 
   function addCustomer() {
     if (!name.trim() || !address.trim()) return;
@@ -140,6 +153,20 @@ function GreenCollarDashboard() {
 
         {tab === 'today' && <>
           <Text style={styles.heading}>Today's overview</Text>
+          <View style={styles.card}>
+            <Text style={styles.cardHeading}>Job timer · Demo session</Text>
+            <Text style={styles.muted}>Local in-memory preview. Not yet saved to customers, jobs or cloud storage.</Text>
+            <Text style={styles.big}>{workSession?getElapsedMinutes(workSession,timerNow):0} min</Text>
+            <Text style={styles.body}>Status: {workSession?.status??'not started'}</Text>
+            {!workSession && <Pressable style={styles.primary} onPress={()=>timerAction('start')}><Text style={styles.primaryText}>Start demo job</Text></Pressable>}
+            {workSession?.status==='running' && <Pressable style={styles.primary} onPress={()=>timerAction('pause')}><Text style={styles.primaryText}>Pause job</Text></Pressable>}
+            {workSession?.status==='paused' && <Pressable style={styles.primary} onPress={()=>timerAction('resume')}><Text style={styles.primaryText}>Resume job</Text></Pressable>}
+            {workSession && workSession.status!=='completed' && <Pressable style={styles.primary} onPress={()=>timerAction('complete')}><Text style={styles.primaryText}>Complete job</Text></Pressable>}
+            {workSession?.status==='running' && <Pressable style={styles.primary} onPress={()=>setTimerNow(Date.now())}><Text style={styles.primaryText}>Refresh elapsed time</Text></Pressable>}
+            {workSession?.status==='completed' && <Text style={styles.body}>Recorded demo duration: {completionRecord(workSession).actualMinutes} min</Text>}
+            {workSession?.status==='completed' && <Pressable style={styles.primary} onPress={()=>timerAction('start')}><Text style={styles.primaryText}>Start another demo</Text></Pressable>}
+            {!!timerError && <Text style={styles.muted}>{timerError}</Text>}
+          </View>
           <Text style={styles.muted}>Prototype customer cards below use synthetic data. Saved Cloudflare records load separately.</Text>
           {!connectedBusiness && <View style={styles.card}><Text style={styles.cardHeading}>Create or find your business</Text><Pressable style={styles.primary} disabled={loadingSaved} onPress={()=>void findMyBusiness()}><Text style={styles.primaryText}>Find my saved business</Text></Pressable><TextInput style={styles.input} placeholder="Business name" placeholderTextColor="#819b8b" value={businessName} onChangeText={setBusinessName}/><Pressable style={styles.primary} disabled={loadingSaved} onPress={()=>void registerBusiness()}><Text style={styles.primaryText}>Create business</Text></Pressable><Text style={styles.muted}>Already registered? Find your saved business above. Otherwise create a new one.</Text></View>}
           {connectedBusiness && <Text style={styles.muted}>Business: {connectedBusiness.name}</Text>}
