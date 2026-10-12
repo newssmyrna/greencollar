@@ -1,4 +1,5 @@
 import React, { useState, useEffect, useRef } from 'react';
+import * as Location from 'expo-location';
 import { ClerkProvider, useAuth, useClerk } from '@clerk/expo';
 import { useHostedAuth } from '@clerk/expo/hosted-auth';
 import { tokenCache } from '@clerk/expo/token-cache';
@@ -50,6 +51,8 @@ function GreenCollarDashboard() {
   const [locations,setLocations]=useState<SavedServiceLocation[]>([]);
   const [locationAddress,setLocationAddress]=useState('');
   const [locationPreferences,setLocationPreferences]=useState('');
+  const [locationLat,setLocationLat]=useState('');
+  const [locationLon,setLocationLon]=useState('');
   const [locationError,setLocationError]=useState('');
   const [locationLoading,setLocationLoading]=useState(false);
   const [locationsHaveMore,setLocationsHaveMore]=useState(false);
@@ -108,7 +111,7 @@ function GreenCollarDashboard() {
   async function selectLocationCustomer(customerId:string){
     const sequence=++locationRequest.current;
     setLocationCustomerId(customerId);setLocations([]);setLocationsHaveMore(false);
-    setLocationAddress('');setLocationPreferences('');setLocationError('');
+    setLocationAddress('');setLocationPreferences('');setLocationLat('');setLocationLon('');setLocationError('');
     setServiceAgreements([]);setAgreementsHaveMore(false);setAgreementLocationId('');
     setAgreementName('');setAgreementPrice('');setAgreementError('');setAgreementNotice('');
     const api=process.env.EXPO_PUBLIC_GREENCOLLAR_API_URL;
@@ -137,12 +140,26 @@ function GreenCollarDashboard() {
     try{
       const token=await getToken({template:'greencollar-api'});
       if(!token)throw new Error('Sign in first');
-      const saved=await createServiceLocation(api,connectedBusiness.id,locationCustomerId,token,{address:locationAddress,preferences:locationPreferences});
+      const lat=locationLat.trim()===''?undefined:Number(locationLat.trim());
+      const lon=locationLon.trim()===''?undefined:Number(locationLon.trim());
+      const saved=await createServiceLocation(api,connectedBusiness.id,locationCustomerId,token,{address:locationAddress,preferences:locationPreferences,lat,lon});
       if(sequence===locationRequest.current){
-        setLocations(previous=>[...previous,saved]);setLocationAddress('');setLocationPreferences('');
+        setLocations(previous=>[...previous,saved]);setLocationAddress('');setLocationPreferences('');setLocationLat('');setLocationLon('');
       }
     }catch(e){if(sequence===locationRequest.current)setLocationError(e instanceof Error?e.message:'Could not save address');}
     finally{locationSaving.current=false;if(sequence===locationRequest.current)setLocationLoading(false);}
+  }
+  async function captureServiceCoordinates(){
+    setLocationError('');setLocationLoading(true);
+    try{
+      const permission=await Location.requestForegroundPermissionsAsync();
+      if(permission.status!=='granted')throw new Error('Location permission is off. You can enter coordinates manually or keep this address without them.');
+      const fix=await Location.getCurrentPositionAsync({accuracy:Location.Accuracy.High});
+      if(fix.coords.accuracy===null||!Number.isFinite(fix.coords.accuracy)||fix.coords.accuracy>50)
+        throw new Error('Location accuracy is too low. Move outdoors, retry, or enter the pin coordinates manually.');
+      setLocationLat(fix.coords.latitude.toFixed(6));setLocationLon(fix.coords.longitude.toFixed(6));
+    }catch(e){setLocationError(e instanceof Error?e.message:'Could not read current location');}
+    finally{setLocationLoading(false);}
   }
   const [savedDayError,setSavedDayError] = useState('');
   const [loadingSaved,setLoadingSaved] = useState(false);
@@ -381,6 +398,10 @@ function GreenCollarDashboard() {
             {!!locationCustomerId&&<>
               <TextInput accessibilityLabel="Service address" style={styles.input} placeholder="Service address" placeholderTextColor="#819b8b" value={locationAddress} onChangeText={setLocationAddress} editable={!locationLoading} maxLength={500}/>
               <TextInput accessibilityLabel="Service address access preferences" style={styles.input} placeholder="Gate, parking, or access preferences (optional)" placeholderTextColor="#819b8b" value={locationPreferences} onChangeText={setLocationPreferences} editable={!locationLoading} multiline maxLength={2000}/>
+              <Text style={styles.muted}>Optional site pin coordinates. GreenCollar uses them for location assistance only after you save them.</Text>
+              <View style={{flexDirection:'row',gap:8}}><TextInput accessibilityLabel="Latitude" keyboardType="decimal-pad" style={[styles.input,{flex:1}]} placeholder="Latitude" placeholderTextColor="#819b8b" value={locationLat} onChangeText={setLocationLat} editable={!locationLoading}/><TextInput accessibilityLabel="Longitude" keyboardType="decimal-pad" style={[styles.input,{flex:1}]} placeholder="Longitude" placeholderTextColor="#819b8b" value={locationLon} onChangeText={setLocationLon} editable={!locationLoading}/></View>
+              <Pressable accessibilityRole="button" style={[styles.primary,{backgroundColor:'#f0f5ef'}]} disabled={locationLoading} onPress={()=>void captureServiceCoordinates()}><Text style={styles.primaryText}>{locationLoading?'Checking...':'Capture this device location once'}</Text></Pressable>
+              <Text style={styles.muted}>Location is requested only when you tap Capture. No background tracking. You can also paste coordinates manually.</Text>
               <Pressable accessibilityRole="button" style={styles.primary} disabled={locationLoading||!locationAddress.trim()} onPress={()=>void saveLocation()}><Text style={styles.primaryText}>Save service address</Text></Pressable>
             </>}
             {!!locationError&&<Text style={styles.muted}>{locationError}</Text>}
