@@ -17,11 +17,13 @@
 
 ## Remaining integration and release checks
 
-- Add and review the platform permission flow and user-facing explanation before enabling native location.
-- Add a visible, accessible suggestion plus explicit confirm/reject/manual controls in the active-job screen.
+- Foreground permission and one-shot current-location capture are wired into service-address creation; the user must explicitly save the form to persist the coordinates. Manual entry remains available.
+- Add a visible, accessible arrival/departure suggestion plus explicit confirm/reject/manual controls in the active-job screen. Daily work now carries optional site coordinates, but this app-screen integration is not yet present.
 - Persist append-only arrival/departure events with tenant authorization and retention rules; avoid collecting precise coordinates unless a documented requirement and consent justify it.
 - Keep notes and photo capture, upload queue, retry, conflict handling and offline reconnection separate from timer completion.
 - Test denied permission, approximate permission, stale fixes, indoor drift, airplane mode, app termination, manual correction, and iOS/Android devices.
 - Verify no location event alone changes the timer, service status, invoice or payment.
+
+Service-site coordinates are stored in the business's existing tenant-scoped location record and returned only through the authenticated business-scoped day API. No background tracking is configured. Expo SDK 54 `expo-location` is pinned to the documented `~19.0.8`; its foreground permission maps to iOS “When In Use.” See [Expo SDK 54 Location docs](https://docs.expo.dev/versions/v54.0.0/sdk/location/).
 
 The radius and accuracy limits are product settings, not legal or safety guarantees. Tune them using field testing and make manual operation first-class.
