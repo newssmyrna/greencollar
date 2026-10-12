@@ -12,6 +12,7 @@
 | Timer reliability | Local timer source in `main`; open PR adds saved visit identity, retry safety, and overwrite protection | Latest PR #10 checks pass | No device/offline acceptance | Review and merge PR #10, then test on device |
 | Visit/customer validation | Existing Worker source; open PR adds malformed-payload handling, active/due recurrence checks, and state-transition tests | Latest PR #11 checks pass | No live endpoint or D1 test | Review PR #11 after PR #10; validate against staging |
 | Customer profiles | Tenant-scoped customer API supports create/list/update; PR #14 adds saved contact-profile create/edit UI | App and Worker checks pass on PR #14 | No live endpoint or D1 test | Extend saved records with site locations and service agreements |
+| Locations and agreements | PR #15 adds tenant-scoped location and recurring-agreement create/read APIs with role and recurrence validation | Worker CI pending | No live D1 schema or authenticated endpoint test | Reconcile D1 migrations in staging and add app forms before device acceptance |
 | Billing and messaging | Invoice draft preview and message-related design notes | Domain tests pass where implemented | No durable invoice API, payment reconciliation, SMS delivery, or customer portal | Design and implement durable, consent-safe workflows |
 
 ## Release rule
@@ -24,4 +25,5 @@ Source presence and green CI are not deployment evidence. Verify the deployed Wo
 2. Reconcile D1 schema and migration history in staging.
 3. Review and merge PR #13 for reproducible dependency lockfiles and `npm ci`.
 4. Review PR #14 for saved customer contact-profile editing.
-5. Reconcile D1 schema in staging, then add locations and service agreements and complete device acceptance.
+5. Review PR #15 for location and agreement APIs after PR #14.
+6. Reconcile the actual D1 schema and migration history in staging before using these routes; then add mobile forms and device acceptance.
