@@ -44,7 +44,7 @@ export function createInvoiceDraftApi(authenticate:typeof authenticatedSubject=a
     if(!visit.completed_customer_id||!visit.completed_customer_name?.trim()||!visit.completed_service_name?.trim()||typeof visit.completed_rate_cents!=='number'||!Number.isSafeInteger(visit.completed_rate_cents)||visit.completed_rate_cents<0||visit.completed_rate_cents>100000000||!validDate(visit.scheduled_date))
      return json({error:'billing_snapshot_unavailable'},409);
     if(dueOn<visit.scheduled_date)return json({error:'invalid_due_date'},400);
-    const draftInput={id:crypto.randomUUID(),businessId,customerId:visit.completed_customer_id,customerName:visit.completed_customer_name,issuedOn:visit.scheduled_date,dueOn,status:'draft' as const,lines:[{description:visit.completed_service_name,quantity:1,unitPriceCents:visit.completed_rate_cents}],taxBasisPoints:Number(tax),notes:'Service visit '+visit.id};
+    const draftInput={id:crypto.randomUUID(),businessId,customerId:visit.completed_customer_id,customerName:visit.completed_customer_name,issuedOn:visit.scheduled_date,dueOn,lines:[{description:visit.completed_service_name,quantity:1,unitPriceCents:visit.completed_rate_cents}],taxBasisPoints:Number(tax),notes:'Service visit '+visit.id};
     try{createInvoiceDraft(draftInput);}catch{return json({error:'invalid_invoice_draft'},400);}
     const saved=await env.DB.prepare(`INSERT INTO invoice_drafts(id,business_id,service_visit_id,customer_id,customer_name,issued_on,due_on,service_description,quantity,unit_price_cents,tax_basis_points,status,notes)
      SELECT ?,v.business_id,v.id,v.completed_customer_id,v.completed_customer_name,v.scheduled_date,?,v.completed_service_name,1,v.completed_rate_cents,?,'draft',?
@@ -68,8 +68,10 @@ export function createInvoiceDraftApi(authenticate:typeof authenticatedSubject=a
    const updated=await env.DB.prepare(`UPDATE invoice_drafts SET due_on=?,unit_price_cents=?,tax_basis_points=?,updated_at=CURRENT_TIMESTAMP WHERE business_id=? AND id=? AND status='draft'
      RETURNING id,business_id,service_visit_id,customer_id,customer_name,issued_on,due_on,service_description,quantity,unit_price_cents,tax_basis_points,status,notes`).bind(dueOn,Number(unitPriceCents),Number(taxBasisPoints),businessId,invoiceId).first<DraftRow>();
    if(!updated||!validDraftRow(updated))return json({error:'invoice_draft_not_found'},404);
-   try{createInvoiceDraft({id:updated.id,businessId:updated.business_id,customerId:updated.customer_id,customerName:updated.customer_name,issuedOn:updated.issued_on,dueOn:updated.due_on,status:'draft',lines:[{description:updated.service_description,quantity:updated.quantity,unitPriceCents:updated.unit_price_cents}],taxBasisPoints:updated.tax_basis_points,notes:updated.notes});}catch{return json({error:'invalid_stored_invoice_draft'},503);}
+   try{createInvoiceDraft({id:updated.id,businessId:updated.business_id,customerId:updated.customer_id,customerName:updated.customer_name,issuedOn:updated.issued_on,dueOn:updated.due_on,lines:[{description:updated.service_description,quantity:updated.quantity,unitPriceCents:updated.unit_price_cents}],taxBasisPoints:updated.tax_basis_points,notes:updated.notes});}catch{return json({error:'invalid_stored_invoice_draft'},503);}
    return json(fromDraftRow(updated));
   }catch{return json({error:'invoice_draft_storage_unavailable'},503);}
  };
 }
+
+export const invoiceDraftApi=createInvoiceDraftApi();
