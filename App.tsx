@@ -306,6 +306,8 @@ function GreenCollarDashboard() {
       const permission=await Location.requestForegroundPermissionsAsync();
       if(permission.status!=='granted')throw new Error('Location permission is off. You can continue with a manual confirmation.');
       const fix=await Location.getCurrentPositionAsync({accuracy:Location.Accuracy.High});
+      const fixAge=Date.now()-fix.timestamp;
+      if(!Number.isFinite(fixAge)||fixAge<0||fixAge>120000)throw new Error('The location fix is stale. Retry for a fresh reading or confirm manually.');
       const accuracy=fix.coords.accuracy;
       if(accuracy===null||!Number.isFinite(accuracy)||accuracy<0)throw new Error('The device did not return a usable accuracy estimate. Confirm manually or retry.');
       const result=assessProximity({latitude:job.lat,longitude:job.lon},{latitude:fix.coords.latitude,longitude:fix.coords.longitude,accuracyMeters:accuracy},{radiusMeters:100,maxAccuracyMeters:50});
@@ -414,6 +416,7 @@ function GreenCollarDashboard() {
                 <Text accessibilityLiveRegion="polite" style={styles.body}>{locationAssessment.status==='within_radius'?'GPS suggests arrival.':locationAssessment.status==='outside_radius'?'GPS suggests departure.':locationAssessment.status==='uncertain'?'Location is near the boundary; confirm manually.':'GPS is unavailable; confirm manually.'}{locationAssessment.distanceMeters!==undefined?' Approx. '+Math.round(locationAssessment.distanceMeters)+' m from the saved pin.':''}</Text>
                 {locationAssessment.status==='within_radius'&&<Pressable accessibilityRole="button" style={styles.primary} onPress={()=>void confirmActiveJobLocation('arrival','gps_suggestion')}><Text style={styles.primaryText}>Confirm arrival</Text></Pressable>}
                 {locationAssessment.status==='outside_radius'&&<Pressable accessibilityRole="button" style={styles.primary} onPress={()=>void confirmActiveJobLocation('departure','gps_suggestion')}><Text style={styles.primaryText}>Confirm departure</Text></Pressable>}
+                <Pressable accessibilityRole="button" style={[styles.primary,{backgroundColor:'#f0f5ef'}]} onPress={()=>{setLocationAssessment(null);setLocationAssessmentJob('');}}><Text style={styles.primaryText}>Dismiss suggestion</Text></Pressable>
               </>}
               <Text style={styles.label}>Manual confirmation reason</Text>
               <TextInput accessibilityLabel="Manual location confirmation reason" style={styles.input} placeholder="For example: GPS unavailable, customer confirmed" placeholderTextColor="#819b8b" value={locationManualReason} onChangeText={setLocationManualReason} maxLength={280}/>
