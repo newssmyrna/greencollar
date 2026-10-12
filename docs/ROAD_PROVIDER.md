@@ -34,7 +34,7 @@ The planner reports miles and fuel only when the provider supplies a complete di
 ## Sources checked 2026-10-12
 
 - [Mapbox Matrix API pricing](https://www.mapbox.com/pricing)
-- [Mapbox Matrix API element billing and request limits](https://docs.mapbox.com/api/navigation/matrix/)
+- [Mapbox Matrix API endpoint, element billing, and request limits](https://docs.mapbox.com/api/navigation/matrix/)
 - [Google Maps Platform pricing](https://developers.google.com/maps/billing-and-pricing/pricing)
 - [Google Compute Route Matrix limits](https://developers.google.com/maps/documentation/routes/compute_route_matrix)
 - [OSRM Table service documentation](https://project-osrm.org/docs/v26.5.0/http#table-service)
