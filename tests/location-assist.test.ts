@@ -34,5 +34,7 @@ test('GPS suggestions become audit events only for operator-confirmed matching a
 });
 test('manual confirmations require a reason and do not require GPS',()=>{
  assert.throws(()=>createLocationConfirmation({jobId:'job-1',operatorId:'worker-1',kind:'arrival',confirmedAt:1000,source:'manual'}),/reason/);
- assert.equal(createLocationConfirmation({jobId:'job-1',operatorId:'worker-1',kind:'departure',confirmedAt:1000,source:'manual',manualReason:'Customer asked me to leave'}).proximity,'manual');
+ const event=createLocationConfirmation({jobId:'job-1',operatorId:'worker-1',kind:'departure',confirmedAt:1000,source:'manual',manualReason:' Customer asked me to leave '});
+ assert.equal(event.proximity,'manual');assert.equal(event.manualReason,'Customer asked me to leave');
+ assert.throws(()=>createLocationConfirmation({jobId:'job-1',operatorId:'worker-1',kind:'arrival',confirmedAt:1000,source:'manual',manualReason:'x'.repeat(281)}),/at most 280/);
 });
