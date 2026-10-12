@@ -40,7 +40,7 @@ export async function syncLocationConfirmation(
   const response=await fetch(endpoint(apiUrl,businessId),{
     method:'POST',
     headers:{Authorization:'Bearer '+token,'content-type':'application/json'},
-    body:JSON.stringify({...body,...(input.manualReason===undefined?{}:{manualReason:input.manualReason.trim()})})
+    body:JSON.stringify({...body,businessId,...(input.manualReason===undefined?{}:{manualReason:input.manualReason.trim()})})
   });
   if(!response.ok){
     let reason='';
