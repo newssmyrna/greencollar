@@ -7,7 +7,7 @@ const headers=[
 
 function csvCell(value:string|number|null):string{
   let text=value===null?'':String(value);
-  if(typeof value==='string'&&/^[\\u0000-\\u0020]*[=+\\-@]/.test(text))text="'"+text;
+  if(typeof value==='string'&&/^[\u0000-\u0020]*[=+\-@]/.test(text))text="'"+text;
   return '"'+text.replace(/"/g,'""')+'"';
 }
 
@@ -17,5 +17,5 @@ export function locationConfirmationsCsv(events:ServerLocationConfirmation[]):st
     event.id,event.service_date,event.agreement_id,event.kind,new Date(event.confirmed_at).toISOString(),
     event.created_at,event.source,event.proximity,event.operator_subject,event.manual_reason
   ]);
-  return [headers,...rows].map(row=>row.map(csvCell).join(',')).join('\\r\\n')+'\\r\\n';
+  return [headers,...rows].map(row=>row.map(csvCell).join(',')).join('\r\n')+'\r\n';
 }
