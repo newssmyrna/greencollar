@@ -39,3 +39,12 @@ export async function createServiceAgreement(apiUrl:string,businessId:string,tok
  });
  return result<SavedServiceAgreement>(response,'Agreement creation');
 }
+
+export async function setServiceAgreementActive(apiUrl:string,businessId:string,token:string,id:string,active:boolean):Promise<{id:string;active:number}>{
+ if(!/^[0-9a-f-]{36}$/i.test(id))throw new Error('Invalid agreement ID');
+ const url=new URL(endpoint(apiUrl,businessId,'/v1/agreements'));url.searchParams.set('id',id);
+ const response=await fetch(url.toString(),{
+  method:'PATCH',headers:{...auth(token),'content-type':'application/json'},body:JSON.stringify({active})
+ });
+ return result<{id:string;active:number}>(response,'Agreement update');
+}
