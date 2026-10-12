@@ -22,14 +22,14 @@
 
 ## Remaining integration and release checks
 
-- Client sync/retry is implemented in the review branch. New confirmations are saved locally first, then POSTed to the audit endpoint; failures remain pending and can be retried without changing the event ID.
+- Client sync/retry is implemented in the review branch. New confirmations are saved locally first, then POSTed to the audit endpoint; failures remain pending and can be retried without changing the event ID. The app retries when a business is loaded and when the app returns to the foreground, with a manual retry control available as well.
 - The API and migration are review-branch code only. Apply and reconcile migration 0006 only in a separately verified staging D1; no hosted D1 migration or Worker deployment was performed.
 - Add server retention/export controls and document the audit policy before production.
 - Pending local records are limited to 20 entries; older pre-sync events remain visible as local-only and cannot be reconstructed into the server queue. Server retention and export are not solved.
 - Test denied/approximate permission, delayed or stale fixes, indoor drift, airplane mode, app termination, storage failure, and manual correction on current iOS and Android devices.
 - Review the 100 m / 50 m thresholds with field testing and product feedback.
 - Verify on-device that a location event never changes timer, service status, invoice, or payment state.
-- Keep photos, work notes, offline uploads, retries, routing, and fuel estimates as separate future features.
+- Keep photos, work notes, offline uploads, live network-reachability monitoring, routing, and fuel estimates as separate future features.
 
 Expo SDK 54 `expo-location` uses `~19.0.8` and its foreground permission maps to iOS “When In Use.” See [Expo SDK 54 Location docs](https://docs.expo.dev/versions/v54.0.0/sdk/location/).
 

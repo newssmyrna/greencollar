@@ -20,7 +20,7 @@ import {assessProximity,createLocationConfirmation,type ProximityAssessment,type
 import {loadLocationConfirmations,saveLocationConfirmation,markLocationConfirmationSynced,pendingLocationConfirmations,type StoredLocationConfirmation} from './src/data/local-location-confirmations';
 import {syncLocationConfirmation} from './src/data/location-confirmation-api';
 import {
-  SafeAreaView, ScrollView, View, Text, TextInput,
+  SafeAreaView, ScrollView, View, Text, TextInput, AppState,
   Pressable, StyleSheet, StatusBar
 } from 'react-native';
 
@@ -61,6 +61,7 @@ function GreenCollarDashboard() {
   const [locationsHaveMore,setLocationsHaveMore]=useState(false);
   const locationRequest=useRef(0);
   const locationSaving=useRef(false);
+  const locationSyncing=useRef(false);
   const [serviceAgreements,setServiceAgreements]=useState<SavedServiceAgreement[]>([]);
   const [agreementsHaveMore,setAgreementsHaveMore]=useState(false);
   const [agreementLocationId,setAgreementLocationId]=useState('');
@@ -278,6 +279,14 @@ function GreenCollarDashboard() {
     return ()=>{active=false;};
   },[userId]);
   useEffect(()=>{
+    if(!userId||!connectedBusiness?.id||!process.env.EXPO_PUBLIC_GREENCOLLAR_API_URL)return;
+    let active=true;
+    const attemptSync=()=>{if(active)void syncLocationOutbox(connectedBusiness.id);};
+    attemptSync();
+    const subscription=AppState.addEventListener('change',state=>{if(state==='active')attemptSync();});
+    return ()=>{active=false;subscription.remove();};
+  },[userId,connectedBusiness?.id]);
+  useEffect(()=>{
     if(!userId||!timerRestored)return;
     void saveWorkSession(userId,workSession).catch(()=>setTimerError('Could not preserve job timer'));
   },[userId,timerRestored,workSession]);
@@ -320,6 +329,8 @@ function GreenCollarDashboard() {
   async function syncLocationOutbox(businessId:string,eventId?:string) {
     const api=process.env.EXPO_PUBLIC_GREENCOLLAR_API_URL;
     if(!api||!userId){setLocationConfirmError('Saved on this device; sync pending until API configuration and sign-in are available.');return;}
+    if(locationSyncing.current)return;
+    locationSyncing.current=true;
     setLocationCheckBusy(true);
     let synced=0,firstError='';
     try{
@@ -327,6 +338,7 @@ function GreenCollarDashboard() {
       if(!token)throw new Error('Sign in first');
       const queued=await pendingLocationConfirmations(userId,businessId);
       const selected=eventId?queued.filter(event=>event.eventId===eventId):queued;
+      if(!selected.length)return;
       for(const event of selected){
         try{
           if(!event.agreementId||!event.date||!event.businessId)throw new Error('Confirmation is missing its saved service scope');
@@ -342,10 +354,10 @@ function GreenCollarDashboard() {
       const remaining=(await pendingLocationConfirmations(userId,businessId)).length;
       setLocationConfirmError(firstError
         ? 'Saved on this device; '+synced+' synced, '+remaining+' still pending. '+firstError
-        : synced?('Synced '+synced+' location confirmation'+(synced===1?'':'s')+'.'):'No pending confirmations for this business.');
+        : 'Synced '+synced+' location confirmation'+(synced===1?'':'s')+'.');
     }catch(e){
       setLocationConfirmError('Saved on this device; sync pending. '+(e instanceof Error?e.message:'Could not sync confirmations'));
-    }finally{setLocationCheckBusy(false);}
+    }finally{locationSyncing.current=false;setLocationCheckBusy(false);}
   }
 
   async function confirmActiveJobLocation(kind:'arrival'|'departure',source:'gps_suggestion'|'manual') {
