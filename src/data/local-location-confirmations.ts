@@ -13,7 +13,7 @@ const safeSubject=(subject:string)=>subject.replace(/[^a-zA-Z0-9_-]/g,'_').slice
 const indexKey=(subject:string)=>'greencollar_location_index_'+safeSubject(subject);
 const eventKey=(subject:string,id:string)=>'greencollar_location_event_'+safeSubject(subject)+'_'+id;
 const validId=(value:unknown):value is string=>typeof value==='string'&&/^[a-zA-Z0-9_-]{1,80}$/.test(value);
-const validDate=(value:unknown):value is string=>typeof value==='string'&&/^\\d{4}-\\d{2}-\\d{2}$/.test(value)
+const validDate=(value:unknown):value is string=>typeof value==='string'&&/^\d{4}-\d{2}-\d{2}$/.test(value)
   &&!Number.isNaN(Date.parse(value))&&new Date(value+'T00:00:00Z').toISOString().slice(0,10)===value;
 
 function isStoredConfirmation(value:unknown):value is StoredLocationConfirmation {
