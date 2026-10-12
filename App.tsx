@@ -5,7 +5,7 @@ import { tokenCache } from '@clerk/expo/token-cache';
 import { fetchDayData, type DayData } from './src/data/greencollar-api';
 import { summarizeSavedDay } from './src/data/saved-day';
 import { getBusinesses, createBusiness } from './src/data/business-api';
-import { listSavedCustomers, createSavedCustomer, type SavedCustomer } from './src/data/customer-api';
+import { listSavedCustomers, createSavedCustomer, updateSavedCustomer, type SavedCustomer } from './src/data/customer-api';
 import { startWork, pauseWork, resumeWork, completeWork, getElapsedMinutes, completionRecord, type WorkSession } from './src/domain/work-session';
 import {saveVisitCompletion} from './src/data/visit-completion';
 import {billableCompletedServices,invoiceFromCompletedService} from './src/domain/completed-invoice';
@@ -39,6 +39,10 @@ function GreenCollarDashboard() {
   const [savedDay,setSavedDay] = useState<DayData|null>(null);
   const [savedCustomers,setSavedCustomers] = useState<SavedCustomer[]>([]);
   const [savedCustomerName,setSavedCustomerName] = useState('');
+  const [savedCustomerPhone,setSavedCustomerPhone] = useState('');
+  const [savedCustomerEmail,setSavedCustomerEmail] = useState('');
+  const [savedCustomerNotes,setSavedCustomerNotes] = useState('');
+  const [editingSavedCustomerId,setEditingSavedCustomerId] = useState<string|null>(null);
   const [savedDayError,setSavedDayError] = useState('');
   const [loadingSaved,setLoadingSaved] = useState(false);
   const [businessName,setBusinessName] = useState('');
@@ -189,15 +193,28 @@ function GreenCollarDashboard() {
   async function saveCustomer() {
     const api=process.env.EXPO_PUBLIC_GREENCOLLAR_API_URL;
     if(!api||!connectedBusiness){setSavedDayError('Load your business first');return;}
+    if(!savedCustomerName.trim()){setSavedDayError('Customer name is required');return;}
     setLoadingSaved(true);setSavedDayError('');
     try {
       const token=await getToken({template:'greencollar-api'});
       if(!token)throw new Error('Sign in first');
-      await createSavedCustomer(api,connectedBusiness.id,token,{name:savedCustomerName});
+      const details={name:savedCustomerName.trim(),phone:savedCustomerPhone.trim()||undefined,email:savedCustomerEmail.trim()||undefined,notes:savedCustomerNotes.trim()||undefined};
+      if(editingSavedCustomerId)await updateSavedCustomer(api,connectedBusiness.id,token,editingSavedCustomerId,details);
+      else await createSavedCustomer(api,connectedBusiness.id,token,details);
       setSavedCustomers(await listSavedCustomers(api,connectedBusiness.id,token));
-      setSavedCustomerName('');
+      setSavedCustomerName('');setSavedCustomerPhone('');setSavedCustomerEmail('');setSavedCustomerNotes('');
+      setEditingSavedCustomerId(null);
     }catch(e){setSavedDayError(e instanceof Error?e.message:'Could not save customer');}
     finally{setLoadingSaved(false);}
+  }
+  function editSavedCustomer(customer:SavedCustomer) {
+    setSavedCustomerName(customer.name);setSavedCustomerPhone(customer.phone??'');
+    setSavedCustomerEmail(customer.email??'');setSavedCustomerNotes(customer.notes??'');
+    setEditingSavedCustomerId(customer.id);setSavedDayError('');
+  }
+  function cancelSavedCustomerEdit() {
+    setSavedCustomerName('');setSavedCustomerPhone('');setSavedCustomerEmail('');setSavedCustomerNotes('');
+    setEditingSavedCustomerId(null);setSavedDayError('');
   }
   async function registerBusiness() {
     const api=process.env.EXPO_PUBLIC_GREENCOLLAR_API_URL;
@@ -270,9 +287,20 @@ function GreenCollarDashboard() {
             <Text style={styles.cardHeading}>Saved customers · Cloudflare</Text>
             {connectedBusiness ? <>
               <Pressable style={styles.primary} disabled={loadingSaved} onPress={()=>void loadSavedCustomers()}><Text style={styles.primaryText}>Load saved customers</Text></Pressable>
-              {savedCustomers.map(c=><Text key={c.id} style={styles.body}>{c.name}{c.phone?' · '+c.phone:''}</Text>)}
-              <TextInput style={styles.input} placeholder="New saved customer's name" placeholderTextColor="#819b8b" value={savedCustomerName} onChangeText={setSavedCustomerName}/>
-              <Pressable style={styles.primary} disabled={loadingSaved||!savedCustomerName.trim()} onPress={()=>void saveCustomer()}><Text style={styles.primaryText}>Save customer securely</Text></Pressable>
+              {savedCustomers.map(c=><View key={c.id} style={styles.card}>
+                <Text style={styles.cardHeading}>{c.name}</Text>
+                {!!c.phone&&<Text style={styles.body}>{c.phone}</Text>}
+                {!!c.email&&<Text style={styles.body}>{c.email}</Text>}
+                {!!c.notes&&<Text style={styles.muted}>{c.notes}</Text>}
+                <Pressable style={styles.primary} onPress={()=>editSavedCustomer(c)}><Text style={styles.primaryText}>Edit profile</Text></Pressable>
+              </View>)}
+              <Text style={styles.cardHeading}>{editingSavedCustomerId?'Edit saved customer':'Add saved customer'}</Text>
+              <TextInput style={styles.input} placeholder="Customer name" placeholderTextColor="#819b8b" value={savedCustomerName} onChangeText={setSavedCustomerName}/>
+              <TextInput style={styles.input} placeholder="Phone (optional)" placeholderTextColor="#819b8b" keyboardType="phone-pad" value={savedCustomerPhone} onChangeText={setSavedCustomerPhone}/>
+              <TextInput style={styles.input} placeholder="Email (optional)" placeholderTextColor="#819b8b" keyboardType="email-address" autoCapitalize="none" value={savedCustomerEmail} onChangeText={setSavedCustomerEmail}/>
+              <TextInput style={styles.input} placeholder="Notes (optional)" placeholderTextColor="#819b8b" multiline value={savedCustomerNotes} onChangeText={setSavedCustomerNotes}/>
+              <Pressable style={styles.primary} disabled={loadingSaved||!savedCustomerName.trim()} onPress={()=>void saveCustomer()}><Text style={styles.primaryText}>{editingSavedCustomerId?'Save profile':'Save customer securely'}</Text></Pressable>
+              {editingSavedCustomerId&&<Pressable style={[styles.primary,{backgroundColor:'#f0f5ef'}]} onPress={cancelSavedCustomerEdit}><Text style={styles.primaryText}>Cancel edit</Text></Pressable>}
             </> : <Text style={styles.muted}>Create or load your business on Today before saving real customers.</Text>}
             {!!savedDayError && <Text style={styles.muted}>{savedDayError}</Text>}
           </View>
