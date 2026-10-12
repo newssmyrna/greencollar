@@ -11,18 +11,22 @@ export async function loadWorkSession(subject:string):Promise<WorkSession|null>{
   try{
     const parsed=JSON.parse(value) as Partial<WorkSession>;
     if(!parsed||typeof parsed.jobId!=='string'||!['running','paused','completed'].includes(String(parsed.status))
-      ||!Number.isSafeInteger(parsed.startedAt)||!Number.isSafeInteger(parsed.elapsedMs)
+      ||!Number.isSafeInteger(parsed.startedAt)||!Number.isSafeInteger(parsed.elapsedMs)||(parsed.elapsedMs as number)<0
       ||(parsed.lastResumedAt!==null&&parsed.lastResumedAt!==undefined&&!Number.isSafeInteger(parsed.lastResumedAt))
-      ||(parsed.completedAt!==null&&parsed.completedAt!==undefined&&!Number.isSafeInteger(parsed.completedAt)))return null;
+      ||(parsed.completedAt!==null&&parsed.completedAt!==undefined&&!Number.isSafeInteger(parsed.completedAt))
+      ||(parsed.lastTransitionAt!==undefined&&!Number.isSafeInteger(parsed.lastTransitionAt)))return null;
     const status=parsed.status as WorkSession['status'];
     const lastResumedAt=parsed.lastResumedAt??null;
     const completedAt=parsed.completedAt??null;
-    const lastTransitionAt=Number.isSafeInteger(parsed.lastTransitionAt)
+    const lastTransitionAt=parsed.lastTransitionAt!==undefined
       ? parsed.lastTransitionAt as number
       : status==='completed'&&completedAt!==null ? completedAt : lastResumedAt??parsed.startedAt as number;
     const businessId=typeof parsed.businessId==='string'&&parsed.businessId.trim()?parsed.businessId:null;
     const serviceDate=validDate(parsed.serviceDate)?parsed.serviceDate:null;
-    if((businessId===null)!==(serviceDate===null))return null;
+    if((businessId===null)!==(serviceDate===null)||lastTransitionAt<(parsed.startedAt as number))return null;
+    if(status==='running'&&(lastResumedAt===null||lastResumedAt<(parsed.startedAt as number)||lastTransitionAt<lastResumedAt||completedAt!==null))return null;
+    if(status==='paused'&&(lastResumedAt!==null||completedAt!==null))return null;
+    if(status==='completed'&&(lastResumedAt!==null||completedAt===null||completedAt<(parsed.startedAt as number)||lastTransitionAt!==completedAt))return null;
     return {
       jobId:parsed.jobId,
       status,
