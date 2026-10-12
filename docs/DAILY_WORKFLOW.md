@@ -63,3 +63,15 @@ Start, pause, resume and complete now await the secure device write before apply
 Save failures leave the previous displayed record in place and invalidate timer readiness. The operator must use Retry restoring job timer to reconcile with device storage before continuing. This also handles a native write that may have committed before reporting failure: the UI does not assume either outcome. A changed operator or session suppresses late successful results. Device persistence does not mean server completion or billing succeeded.
 
 Five focused synthetic tests cover save-before-display, repeated taps, failures and subsequent recovery, late results after context changes, and immutable transition snapshots. Full CI evidence is recorded on the PR. iOS/Android acceptance remains pending: slow and failed native saves for each action, repeated taps, sign-out during save, failure after a native write commits, restart during save, and completion submission gating. No schema, hosted data, provider calls or production pages changed.
+
+## Foreground elapsed-time display
+
+Task: GC-TIMER-DISPLAY-20261012. Branch: `codex/phase-foreground-timer-display`; source base: `bf86e34ac0037a1ac83c37fd8b391cc344812131` (existing PR #47). Prepared/self-reviewed; unmerged and undeployed.
+
+A running timer refreshes once per second only while Today is visible and the app is foregrounded. Returning to Today or foreground immediately recomputes elapsed time from the recorded timestamps, including time spent away. Paused and completed durations remain fixed. The manual refresh control is retained.
+
+Background/inactive transitions, leaving Today, pausing/completing, and unmounting clean up the interval. Display ticks update only screen time: they do not write storage, change work-session state, submit completion, or affect billing. Invalid/backward running clocks produce a visible error and no fabricated elapsed value rather than throwing during render.
+
+Eight synthetic tests cover timestamp-based running display, paused/completed stability, pause exclusion, invalid clocks without mutation, empty state, foreground/background behavior, interval cleanup, and return after a long gap. Full app/Worker CI evidence is recorded on the PR. Native device acceptance remains pending for app state transitions, outdoor readability, clock changes, and rapid tab changes.
+
+Next owner/action: reviewer verifies UI-only refresh and cleanup; device tester runs those scenarios; release coordinator handles the stacked chain. The existing PR #47 was preserved; this branch adds display behavior only.
