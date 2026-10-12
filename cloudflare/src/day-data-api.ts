@@ -25,7 +25,7 @@ export async function dayDataApi(request:Request,env:Env,url:URL):Promise<Respon
     env.DB.prepare(`SELECT a.id,a.customer_id,a.location_id,a.service_name,a.rate_cents,a.estimated_minutes,
       a.starts_on,a.ends_on,a.frequency,a.interval_days,a.days_of_week,
       a.preferred_start_minute,a.preferred_finish_minute,a.fixed_start_minute,a.active,
-      l.address,l.preferences
+      l.address,l.preferences,l.lat,l.lon
       FROM service_agreements a
       JOIN service_locations l ON l.id=a.location_id AND l.business_id=a.business_id
       WHERE a.business_id=? AND a.active=1 AND a.starts_on<=?
