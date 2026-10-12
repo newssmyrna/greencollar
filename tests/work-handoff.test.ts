@@ -2,7 +2,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import {startWork,pauseWork,completeWork} from '../src/domain/work-session';
 import {canStartNextWork,startNextWork,hasSavedWorkCompletion,workSessionDate} from '../src/domain/work-handoff';
-const completed=()=>completeWork(startWork('agreement:2026-10-12',1000),61000);
+const completed=()=>({...completeWork(startWork('agreement:2026-10-12',1000),61000),note:'Fence latch reset.'});
 test('running and paused work cannot be replaced by saved or demo jobs',()=>{
  const running=startWork('agreement:2026-10-12',1000);
  for(const session of [running,pauseWork(running,61000)]){
@@ -31,9 +31,9 @@ test('empty and completed demo sessions can start another job',()=>{
  assert.equal(startNextWork('new',121000,demo,false).jobId,'new');
 });
 test('server completion evidence must match visit date, agreement, status, and duration',()=>{
- const evidence={agreement_id:'agreement',scheduled_date:'2026-10-12',status:'completed',actual_minutes:1};
+ const evidence={agreement_id:'agreement',scheduled_date:'2026-10-12',status:'completed',actual_minutes:1,work_note:'Fence latch reset.'};
  assert.equal(hasSavedWorkCompletion(completed(),[evidence]),true);
- for(const changed of [{...evidence,agreement_id:'other'},{...evidence,scheduled_date:'2026-10-13'},{...evidence,status:'pending'},{...evidence,actual_minutes:2},{...evidence,actual_minutes:null}])assert.equal(hasSavedWorkCompletion(completed(),[changed]),false);
+ for(const changed of [{...evidence,agreement_id:'other'},{...evidence,scheduled_date:'2026-10-13'},{...evidence,status:'pending'},{...evidence,actual_minutes:2},{...evidence,actual_minutes:null},{...evidence,work_note:'Different note'}])assert.equal(hasSavedWorkCompletion(completed(),[changed]),false);
  assert.equal(hasSavedWorkCompletion(null,[evidence]),false);
  assert.equal(hasSavedWorkCompletion(startWork('agreement:2026-10-12',1000),[evidence]),false);
  assert.equal(hasSavedWorkCompletion(completed(),[]),false);
