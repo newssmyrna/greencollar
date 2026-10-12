@@ -33,7 +33,7 @@ test('repeating the same accepted completion is safe after a lost response',asyn
               return {
                 async first(){
                   if(sql.includes('business_memberships'))return {role:'owner'};
-                  if(sql.includes('service_agreements'))return {id:'agreement-1'};
+                  if(sql.includes('service_agreements'))return {id:'agreement-1',starts_on:'2026-10-12',ends_on:null,frequency:'daily',interval_days:null,days_of_week:null};
                   if(sql.includes('service_visits'))return {id:'visit-1',status:'completed',actual_minutes:45};
                   throw new Error('Unexpected query: '+sql+' '+JSON.stringify(values));
                 },
