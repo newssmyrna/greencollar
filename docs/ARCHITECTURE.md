@@ -1,29 +1,42 @@
-# Proposed Engineering Architecture
+# Architecture
 
-**Status:** design proposal, not an implemented system.
+**Status:** This describes the current source architecture and the proposed product integrations. Source presence does not prove production deployment.
 
-## Client
-- Expo + React Native + TypeScript mobile app for iOS and Android.
-- Responsive web/customer portal for invoices, upcoming visits and service requests.
+## Mobile client
 
-## Backend
-- Supabase Auth, PostgreSQL, tenant-based access controls, object storage for images.
-- Server-side functions/background jobs for reminders, route planning, invoicing and webhooks.
-- Dedicated scheduling service with constraint validation, historical job-duration estimation, routing-provider travel matrix, operator approval and day-of replanning.
+- Expo / React Native / TypeScript app.
+- Clerk sign-in and API bearer tokens.
+- SecureStore-backed local work-session state.
+- Saved business, customer, and day-data adapters.
+- Synthetic example cards and a workload preview are still present; they are not production scheduling.
 
-## External services
-- Road-based routing/optimization API; measure costs, quotas and feasibility first.
-- Consent-based outbound SMS; registration, opt-outs, logs and delivery statuses required.
-- Hosted invoicing and card payments; never store payment-card details.
-- Native permission-aware GPS/geofencing; manual start/stop/edit is mandatory.
+## Identity, API, and data
 
-## Initial data entities
-businesses, users, memberships, customers, service_locations, service_types, service_contracts, recurrence_rules, customer_preferences, customer_contacts, jobs, route_plans, route_stops, job_events, time_entries, vehicles, equipment, fuel_prices, invoices, payment_events, messages, consents, photos, duration_predictions, audit_events.
+- Clerk JWTs are verified by the Cloudflare Worker using configured issuer, audience, and trusted HTTPS JWKS metadata.
+- Worker endpoints apply business-membership checks before tenant-scoped database access.
+- Cloudflare D1 is the active backend direction. Committed SQL is under `cloudflare/migrations/`.
+- The `supabase/` migration is an archived alternative design, not the active deployment plan.
+- The last recorded production status says the Worker exposes health only and the live recurring-service schema differs from the committed migrations. Verify these facts directly before using real customer data.
 
-All business data scoped by tenant. No work/employer data, secrets, or real customer data in development fixtures.
+## Existing domain modules
+
+- Recurring visit generation uses calendar dates and explicit frequency rules.
+- Saved-day summaries filter completed/skipped visits and use historical durations where available.
+- Planning and road-matrix modules exist, but the app's Planner tab does not yet call the road-planning pipeline. No routing provider is activated.
+- Invoice draft generation and price review are local only. Invoice delivery, payment reconciliation, and durable duplicate prevention are not implemented.
+- Timer state is local; the reliability improvements in open PRs are not yet in `main`.
+
+## Planned integrations
+
+- Real road routing and constrained schedule optimization.
+- Opt-in GPS/geofence assistance with manual controls.
+- Customer messaging with consent, opt-out, delivery state, and history.
+- Durable invoices and payment links/status.
+- Offline-safe event queue and customer-facing portal.
 
 ## Critical behavior
-- GPS events may be late or inaccurate: do not silently bill or send customer messages solely on a location event.
-- Weather, seasonality, crew composition and equipment can affect actual duration; start with transparent statistical estimates.
-- Offline events queued with recoverable, auditable sync.
-- Cost model includes API traffic, SMS, payment fees, push delivery, storage, and support.
+
+- Tenant identity must come from verified membership, not a client-supplied business ID alone.
+- Never bill or message solely because of a location event.
+- Treat addresses, contact details, access instructions, and photos as sensitive tenant data.
+- Keep third-party costs, retention, failures, and manual correction paths visible.
