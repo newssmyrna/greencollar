@@ -18,6 +18,7 @@ import {saveVisitSkip} from './src/data/visit-skip';
 import {billableCompletedServices,invoiceFromCompletedService,unbillableCompletedServiceCount} from './src/domain/completed-invoice';
 import {invoiceTotals,type InvoiceDraft} from './src/domain/invoice';
 import {timerDisplay,createForegroundTimerTicker} from './src/domain/timer-display';
+import {completionReviewKey,isCompletionReviewConfirmed} from './src/domain/completion-review';
 import {createDurableTimerTransition} from './src/domain/durable-timer-transition';
 import {loadWorkSession,saveWorkSession} from './src/data/local-work-session';
 import {listServiceLocations,createServiceLocation,type SavedServiceLocation} from './src/data/service-location-api';
@@ -181,6 +182,10 @@ function GreenCollarDashboard() {
   async function saveCompletedService() {
     if(!connectedBusiness||!savedDay||!workSession||workSession.status!=='completed'||workSession.jobId==='demo-job')
       return;
+    const reviewKey=completionReviewKey(userId,workSession,savedDay.date);
+    if(!isCompletionReviewConfirmed(reviewKey,completionReviewConfirmedKey)){
+      setTimerError('Review and confirm the recorded duration before saving this visit.');return;
+    }
     const api=process.env.EXPO_PUBLIC_GREENCOLLAR_API_URL;
     if(!api){setTimerError('API URL not configured');return;}
     if(submitting.current||timerSaved||!timerReady||timerNeedsRestore.current||timerTransition.current.busy)return;
@@ -284,6 +289,7 @@ function GreenCollarDashboard() {
   const displayedTimer=timerDisplay(workSession,timerNow);
   const [timerError,setTimerError]=useState('');
   const [timerSaved,setTimerSaved]=useState(false);
+  const [completionReviewConfirmedKey,setCompletionReviewConfirmedKey]=useState('');
   const [visitSkipBusy,setVisitSkipBusy]=useState('');
   const [visitSkipError,setVisitSkipError]=useState('');
   const [visitSkipNotice,setVisitSkipNotice]=useState('');
@@ -582,6 +588,11 @@ function GreenCollarDashboard() {
   const savedDueSummary=savedDay?summarizeSavedDay(savedDay):null;
   const completedTimerSaved=timerSaved||hasSavedWorkCompletion(workSession,savedDay?.visits??[]);
   const completedTimerDate=workSessionDate(workSession);
+  const completedReviewKey=completionReviewKey(userId,workSession,savedDay?.date??null);
+  const completedServiceEstimate=workSession?.status==='completed'&&savedDay
+    ?savedDay.agreements.find(agreement=>workSession.jobId===agreement.id+':'+savedDay.date)?.estimated_minutes??null
+    :null;
+  useEffect(()=>{setCompletionReviewConfirmedKey('');},[completedReviewKey]);
   const timerCanStart=timerReady&&!timerTransitionBusy&&!loadingSaved&&canStartNextWork(workSession,completedTimerSaved);
   const savedQueueScope=JSON.stringify([userId,connectedBusiness?.id,savedDay?.date]);
   savedQueueScopeRef.current=savedQueueScope;
@@ -678,8 +689,16 @@ function GreenCollarDashboard() {
             {workSession?.status==='paused' && <Pressable style={styles.primary} disabled={!timerReady||timerTransitionBusy} onPress={()=>void timerAction('resume')}><Text style={styles.primaryText}>Resume job</Text></Pressable>}
             {workSession && workSession.status!=='completed' && <Pressable style={styles.primary} disabled={!timerReady||timerTransitionBusy} onPress={()=>void timerAction('complete')}><Text style={styles.primaryText}>Complete job</Text></Pressable>}
             {workSession?.status==='running' && <Pressable style={styles.primary} onPress={()=>setTimerNow(Date.now())}><Text style={styles.primaryText}>Refresh elapsed time</Text></Pressable>}
-            {workSession?.status==='completed' && <Text style={styles.body}>Recorded service duration: {completionRecord(workSession).actualMinutes} min</Text>}
-            {workSession?.status==='completed' && workSession.jobId!=='demo-job' && !completedTimerSaved && <Pressable style={styles.primary} disabled={loadingSaved||!timerReady||timerTransitionBusy} onPress={()=>void saveCompletedService()}><Text style={styles.primaryText}>Save completed visit</Text></Pressable>}
+            {workSession?.status==='completed' && <View style={styles.card}>
+              <Text style={styles.cardHeading}>Review completed service</Text>
+              {completedServiceEstimate!==null&&<Text style={styles.body}>Scheduled estimate: {completedServiceEstimate} min</Text>}
+              <Text style={styles.body}>Recorded actual: {completionRecord(workSession).actualMinutes} min</Text>
+              {workSession.jobId!=='demo-job'&&!completedTimerSaved&&<Pressable accessibilityRole="checkbox" accessibilityState={{checked:isCompletionReviewConfirmed(completedReviewKey,completionReviewConfirmedKey)}} style={styles.primary} onPress={()=>setCompletionReviewConfirmedKey(current=>isCompletionReviewConfirmed(completedReviewKey,current)?'':(completedReviewKey??''))}>
+                <Text style={styles.primaryText}>{isCompletionReviewConfirmed(completedReviewKey,completionReviewConfirmedKey)?'✓ Duration reviewed':'Confirm recorded duration'}</Text>
+              </Pressable>}
+              {workSession.jobId!=='demo-job'&&!completedTimerSaved&&<Text style={styles.muted}>Check the recorded minutes before saving. Any timer or workday change clears this confirmation.</Text>}
+            </View>}
+            {workSession?.status==='completed' && workSession.jobId!=='demo-job' && !completedTimerSaved && <Pressable style={styles.primary} disabled={loadingSaved||!timerReady||timerTransitionBusy||!isCompletionReviewConfirmed(completedReviewKey,completionReviewConfirmedKey)} onPress={()=>void saveCompletedService()}><Text style={styles.primaryText}>Save completed visit</Text></Pressable>}
             {completedTimerSaved && <Text style={styles.body}>Visit completion saved to Cloudflare.</Text>}
             {workSession?.status==='completed'&&workSession.jobId!=='demo-job'&&!completedTimerSaved&&completedTimerDate&&<Pressable accessibilityRole="button" style={styles.primary} disabled={loadingSaved} onPress={()=>void loadSavedDay(completedTimerDate)}><Text style={styles.primaryText}>Load completed visit’s workday · {completedTimerDate}</Text></Pressable>}
             {workSession?.status==='completed' && <Pressable style={styles.primary} disabled={!timerCanStart} onPress={()=>timerAction('start')}><Text style={styles.primaryText}>Start another demo</Text></Pressable>}
