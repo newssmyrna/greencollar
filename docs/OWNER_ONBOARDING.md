@@ -1,22 +1,23 @@
-# GreenCollar owner onboarding — code complete, deployment gated
+# GreenCollar owner onboarding
 
-## Workflow
-1. Clerk user signs in and receives a cryptographically verifiable API JWT.
-2. Mobile requests GET /v1/business with the bearer token.
-3. If no business exists, user enters a business name and requests POST /v1/business.
-4. Worker verifies issuer, JWKS signature and audience, and stores a newly generated business ID with the verified subject as owner.
-5. Unique membership subject index prevents concurrent duplicate businesses for the solo-operator release.
-6. GET /v1/customers and GET /v1/day require both a verified user and membership to the business.
-7. App fetches due service records using the returned business ID rather than a hardcoded environment business ID.
+## Source workflow
 
-## Security and deployment gates
-- Current deployed Worker remains health-only. The new endpoints are committed **in source**, not deployed.
-- Configure Clerk JWT issuer, audience and trusted JWKS URL on the Worker after validating Clerk's token type and signing algorithm.
-- Apply the unique index `0004_owner_unique.sql` after confirming existing membership uniqueness.
-- Verify real signed test tokens, wrong issuer/audience, expired tokens, cross-business isolation and retry/race cases.
-- D1 recurring-service tables were created with minimal schema; reconcile schema with reviewed migrations before using real customer data.
-- Current GitHub Expo CI validates the mobile app but does not yet run a standalone Cloudflare Worker type-check or deploy smoke tests.
-- No real customer data or credentials in GitHub.
+1. The owner signs in through Clerk Expo.
+2. The app requests the owner's businesses using a verified API token.
+3. If no business exists, the owner can submit a business name to the Worker.
+4. The Worker verifies the token and creates a business plus the verified owner's membership.
+5. The app uses that business ID to request saved customers and the selected service day.
+6. Customer and day endpoints check the authenticated user's membership before tenant-scoped reads or writes.
 
-## Still needed
-Verified token configuration, live endpoint deployment, Clerk device sign-in, end-to-end tests, persistent customer forms and site/service agreement editing.
+## Release gates
+
+- Source code and green CI are not deployment evidence. The last recorded production status says the Worker is health-only.
+- Verify the production Clerk issuer, audience, JWKS configuration, callbacks, and mobile sign-in.
+- Inspect and reconcile the hosted D1 schema; recurring tables were previously reported to differ from committed migrations.
+- Test signed endpoint flows, two-business isolation, roles, onboarding races, and duplicate requests against staging.
+- Complete persistent customer location/service-agreement forms; the current saved-customer UI collects only a name.
+- Complete device acceptance before onboarding real businesses.
+
+## Data handling
+
+No real customer data or credentials belong in repository fixtures, logs, or source control.

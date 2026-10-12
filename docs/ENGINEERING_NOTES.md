@@ -1,21 +1,27 @@
 # Engineering notes and known gaps
 
-Current scheduler is a deterministic **greedy baseline** and does not claim globally optimal road routing. Synthetic matrix is not realistic road data. Fixed appointments, recurring visits, deadlines and time zones require additional solver work. Current code has no Supabase client and does not persist records.
+## Verified in source and CI
 
-## Critical database work before running SQL
+The repository includes an Expo app, Clerk integration, authenticated Cloudflare Worker source, business/customer/day adapters, recurring-service logic, local timer persistence, road-matrix/planning modules, and local invoice-draft review.
 
-The draft schema in `supabase/migrations/0001_core.sql` must **not** be deployed as production-ready. Strengthen tenant-scoped cross-table relationships so a valid member cannot link a record to another tenant's customer/site/job by UUID. Limit owner/admin-only write operations, add safe creation pathways, and test RLS with multiple real authenticated roles. Use a separate staging environment and automated isolation tests.
+GitHub Actions runs app typecheck/tests and Worker typecheck/authentication tests. The latest recorded main-branch run passed; the current timer and API-validation pull requests also have passing checks on their latest commits. These checks do not establish production deployment, live schema compatibility, or device acceptance.
 
-## Test commands
+## Current boundaries
 
-`npm install`, then `npm test` and `npm run typecheck`.
-
-These tests have been authored but **not executed against an installed dependency environment yet**; actual CI green status remains unverified.
+- The Planner tab is a synthetic workload preview; it does not call the road-planning pipeline.
+- The road-provider adapter is not activated for protected API routes.
+- Customer entry is incomplete: saved customer creation captures a name, while full location/agreement editing remains unfinished.
+- Invoice draft review is local memory only; there is no durable invoice API/table, delivery, payment reconciliation, or duplicate-billing protection.
+- Timer state is stored locally. Timer reliability changes are under review in open PRs.
+- GPS, complete offline sync, messaging, payment links, and customer portal remain unimplemented.
 
 ## Next engineering order
 
-1. Tighten database integrity and access control.
-2. Exercise the scheduler with additional property-based and fixed-appointment cases.
-3. Implement customer persistence, profiles and full app screens.
-4. Add road matrix with graceful offline/manual fallback.
-5. Continue integrated day execution, messages and billing.
+1. Merge and validate timer durability and server-side payload/visit eligibility changes.
+2. Inspect the hosted D1 schema and migration history; test a reviewed reconciliation in staging.
+3. Reconcile dependency locks and use reproducible CI installs.
+4. Verify signed authentication through real endpoint flows and two-business isolation.
+5. Complete customer location/service agreement workflows and connect the real route planner.
+6. Add durable invoice/payment records, communications, and mobile/device acceptance.
+
+Do not infer a release from repository source alone.

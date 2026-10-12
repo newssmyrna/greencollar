@@ -1,24 +1,22 @@
-# Authentication integration — configured but not live
+# Authentication integration
 
-GreenCollar's Cloudflare Worker customer API uses standards-based signed OIDC JWT bearer tokens. Tokens are validated using the trusted provider's JWKS, exact issuer and audience, then checked against D1 business memberships.
+## Current source
 
-## Required Worker configuration
+The app uses Clerk Expo sign-in and requests a JWT from the `greencollar-api` token template. Cloudflare Worker source verifies bearer tokens against configured issuer, audience, and HTTPS JWKS metadata, then checks the authenticated subject's business membership.
 
-- `OIDC_ISSUER`: trusted issuer value
-- `OIDC_AUDIENCE`: the API audience/identifier
-- `OIDC_JWKS_URL`: trusted HTTPS JWKS endpoint
+The current source branch includes customer/day/business endpoints. The current timer and endpoint-validation work is in open pull requests and remains separate from `main` until merged.
 
-Select and configure an OIDC provider with native mobile PKCE sign-in. This is **not yet selected/configured**. Do not put signing secrets into the mobile app or GitHub.
+## Production status
 
-## Provisioning
+The latest recorded deployment status says the Worker exposes health only; authenticated endpoints have not been verified against production. Production issuer/audience/JWKS values and native sign-in behavior must be checked directly before treating authentication as live. Development metadata in configuration is not proof of production setup.
 
-1. Verify provider configuration, callback URIs and mobile deep links.
-2. Build trusted account onboarding that creates a business and its verified owner membership atomically. Do not let clients create their own role bindings.
-3. Test with two separate synthetic businesses and real signed test tokens.
-4. Verify rejection of missing tokens, invalid signatures, wrong issuer/audience, expired tokens and cross-tenant access.
-5. Test least-privilege worker role and tenant ownership for every create/read/update/delete operation.
-6. Enable customer endpoints only after validation; use staging first.
+## Verification gates
 
-At this stage, GET/POST `/v1/customers?business_id=<id>` are implemented in source but **have not been deployed**. Unconfigured OIDC fails closed. Existing deployed Worker is health-only. No actual business or customer data has been inserted.
+1. Confirm Clerk's token template, issuer, audience, algorithm, JWKS URL, callback URLs, and mobile deep links.
+2. Configure Worker values through the deployment environment, never in the app bundle or source.
+3. Test valid, missing, expired, malformed, wrong-issuer, and wrong-audience tokens.
+4. Test owner/admin/worker permissions and isolation across two businesses.
+5. Verify account onboarding and membership creation are atomic and safe under retries/races.
+6. Test the deployed API and native sign-in on a device before enabling real customer data.
 
-The migration `0002_auth_memberships.sql` creates membership records, but does not grant membership to anyone.
+No signing secret, service-role key, or production token belongs in GitHub.

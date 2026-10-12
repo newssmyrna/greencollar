@@ -6,24 +6,31 @@ Mobile-first operating software for on-site service businesses across industries
 
 ## Product vision
 
-Customer setup → intelligent daily planning → optimized routing → GPS-assisted arrival and job timers → customer communication → invoices and payments → learn from completed work.
+Customer setup → daily planning → road-aware routing → GPS-assisted arrival and job timers → customer communication → invoices and payments → learning from completed work.
 
-The product is designed to help an owner-operator run their entire service business through a seamless, increasingly accurate workflow. GreenCollar is not exclusively lawn-care software.
+GreenCollar is designed for owner-operators first, with an architecture that can grow to teams and multiple vehicles. Lawn care is an example service, not the product category.
 
 ## Current status
 
-Phase 2: application foundation. The previously built clickable wireframe is a design reference, not production code. This repository will contain the app, schema, tests and documentation.
+The repository contains an Expo / React Native app, Clerk sign-in integration, Cloudflare Worker API source, D1 migrations, recurring-service logic, a local work timer, and automated tests. The app can load saved business/customer/day data when the authenticated API is configured. The planner remains a synthetic workload preview; invoices remain local drafts.
 
-## Principles
+See [the current status and release gates](docs/CURRENT-STATUS.md) for the difference between source code, CI, deployed services, and real-world verification. The current timer-reliability and API-validation work is in open pull requests and is not yet part of `main`.
+
+## Active technical direction
+
+- Mobile app: Expo / React Native and TypeScript.
+- Identity: Clerk-issued signed JWTs, verified by the Worker against trusted JWKS metadata.
+- API and database: Cloudflare Workers and D1, with tenant membership checks in the Worker.
+- Road planning, SMS, payments, customer portal, and GPS automation remain future integrations.
+
+The SQL under `supabase/` is an archived alternative design; Supabase is not the active backend path.
+
+## Product principles
 
 - Industry-independent, mobile-first workflows.
-- Smart planning based on constraints, road routes and observed job durations.
-- Operator control over price changes, customer messages and scheduling decisions.
-- Secure multi-tenant customer records, privacy and permission-based location tracking.
-- Complete end-to-end workflow before commercial launch; internal milestones are allowed.
-
-## Initial technical direction
-
-Expo / React Native, Supabase / PostgreSQL, a road routing API, SMS integration, and hosted invoice/payments. Providers and costs are subject to technical evaluation.
+- Planning that explains constraints, travel, and duration estimates.
+- Operator control over schedule approval, prices, customer messages, and exceptions.
+- Tenant isolation, least-privilege access, and permission-based location use.
+- Complete end-to-end workflow before a paid public launch.
 
 **Working brand:** GreenCollar (GrnCollar fallback). **Proposed business umbrella:** NSB Technology Group.
