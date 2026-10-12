@@ -31,6 +31,6 @@ test('duplicate node identifiers and invalid coordinates are rejected',()=>{
 
 test('HTTPS road-table request preserves location order and longitude latitude convention',()=>{
  const url=osrmTableRequest('https://routing.example.org',locations);
- assert.equal(url,'https://routing.example.org/table/v1/driving/-80.9,29;-80.92,29.07?annotations=duration');
+ assert.equal(url,'https://routing.example.org/table/v1/driving/-80.9,29;-80.92,29.07?annotations=duration,distance');
  assert.throws(()=>osrmTableRequest('http://routing.example.org',locations),/HTTPS/);
 });
