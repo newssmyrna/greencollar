@@ -1,6 +1,7 @@
 import { customerApi } from './customer-api';
 import { dayDataApi } from './day-data-api';
 import { businessApi } from './business-api';
+import { authenticatedSubject } from './auth';
 import type { Env } from './auth';
 
 function json(data:unknown,status=200):Response{
@@ -12,6 +13,13 @@ export default {
     if(url.pathname==='/health' && request.method==='GET'){
       try{await env.DB.prepare('SELECT 1').first();return json({service:'greencollar-api',status:'ok',database:'connected'});}
       catch{return json({service:'greencollar-api',status:'unavailable'},503);}
+    }
+    if(url.pathname==='/v1/session'){
+      if(request.method!=='GET')return json({error:'method_not_allowed'},405);
+      if(!env.OIDC_ISSUER||!env.OIDC_AUDIENCE||!env.OIDC_JWKS_URL)
+        return json({error:'authentication_unconfigured'},503);
+      const sub=await authenticatedSubject(request,env);
+      return sub ? json({authenticated:true}) : json({error:'unauthorized'},401);
     }
     if(url.pathname==='/v1/business')return businessApi(request,env);
     if(url.pathname==='/v1/customers')return customerApi(request,env,url);
