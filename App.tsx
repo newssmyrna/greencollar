@@ -460,9 +460,13 @@ function GreenCollarDashboard() {
               <Text style={styles.label}>Manual confirmation reason</Text>
               <TextInput accessibilityLabel="Manual location confirmation reason" style={styles.input} placeholder="For example: GPS unavailable, customer confirmed" placeholderTextColor="#819b8b" value={locationManualReason} onChangeText={setLocationManualReason} maxLength={280}/>
               <View style={{flexDirection:'row',gap:8}}><Pressable accessibilityRole="button" style={[styles.primary,{flex:1}]} disabled={!locationManualReason.trim()} onPress={()=>void confirmActiveJobLocation('arrival','manual')}><Text style={styles.primaryText}>Manually confirm arrival</Text></Pressable><Pressable accessibilityRole="button" style={[styles.primary,{flex:1}]} disabled={!locationManualReason.trim()} onPress={()=>void confirmActiveJobLocation('departure','manual')}><Text style={styles.primaryText}>Manually confirm departure</Text></Pressable></View>
-              {!!locationConfirmError&&<Text accessibilityLiveRegion="polite" style={styles.muted}>{locationConfirmError}</Text>}
+
+            </View>}
+            {(locationConfirmations.some(event=>event.businessId===connectedBusiness?.id||event.jobId===workSession?.jobId))&&<View style={styles.card}>
+              <Text style={styles.cardHeading}>Location confirmations</Text>
               {locationConfirmations.some(event=>event.businessId===connectedBusiness?.id&&event.syncStatus==='pending')&&<Pressable accessibilityRole="button" style={[styles.primary,{backgroundColor:'#f0f5ef'}]} disabled={locationCheckBusy||!connectedBusiness} onPress={()=>connectedBusiness&&void syncLocationOutbox(connectedBusiness.id)}><Text style={styles.primaryText}>{locationCheckBusy?'Syncing confirmations…':'Retry pending sync'}</Text></Pressable>}
-              {locationConfirmations.filter(event=>event.jobId===workSession.jobId).slice(-4).map((event,i)=><Text key={event.eventId||event.confirmedAt+'-'+i} style={styles.muted}>{event.kind==='arrival'?'Arrival':'Departure'} · {new Date(event.confirmedAt).toLocaleString()} · {event.source==='manual'?'manual: '+(event.manualReason??'reason not recorded'):'GPS suggestion'} · {event.syncStatus==='synced'?'synced':event.syncStatus==='pending'?'sync pending':'device only'}</Text>)}
+              {!!locationConfirmError&&<Text accessibilityLiveRegion="polite" style={styles.muted}>{locationConfirmError}</Text>}
+              {locationConfirmations.filter(event=>event.businessId===connectedBusiness?.id||event.jobId===workSession?.jobId).slice(-5).map((event,i)=><Text key={event.eventId||event.confirmedAt+'-'+i} style={styles.muted}>{event.kind==='arrival'?'Arrival':'Departure'} · {new Date(event.confirmedAt).toLocaleString()} · {event.source==='manual'?'manual: '+(event.manualReason??'reason not recorded'):'GPS suggestion'} · {event.syncStatus==='synced'?'synced':event.syncStatus==='pending'?'sync pending':'device only'}</Text>)}
             </View>}
             {!!timerError && <Text style={styles.muted}>{timerError}</Text>}
           </View>
