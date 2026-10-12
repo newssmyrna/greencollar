@@ -57,6 +57,8 @@ test('idempotent retries return success only for the exact same event',async()=>
 });
 test('GET lists only the requested business day and rejects invalid dates',async()=>{
  const f=fixture();assert.equal((await api(request('GET'),f.env)).status,200);
+ const listing=f.queries.find(q=>q.sql.includes('FROM location_confirmations WHERE business_id=? AND service_date=?'))!;
+ assert.match(listing.sql,/ORDER BY confirmed_at DESC,id DESC LIMIT 201/);
  const invalid=new Request('https://api.example.test/v1/location-confirmations?business_id=business-a&date=2026-02-30');
  assert.equal((await api(invalid,f.env)).status,400);
 });
