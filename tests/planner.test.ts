@@ -12,10 +12,11 @@ test('50-customer test fixture creates a feasible day within configured capacity
   assert.ok(result.revenueCents>0);
 });
 
-test('job cap zero schedules no work',()=>{
+test('job cap zero schedules no work and explains the cap',()=>{
   const result=planDay({...sampleDay,maxJobs:0});
   assert.equal(result.stops.length,0);
   assert.equal(result.excluded.length,50);
+  assert.ok(result.excluded.every(item=>item.reason==='job cap reached'));
 });
 
 test('travel and service time consume a bounded workday',()=>{
@@ -23,10 +24,31 @@ test('travel and service time consume a bounded workday',()=>{
   assert.ok(result.plannedFinishMinute<=9*60);
 });
 
-test('missing travel edges exclude unreachable jobs',()=>{
+test('missing travel edges exclude unreachable jobs with a useful reason',()=>{
   const result=planDay({...sampleDay,travelMinutes:{base:{base:0}}});
   assert.equal(result.stops.length,0);
   assert.equal(result.excluded.length,50);
+  assert.equal(result.excluded[0].reason,'no travel route to this location');
+});
+
+test('scheduled break shifts overlapping service to after the break',()=>{
+  const input={...sampleDay,jobs:[{...sampleDay.jobs[0],estimatedMinutes:30}],
+    locations:[sampleDay.locations[0]],maxJobs:1,startMinute:8*60+30,endMinute:11*60,
+    travelMinutes:{base:{loc1:10},loc1:{base:10}},breaks:[{startMinute:9*60,durationMinutes:30}]};
+  const result=planDay(input);
+  assert.equal(result.stops.length,1);
+  assert.equal(result.stops[0].startMinute,9*60+30);
+  assert.equal(result.stops[0].finishMinute,10*60);
+  assert.ok(result.feasible);
+});
+
+test('fixed appointment that conflicts with a scheduled break is explained',()=>{
+  const input={...sampleDay,jobs:[{...sampleDay.jobs[0],fixedStartMinute:9*60,estimatedMinutes:30}],
+    locations:[sampleDay.locations[0]],maxJobs:1,startMinute:8*60+40,endMinute:11*60,
+    travelMinutes:{base:{loc1:10},loc1:{base:10}},breaks:[{startMinute:9*60,durationMinutes:45}]};
+  const result=planDay(input);
+  assert.equal(result.stops.length,0);
+  assert.equal(result.excluded[0].reason,'fixed appointment overlaps a scheduled break');
 });
 
 test('duration forecast learns without overreacting to one outlier',()=>{
