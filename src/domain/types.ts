@@ -5,7 +5,11 @@ export type ServiceJob = {
   id: Id; customerId: Id; locationId: Id; serviceName: string;
   rateCents: number; estimatedMinutes: number;
   earliestStartMinute?: number; latestFinishMinute?: number;
-  fixedStartMinute?: number; priority?: number; due?: boolean;
+  fixedStartMinute?: number;
+  /** Higher numeric values win after appointment, time-window, and due-job ordering. */
+  priority?: number;
+  /** Marks a job that is due for the selected service day. */
+  due?: boolean;
 };
 export type TravelMatrix = Record<string, Record<string, number>>; // drive minutes, from nodeId to nodeId
 export type ScheduledBreak = { startMinute: number; durationMinutes: number };
