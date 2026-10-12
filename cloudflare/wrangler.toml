@@ -13,3 +13,20 @@ migrations_dir = "migrations"
 OIDC_ISSUER = "https://close-chipmunk-6010.clerk.accounts.dev"
 OIDC_AUDIENCE = "greencollar-api"
 OIDC_JWKS_URL = "https://close-chipmunk-6010.clerk.accounts.dev/.well-known/jwks.json"
+
+# Isolated staging binding. Public access stays disabled until a staging route is selected.
+[env.staging]
+name = "greencollar-api-staging"
+workers_dev = false
+
+[[env.staging.d1_databases]]
+binding = "DB"
+database_name = "greencollar-staging"
+database_id = "8e427f86-efc4-4a1c-a92c-1d2f57093bf8"
+migrations_dir = "migrations"
+migrations_table = "d1_migrations"
+
+[env.staging.vars]
+OIDC_ISSUER = "https://close-chipmunk-6010.clerk.accounts.dev"
+OIDC_AUDIENCE = "greencollar-api"
+OIDC_JWKS_URL = "https://close-chipmunk-6010.clerk.accounts.dev/.well-known/jwks.json"
