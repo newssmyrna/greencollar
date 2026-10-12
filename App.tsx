@@ -39,6 +39,9 @@ function GreenCollarDashboard() {
   const [savedDay,setSavedDay] = useState<DayData|null>(null);
   const [savedCustomers,setSavedCustomers] = useState<SavedCustomer[]>([]);
   const [savedCustomerName,setSavedCustomerName] = useState('');
+  const [savedCustomerPhone,setSavedCustomerPhone] = useState('');
+  const [savedCustomerEmail,setSavedCustomerEmail] = useState('');
+  const [savedCustomerNotes,setSavedCustomerNotes] = useState('');
   const [savedDayError,setSavedDayError] = useState('');
   const [loadingSaved,setLoadingSaved] = useState(false);
   const [businessName,setBusinessName] = useState('');
@@ -179,9 +182,9 @@ function GreenCollarDashboard() {
     try {
       const token=await getToken({template:'greencollar-api'});
       if(!token)throw new Error('Sign in first');
-      await createSavedCustomer(api,connectedBusiness.id,token,{name:savedCustomerName});
+      await createSavedCustomer(api,connectedBusiness.id,token,{name:savedCustomerName,phone:savedCustomerPhone,email:savedCustomerEmail,notes:savedCustomerNotes});
       setSavedCustomers(await listSavedCustomers(api,connectedBusiness.id,token));
-      setSavedCustomerName('');
+      setSavedCustomerName('');setSavedCustomerPhone('');setSavedCustomerEmail('');setSavedCustomerNotes('');
     }catch(e){setSavedDayError(e instanceof Error?e.message:'Could not save customer');}
     finally{setLoadingSaved(false);}
   }
@@ -256,8 +259,11 @@ function GreenCollarDashboard() {
             <Text style={styles.cardHeading}>Saved customers · Cloudflare</Text>
             {connectedBusiness ? <>
               <Pressable style={styles.primary} disabled={loadingSaved} onPress={()=>void loadSavedCustomers()}><Text style={styles.primaryText}>Load saved customers</Text></Pressable>
-              {savedCustomers.map(c=><Text key={c.id} style={styles.body}>{c.name}{c.phone?' · '+c.phone:''}</Text>)}
-              <TextInput style={styles.input} placeholder="New saved customer's name" placeholderTextColor="#819b8b" value={savedCustomerName} onChangeText={setSavedCustomerName}/>
+              {savedCustomers.map(c=><View key={c.id} style={{paddingVertical:8,borderBottomWidth:1,borderBottomColor:'#31533f'}}><Text style={styles.body}>{c.name}</Text>{!!c.phone&&<Text style={styles.muted}>Phone: {c.phone}</Text>}{!!c.email&&<Text style={styles.muted}>Email: {c.email}</Text>}{!!c.notes&&<Text style={styles.muted}>Notes: {c.notes}</Text>}</View>)}
+              <TextInput style={styles.input} placeholder="Customer name" placeholderTextColor="#819b8b" value={savedCustomerName} onChangeText={setSavedCustomerName}/>
+              <TextInput style={styles.input} placeholder="Phone (optional)" placeholderTextColor="#819b8b" keyboardType="phone-pad" value={savedCustomerPhone} onChangeText={setSavedCustomerPhone}/>
+              <TextInput style={styles.input} placeholder="Email (optional)" placeholderTextColor="#819b8b" keyboardType="email-address" autoCapitalize="none" value={savedCustomerEmail} onChangeText={setSavedCustomerEmail}/>
+              <TextInput style={styles.input} placeholder="Access notes or preferences (optional)" placeholderTextColor="#819b8b" value={savedCustomerNotes} onChangeText={setSavedCustomerNotes} multiline maxLength={2000}/>
               <Pressable style={styles.primary} disabled={loadingSaved||!savedCustomerName.trim()} onPress={()=>void saveCustomer()}><Text style={styles.primaryText}>Save customer securely</Text></Pressable>
             </> : <Text style={styles.muted}>Create or load your business on Today before saving real customers.</Text>}
             {!!savedDayError && <Text style={styles.muted}>{savedDayError}</Text>}
