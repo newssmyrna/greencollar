@@ -182,7 +182,7 @@ function GreenCollarDashboard() {
       return;
     const api=process.env.EXPO_PUBLIC_GREENCOLLAR_API_URL;
     if(!api){setTimerError('API URL not configured');return;}
-    if(submitting.current||timerSaved||!timerReady||timerTransition.current.busy)return;
+    if(submitting.current||timerSaved||!timerReady||timerNeedsRestore.current||timerTransition.current.busy)return;
     submitting.current=true;setLoadingSaved(true);setTimerError('');
     try {
       const token=await getToken({template:'greencollar-api'});
@@ -338,6 +338,7 @@ function GreenCollarDashboard() {
     const cents=Math.round(dollars*100);
     setInvoiceDrafts(prev=>prev.map(d=>d.id===id&&d.status==='draft'?{...d,lines:d.lines.map((line,i)=>i===0?{...line,unitPriceCents:cents}:line)}:d));
   }
+  const timerNeedsRestore=useRef(true);
   const [timerRestored,setTimerRestored]=useState(false);
   const [timerReadyUser,setTimerReadyUser]=useState<string|null>(null);
   const [timerRestoreBusy,setTimerRestoreBusy]=useState(false);
@@ -348,12 +349,13 @@ function GreenCollarDashboard() {
   const submitting=useRef(false);
   useEffect(()=>{
     let active=true;
+    timerNeedsRestore.current=true;
     setTimerRestored(false);setTimerReadyUser(null);setTimerSaved(false);setTimerError('');
     setWorkSession(null);workSessionCurrent.current=null;
     if(!userId){setTimerRestoreBusy(false);return ()=>{active=false;};}
     setTimerRestoreBusy(true);
     void loadWorkSession(userId).then(saved=>{
-      if(active){workSessionCurrent.current=saved;setWorkSession(saved);setTimerReadyUser(userId);setTimerRestored(true);}
+      if(active){timerNeedsRestore.current=false;workSessionCurrent.current=saved;setWorkSession(saved);setTimerReadyUser(userId);setTimerRestored(true);}
     }).catch(error=>{if(active)setTimerError('Could not restore job timer. '+(error instanceof Error?error.message:'Storage is unavailable')+'. Retry before starting work; the saved timer has not been replaced.');})
       .finally(()=>{if(active)setTimerRestoreBusy(false);});
     return ()=>{active=false;};
@@ -389,7 +391,7 @@ function GreenCollarDashboard() {
     const operator=userId;
     let saving=false;
     try {
-      if(!operator||!timerReady)throw new Error('Restore the job timer before starting work');
+      if(!operator||!timerReady||timerNeedsRestore.current)throw new Error('Restore the job timer before starting work');
       if(submitting.current)throw new Error('Wait for the completed visit to finish saving');
       const now=Date.now();setTimerNow(now);setTimerError('');
       const current=workSessionCurrent.current;
@@ -410,7 +412,7 @@ function GreenCollarDashboard() {
         });
     }catch(e){
       if(timerOperator.current===operator){
-        if(saving){setTimerRestored(false);setTimerReadyUser(null);}
+        if(saving){timerNeedsRestore.current=true;setTimerRestored(false);setTimerReadyUser(null);}
         setTimerError(saving?'Could not confirm the timer save. Restore the job timer before continuing; the requested change is not confirmed.':e instanceof Error?e.message:'Timer error');
       }
     }finally{if(saving)setTimerTransitionBusy(false);}
