@@ -23,7 +23,7 @@ export function createLocationConfirmationApi(authenticate:typeof authenticatedS
    const role=await businessAccess(env,subject,businessId);if(!role)return json({error:'forbidden'},403);
    if(request.method==='GET'){
     const date=url.searchParams.get('date')??'';if(!dateOk(date))return json({error:'invalid_date'},400);
-    const result=await env.DB.prepare('SELECT id,agreement_id,service_date,kind,operator_subject,confirmed_at,source,proximity,manual_reason,created_at FROM location_confirmations WHERE business_id=? AND service_date=? ORDER BY confirmed_at,id LIMIT 201').bind(businessId,date).all();
+    const result=await env.DB.prepare('SELECT id,agreement_id,service_date,kind,operator_subject,confirmed_at,source,proximity,manual_reason,created_at FROM location_confirmations WHERE business_id=? AND service_date=? ORDER BY confirmed_at DESC,id DESC LIMIT 201').bind(businessId,date).all();
     return json({events:result.results.slice(0,200),hasMore:result.results.length>200});
    }
    let raw:unknown;
