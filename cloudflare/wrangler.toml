@@ -7,3 +7,9 @@ binding = "DB"
 database_name = "greencollar-db"
 database_id = "2c168587-dbe5-41f2-ac57-bbe762842ea2"
 migrations_dir = "migrations"
+
+# Public Clerk development JWT verification metadata. No secret keys.
+[vars]
+OIDC_ISSUER = "https://close-chipmunk-6010.clerk.accounts.dev"
+OIDC_AUDIENCE = "greencollar-api"
+OIDC_JWKS_URL = "https://close-chipmunk-6010.clerk.accounts.dev/.well-known/jwks.json"
