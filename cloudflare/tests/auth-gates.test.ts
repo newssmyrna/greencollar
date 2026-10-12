@@ -7,7 +7,7 @@ import type { Env } from '../src/auth';
 
 const noDb = {get DB(){throw new Error('DB must never be used before authentication');}} as unknown as Env;
 const configured = {
-  ...noDb,
+  get DB(){throw new Error('DB must never be used before authentication');},
   OIDC_ISSUER:'https://identity.example.test',
   OIDC_AUDIENCE:'greencollar-api',
   OIDC_JWKS_URL:'https://identity.example.test/.well-known/jwks.json'
