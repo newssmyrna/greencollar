@@ -6,6 +6,7 @@ import { businessApi } from './business-api';
 import { completeVisitApi } from './visit-completion-api';
 import { skipVisitApi } from './visit-skip-api';
 import { locationConfirmationApi } from './location-confirmation-api';
+import { invoiceDraftApi } from './invoice-draft-api';
 import { authenticatedSubject } from './auth';
 import type { Env } from './auth';
 
@@ -34,6 +35,7 @@ export default {
     if(url.pathname==='/v1/visits/complete')return completeVisitApi(request,env);
     if(url.pathname==='/v1/visits/skip')return skipVisitApi(request,env);
     if(url.pathname==='/v1/location-confirmations')return locationConfirmationApi(request,env);
+    if(url.pathname==='/v1/invoice-drafts')return invoiceDraftApi(request,env,url);
     return json({error:'not_found'},404);
   }
 };

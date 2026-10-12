@@ -4,7 +4,7 @@ import {billableCompletedServices,invoiceFromCompletedService,unbillableComplete
 import {invoiceTotals,issueInvoice} from '../src/domain/invoice';
 const day={
  date:'2026-10-12',
- visits:[{agreement_id:'agreement-1',status:'completed',scheduled_date:'2026-10-12',
+ visits:[{id:'visit-1',agreement_id:'agreement-1',status:'completed',scheduled_date:'2026-10-12',
   completed_customer_id:'customer-at-completion',completed_customer_name:'Customer at completion',
   completed_service_name:'Pool maintenance at completion',completed_rate_cents:6500}]
 };
@@ -12,7 +12,7 @@ test('completed service produces a review-only invoice from its price and identi
  const [service]=billableCompletedServices(day,'business-1');
  const draft=invoiceFromCompletedService(service,'invoice-1','2026-10-26');
  assert.equal(draft.status,'draft');assert.equal(draft.customerId,'customer-at-completion');
- assert.equal(draft.customerName,'Customer at completion');
+ assert.equal(draft.customerName,'Customer at completion');assert.equal(service.visitId,'visit-1');
  assert.equal(draft.lines[0].description,'Pool maintenance at completion');
  assert.deepEqual(invoiceTotals(draft.lines,draft.taxBasisPoints),{subtotalCents:6500,taxCents:0,totalCents:6500});
  assert.equal(issueInvoice(draft).status,'issued');
@@ -24,7 +24,7 @@ test('does not invoice due, skipped, wrong-date or duplicate visits',()=>{
  assert.equal(billableCompletedServices({...day,visits:[{...day.visits[0],status:'due'}]},'business-1').length,0);
 });
 test('holds legacy completed visits without snapshots instead of guessing from a changed agreement',()=>{
- const legacy={...day,visits:[{agreement_id:'agreement-1',status:'completed',scheduled_date:day.date,
+ const legacy={...day,visits:[{id:'legacy-visit',agreement_id:'agreement-1',status:'completed',scheduled_date:day.date,
   completed_customer_id:null,completed_customer_name:null,completed_service_name:null,completed_rate_cents:null}]};
  assert.equal(billableCompletedServices(legacy,'business-1').length,0);
  assert.equal(unbillableCompletedServiceCount(legacy),1);

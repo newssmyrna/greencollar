@@ -9,6 +9,7 @@ Completed and verified:
 Important limitations:
 - The deployed Worker currently exposes health only. **Customer/day endpoints are not deployed**, pending Clerk issuer/JWKS/audience configuration, trusted business onboarding and cross-tenant tests.
 - The recurring tables created via Cloudflare API have a minimal schema. They are NOT identical to the stricter migration document (which contains extra checks/indexes/created_at). Before production use, create an additive migration to reconcile constraints and indexes, or recreate with reviewed migration in a fresh staging environment. Do not treat applying that stricter CREATE TABLE IF NOT EXISTS migration as a retrofit.
+- Review-only invoice draft schema/API are prepared but not deployed; migration 0008 is unapplied. Writes require owner/admin membership and one business/visit draft is enforced.
 - Zero real businesses or customers have been onboarded.
 - The Daily Work Queue is NOT a travel-optimized route; no road matrix/fuel API yet.
 - GreenCollar iPhone build and Clerk session have not been tested on-device.
