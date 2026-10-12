@@ -79,3 +79,13 @@ test('a load also waits for another write queued while its first wait is pending
  release.resolve();await Promise.all([first,second]);
  assert.deepEqual(await loaded,paused);
 });
+
+test('work notes persist on the timer and invalid notes fail closed',async()=>{
+ const f=fixture(),withNote={...running,note:'Close the side gate'};
+ await f.store.saveWorkSession('user_one',withNote);
+ assert.deepEqual(await f.store.loadWorkSession('user_one'),withNote);
+ const invalid={...withNote,note:'x'.repeat(1001)};
+ await assert.rejects(()=>f.store.saveWorkSession('user_one',invalid),/invalid/);
+ assert.deepEqual(await f.store.loadWorkSession('user_one'),withNote);
+ assert.throws(()=>parseWorkSessionRecord(JSON.stringify(invalid),10000),/invalid/);
+});
