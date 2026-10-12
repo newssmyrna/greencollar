@@ -5,6 +5,7 @@ import { useHostedAuth } from '@clerk/expo/hosted-auth';
 import { tokenCache } from '@clerk/expo/token-cache';
 import { fetchDayData, type DayData } from './src/data/greencollar-api';
 import { summarizeSavedDay } from './src/data/saved-day';
+import {createSavedQueueReview,isSavedQueueApproved} from './src/domain/saved-queue-review';
 import { getBusinesses, createBusiness } from './src/data/business-api';
 import { listSavedCustomers, createSavedCustomer, type SavedCustomer } from './src/data/customer-api';
 import { startWork, pauseWork, resumeWork, completeWork, getElapsedMinutes, completionRecord, type WorkSession } from './src/domain/work-session';
@@ -206,13 +207,21 @@ function GreenCollarDashboard() {
     }catch(e){setVisitSkipError(e instanceof Error?e.message:'Unable to mark visit skipped');}
     finally{setVisitSkipBusy('');}
   }
+  function requestSavedQueueApproval(){
+    if(!savedQueueReview)return;
+    const review=savedQueueReview;
+    const details=review.visitCount+' scheduled visits · '+review.estimatedServiceMinutes+' estimated service minutes · $'+(review.expectedRevenueCents/100).toFixed(2)+' expected revenue. This is the saved work order; travel is not optimized.';
+    Alert.alert("Review today's work queue",details,[
+      {text:'Keep reviewing',style:'cancel'},
+      {text:'Approve work queue',onPress:()=>setApprovedSavedQueueKey(review.approvalKey)}
+    ]);
+  }
   function confirmSkipSavedVisit(agreementId:string,date:string){
     Alert.alert('Skip this scheduled service?','This records the visit as skipped for '+date+'. You can’t skip a completed or active visit.',[
       {text:'Cancel',style:'cancel'},
       {text:'Mark skipped',style:'destructive',onPress:()=>void skipSavedVisit(agreementId,date)}
     ]);
   }
-
   async function findMyBusiness() {
     const api=process.env.EXPO_PUBLIC_GREENCOLLAR_API_URL;
     if(!api){setSavedDayError('API URL not configured yet.');return;}
@@ -256,6 +265,7 @@ function GreenCollarDashboard() {
   const [visitSkipBusy,setVisitSkipBusy]=useState('');
   const [visitSkipError,setVisitSkipError]=useState('');
   const [visitSkipNotice,setVisitSkipNotice]=useState('');
+  const [approvedSavedQueueKey,setApprovedSavedQueueKey]=useState<string|null>(null);
   const [locationAssessment,setLocationAssessment]=useState<ProximityAssessment|null>(null);
   const [locationAssessmentJob,setLocationAssessmentJob]=useState('');
   const [locationCheckError,setLocationCheckError]=useState('');
@@ -497,6 +507,9 @@ function GreenCollarDashboard() {
     }catch(e){setSavedDayError(e instanceof Error?e.message:'Unable to create business');}
     finally{setLoadingSaved(false);}
   }
+  const savedDueSummary=savedDay?summarizeSavedDay(savedDay):null;
+  const savedQueueReview=savedDay&&connectedBusiness&&savedDueSummary?createSavedQueueReview(connectedBusiness.id,savedDay.date,savedDueSummary.due.map(j=>({id:j.id,customer:j.customer,service:j.service,rateCents:j.rateCents,estimatedMinutes:j.estimatedMinutes}))):null;
+  const savedQueueApproved=isSavedQueueApproved(savedQueueReview,approvedSavedQueueKey);
   const visible = customers.slice(0, Math.max(0, parseInt(maxJobs, 10) || 0));
   const estimatedMinutes = visible.reduce((total, c) => total + c.minutes, 0);
   const visibleServerLocationConfirmations=filterLocationConfirmations(serverLocationConfirmations,serverAuditKindFilter,serverAuditSourceFilter);
@@ -575,7 +588,20 @@ function GreenCollarDashboard() {
             </>}{serverLocationConfirmationsHasMore&&serverLocationConfirmationsCursor&&<Pressable accessibilityRole="button" style={styles.primary} disabled={serverLocationConfirmationsBusy} onPress={()=>void loadServerLocationConfirmations(serverLocationConfirmationsCursor)}><Text style={styles.primaryText}>{serverLocationConfirmationsBusy?'Loading older history…':'Load older audit history'}</Text></Pressable>}
             {!serverLocationConfirmationsBusy&&!serverLocationConfirmationsError&&serverLocationConfirmations.length===0&&<Text style={styles.muted}>No confirmations recorded on the server for this date.</Text>}
           </View>}
-          {savedDay && <View style={styles.card}><Text style={styles.cardHeading}>Due today · Saved records</Text><Text style={styles.body}>{summarizeSavedDay(savedDay).pendingCount} jobs due · ${(summarizeSavedDay(savedDay).estimatedRevenueCents / 100).toFixed(2)} expected revenue · {summarizeSavedDay(savedDay).estimatedServiceMinutes} service minutes</Text><Text style={styles.muted}>{summarizeSavedDay(savedDay).completedCount} completed · {summarizeSavedDay(savedDay).skippedCount} skipped. Due-work preview only; no road routing or fuel estimate yet.</Text>{!!visitSkipNotice&&<Text accessibilityLiveRegion="polite" style={styles.body}>{visitSkipNotice}</Text>}{!!visitSkipError&&<Text accessibilityLiveRegion="polite" style={styles.muted}>{visitSkipError}</Text>}{summarizeSavedDay(savedDay).due.slice(0,12).map(j=><View key={j.id}><Text style={styles.body}>{j.customer} · {j.service} · {j.address}</Text><Pressable style={styles.primary} disabled={!!workSession&&workSession.status!=='completed'} onPress={()=>timerAction('start',j.id)}><Text style={styles.primaryText}>Start this service</Text></Pressable><Pressable accessibilityRole="button" style={[styles.primary,{backgroundColor:'#f0f5ef'}]} disabled={!!visitSkipBusy||!!workSession&&workSession.status!=='completed'} onPress={()=>confirmSkipSavedVisit(j.id.slice(0,-(savedDay.date.length+1)),savedDay.date)}><Text style={styles.primaryText}>{visitSkipBusy===j.id?'Saving skip…':'Skip this visit'}</Text></Pressable></View>)}</View>}
+          {savedDay && savedDueSummary && <View style={styles.card}>
+            <Text style={styles.cardHeading}>Due today · Saved records</Text>
+            <Text style={styles.body}>{savedDueSummary.pendingCount} jobs due · ${(savedDueSummary.estimatedRevenueCents / 100).toFixed(2)} expected revenue · {savedDueSummary.estimatedServiceMinutes} service minutes</Text>
+            <Text style={styles.muted}>{savedDueSummary.completedCount} completed · {savedDueSummary.skippedCount} skipped. This is a saved work queue, not an optimized route; travel and fuel estimates are unavailable.</Text>
+            <Pressable accessibilityRole="button" style={styles.primary} disabled={!savedQueueReview||savedQueueReview.visitCount===0} onPress={requestSavedQueueApproval}><Text style={styles.primaryText}>{savedQueueApproved?'Work queue approved for this session':'Review and approve work queue'}</Text></Pressable>
+            {!savedQueueApproved&&savedDueSummary.pendingCount>0&&<Text style={styles.muted}>Review the current work order before starting a saved visit. Approval is tied to this business, date, visit order, and estimate snapshot; changes require review again.</Text>}
+            {!!visitSkipNotice&&<Text accessibilityLiveRegion="polite" style={styles.body}>{visitSkipNotice}</Text>}
+            {!!visitSkipError&&<Text accessibilityLiveRegion="polite" style={styles.muted}>{visitSkipError}</Text>}
+            {savedDueSummary.due.map(j=><View key={j.id}>
+              <Text style={styles.body}>{j.customer} · {j.service} · {j.address}</Text>
+              <Pressable style={styles.primary} disabled={!savedQueueApproved||!!workSession&&workSession.status!=='completed'} onPress={()=>timerAction('start',j.id)}><Text style={styles.primaryText}>{savedQueueApproved?'Start this service':'Approve the work queue first'}</Text></Pressable>
+              <Pressable accessibilityRole="button" style={[styles.primary,{backgroundColor:'#f0f5ef'}]} disabled={!!visitSkipBusy||!!workSession&&workSession.status!=='completed'} onPress={()=>confirmSkipSavedVisit(j.id.slice(0,-(savedDay.date.length+1)),savedDay.date)}><Text style={styles.primaryText}>{visitSkipBusy===j.id?'Saving skip…':'Skip this visit'}</Text></Pressable>
+            </View>)}
+          </View>}
           <View style={styles.card}>
             <Text style={styles.label}>Example customers</Text>
             <Text style={styles.big}>{customers.length}</Text>
