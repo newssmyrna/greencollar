@@ -11,7 +11,8 @@ import {localSavedQueueOrder} from './src/data/local-saved-queue-order-native';
 import {localSavedQueueApproval} from './src/data/local-saved-queue-approval-native';
 import { getBusinesses, createBusiness } from './src/data/business-api';
 import { listSavedCustomers, createSavedCustomer, type SavedCustomer } from './src/data/customer-api';
-import { startWork, pauseWork, resumeWork, completeWork, getElapsedMinutes, completionRecord, type WorkSession } from './src/domain/work-session';
+import { pauseWork, resumeWork, completeWork, getElapsedMinutes, completionRecord, type WorkSession } from './src/domain/work-session';
+import {canStartNextWork,startNextWork,hasSavedWorkCompletion,workSessionDate} from './src/domain/work-handoff';
 import {saveVisitCompletion} from './src/data/visit-completion';
 import {saveVisitSkip} from './src/data/visit-skip';
 import {billableCompletedServices,invoiceFromCompletedService,unbillableCompletedServiceCount} from './src/domain/completed-invoice';
@@ -189,6 +190,7 @@ function GreenCollarDashboard() {
       const agreementId=prefix.slice(0,-(savedDay.date.length+1));
       if(!agreementId||!prefix.endsWith(':'+savedDay.date))throw new Error('Invalid scheduled visit');
       await saveVisitCompletion(api,token,{businessId:connectedBusiness.id,agreementId,date:savedDay.date,actualMinutes:completionRecord(workSession).actualMinutes});
+      if(timerOperator.current!==userId||workSessionCurrent.current!==workSession)return;
       setTimerSaved(true);
       setSavedDay(await fetchDayData(api,connectedBusiness.id,savedDay.date,token));
     } catch(e) {setTimerError(e instanceof Error?e.message:'Unable to save completed service');}
@@ -249,7 +251,7 @@ function GreenCollarDashboard() {
     }catch(e){setSavedDayError(e instanceof Error?e.message:'Unable to find your business');}
     finally{setLoadingSaved(false);}
   }
-  async function loadSavedDay() {
+  async function loadSavedDay(date=localCalendarDate()) {
     const api=process.env.EXPO_PUBLIC_GREENCOLLAR_API_URL;
     if(!api){setSavedDayError('API URL not configured yet.');return;}
     setLoadingSaved(true);setSavedDayError('');
@@ -260,7 +262,6 @@ function GreenCollarDashboard() {
       const business=connectedBusiness?.id??businesses[0]?.id;
       if(!business)throw new Error('Create a business before loading its workday');
       if(!connectedBusiness)setConnectedBusiness(businesses[0]);
-      const date=localCalendarDate();
       setSavedDay(await fetchDayData(api,business,date,token));
     }catch(e){setSavedDayError(e instanceof Error?e.message:'Unable to load saved data');}
     finally{setLoadingSaved(false);}
@@ -273,6 +274,10 @@ function GreenCollarDashboard() {
   const [maxJobs, setMaxJobs] = useState('6');
   const [planned, setPlanned] = useState(false);
   const [workSession,setWorkSession]=useState<WorkSession|null>(null);
+  const workSessionCurrent=useRef<WorkSession|null>(null);
+  workSessionCurrent.current=workSession;
+  const timerOperator=useRef<string|null|undefined>(userId);
+  timerOperator.current=userId;
   const [timerNow,setTimerNow]=useState(Date.now());
   const [timerError,setTimerError]=useState('');
   const [timerSaved,setTimerSaved]=useState(false);
@@ -333,17 +338,23 @@ function GreenCollarDashboard() {
     setInvoiceDrafts(prev=>prev.map(d=>d.id===id&&d.status==='draft'?{...d,lines:d.lines.map((line,i)=>i===0?{...line,unitPriceCents:cents}:line)}:d));
   }
   const [timerRestored,setTimerRestored]=useState(false);
+  const [timerReadyUser,setTimerReadyUser]=useState<string|null>(null);
+  const [timerRestoreBusy,setTimerRestoreBusy]=useState(false);
+  const [timerRestoreRetry,setTimerRestoreRetry]=useState(0);
+  const timerReady=timerRestored&&timerReadyUser===userId;
   const submitting=useRef(false);
   useEffect(()=>{
     let active=true;
-    setTimerRestored(false);
-    setWorkSession(null);
-    if(!userId){return ()=>{active=false;};}
+    setTimerRestored(false);setTimerReadyUser(null);setTimerSaved(false);setTimerError('');
+    setWorkSession(null);workSessionCurrent.current=null;
+    if(!userId){setTimerRestoreBusy(false);return ()=>{active=false;};}
+    setTimerRestoreBusy(true);
     void loadWorkSession(userId).then(saved=>{
-      if(active){setWorkSession(saved);setTimerRestored(true);}
-    }).catch(()=>{if(active){setTimerError('Could not restore job timer');setTimerRestored(true);}});
+      if(active){workSessionCurrent.current=saved;setWorkSession(saved);setTimerReadyUser(userId);setTimerRestored(true);}
+    }).catch(()=>{if(active)setTimerError('Could not restore job timer. Retry before starting work; the saved timer has not been replaced.');})
+      .finally(()=>{if(active)setTimerRestoreBusy(false);});
     return ()=>{active=false;};
-  },[userId]);
+  },[userId,timerRestoreRetry]);
   useEffect(()=>{
     let active=true;
     setLocationConfirmations([]);
@@ -371,17 +382,23 @@ function GreenCollarDashboard() {
     return ()=>{active=false;subscription.remove();};
   },[userId,connectedBusiness?.id]);
   useEffect(()=>{
-    if(!userId||!timerRestored)return;
-    void saveWorkSession(userId,workSession).catch(()=>setTimerError('Could not preserve job timer'));
-  },[userId,timerRestored,workSession]);
+    if(!userId||!timerReady)return;
+    void saveWorkSession(userId,workSession).catch(()=>{if(timerOperator.current===userId)setTimerError('Could not preserve job timer');});
+  },[userId,timerReady,workSession]);
   function timerAction(action:'start'|'pause'|'resume'|'complete', jobId='demo-job') {
     try {
-      if(!timerRestored)throw new Error('Timer is restoring');
+      if(!timerReady)throw new Error('Restore the job timer before starting work');
+      if(submitting.current)throw new Error('Wait for the completed visit to finish saving');
       const now=Date.now();setTimerNow(now);setTimerError('');
-      if(action==='start'){setTimerSaved(false);setWorkSession(startWork(jobId,now));return;}
-      if(!workSession)throw new Error('Start a job first');
-      const next=action==='pause'?pauseWork(workSession,now):action==='resume'?resumeWork(workSession,now):completeWork(workSession,now);
-      setWorkSession(next);
+      const current=workSessionCurrent.current;
+      if(action==='start'){
+        const completionSaved=timerSaved||hasSavedWorkCompletion(current,savedDay?.visits??[]);
+        const next=startNextWork(jobId,now,current,completionSaved);
+        workSessionCurrent.current=next;setTimerSaved(false);setWorkSession(next);return;
+      }
+      if(!current)throw new Error('Start a job first');
+      const next=action==='pause'?pauseWork(current,now):action==='resume'?resumeWork(current,now):completeWork(current,now);
+      workSessionCurrent.current=next;setWorkSession(next);
     }catch(e){setTimerError(e instanceof Error?e.message:'Timer error');}
   }
 
@@ -535,6 +552,9 @@ function GreenCollarDashboard() {
     finally{setLoadingSaved(false);}
   }
   const savedDueSummary=savedDay?summarizeSavedDay(savedDay):null;
+  const completedTimerSaved=timerSaved||hasSavedWorkCompletion(workSession,savedDay?.visits??[]);
+  const completedTimerDate=workSessionDate(workSession);
+  const timerCanStart=timerReady&&!loadingSaved&&canStartNextWork(workSession,completedTimerSaved);
   const savedQueueScope=JSON.stringify([userId,connectedBusiness?.id,savedDay?.date]);
   savedQueueScopeRef.current=savedQueueScope;
   const savedQueueOrderReady=savedQueueOrderReadyScope===savedQueueScope;
@@ -623,15 +643,16 @@ function GreenCollarDashboard() {
             <Text style={styles.muted}>Use a saved scheduled service below to record its completion. The timer is saved on this device and restored after reopening.</Text>
             <Text style={styles.big}>{workSession?getElapsedMinutes(workSession,timerNow):0} min</Text>
             <Text style={styles.body}>Status: {workSession?.status??'not started'} {workSession?.jobId!=='demo-job'&&workSession?.jobId?'· Saved visit':''}</Text>
-            {!workSession && <Pressable style={styles.primary} onPress={()=>timerAction('start')}><Text style={styles.primaryText}>Start demo job</Text></Pressable>}
+            {!workSession && <Pressable style={styles.primary} disabled={!timerCanStart} onPress={()=>timerAction('start')}><Text style={styles.primaryText}>Start demo job</Text></Pressable>}
             {workSession?.status==='running' && <Pressable style={styles.primary} onPress={()=>timerAction('pause')}><Text style={styles.primaryText}>Pause job</Text></Pressable>}
             {workSession?.status==='paused' && <Pressable style={styles.primary} onPress={()=>timerAction('resume')}><Text style={styles.primaryText}>Resume job</Text></Pressable>}
             {workSession && workSession.status!=='completed' && <Pressable style={styles.primary} onPress={()=>timerAction('complete')}><Text style={styles.primaryText}>Complete job</Text></Pressable>}
             {workSession?.status==='running' && <Pressable style={styles.primary} onPress={()=>setTimerNow(Date.now())}><Text style={styles.primaryText}>Refresh elapsed time</Text></Pressable>}
-            {workSession?.status==='completed' && <Text style={styles.body}>Recorded demo duration: {completionRecord(workSession).actualMinutes} min</Text>}
-            {workSession?.status==='completed' && workSession.jobId!=='demo-job' && !timerSaved && <Pressable style={styles.primary} disabled={loadingSaved} onPress={()=>void saveCompletedService()}><Text style={styles.primaryText}>Save completed visit</Text></Pressable>}
-            {timerSaved && <Text style={styles.body}>Visit completion saved to Cloudflare.</Text>}
-            {workSession?.status==='completed' && <Pressable style={styles.primary} onPress={()=>timerAction('start')}><Text style={styles.primaryText}>Start another demo</Text></Pressable>}
+            {workSession?.status==='completed' && <Text style={styles.body}>Recorded service duration: {completionRecord(workSession).actualMinutes} min</Text>}
+            {workSession?.status==='completed' && workSession.jobId!=='demo-job' && !completedTimerSaved && <Pressable style={styles.primary} disabled={loadingSaved} onPress={()=>void saveCompletedService()}><Text style={styles.primaryText}>Save completed visit</Text></Pressable>}
+            {completedTimerSaved && <Text style={styles.body}>Visit completion saved to Cloudflare.</Text>}
+            {workSession?.status==='completed'&&workSession.jobId!=='demo-job'&&!completedTimerSaved&&completedTimerDate&&<Pressable accessibilityRole="button" style={styles.primary} disabled={loadingSaved} onPress={()=>void loadSavedDay(completedTimerDate)}><Text style={styles.primaryText}>Load completed visit’s workday · {completedTimerDate}</Text></Pressable>}
+            {workSession?.status==='completed' && <Pressable style={styles.primary} disabled={!timerCanStart} onPress={()=>timerAction('start')}><Text style={styles.primaryText}>Start another demo</Text></Pressable>}
             {workSession&&workSession.status!=='completed'&&workSession.jobId!=='demo-job'&&<View style={styles.card}>
               <Text style={styles.cardHeading}>Service-site check</Text>
               <Text style={styles.muted}>One foreground location check can suggest arrival or departure. It never changes the job timer, completion, or billing. Confirmations save on this device first; pending events retry with the same ID.</Text>
@@ -654,7 +675,10 @@ function GreenCollarDashboard() {
               {!!locationConfirmError&&<Text accessibilityLiveRegion="polite" style={styles.muted}>{locationConfirmError}</Text>}
               {locationConfirmations.filter(event=>event.businessId===connectedBusiness?.id||event.jobId===workSession?.jobId).slice(-5).map((event,i)=><Text key={event.eventId||event.confirmedAt+'-'+i} style={styles.muted}>{event.kind==='arrival'?'Arrival':'Departure'} · {new Date(event.confirmedAt).toLocaleString()} · {event.source==='manual'?'manual: '+(event.manualReason??'reason not recorded'):'GPS suggestion'} · {event.syncStatus==='synced'?'synced':event.syncStatus==='pending'?'sync pending':'device only'}</Text>)}
             </View>}
-            {!!timerError && <Text style={styles.muted}>{timerError}</Text>}
+            {!!timerError && <Text accessibilityLiveRegion="polite" style={styles.muted}>{timerError}</Text>}
+            {timerRestoreBusy&&<Text accessibilityLiveRegion="polite" style={styles.muted}>Restoring your saved timer…</Text>}
+            {!timerReady&&!timerRestoreBusy&&<Pressable accessibilityRole="button" style={styles.primary} onPress={()=>setTimerRestoreRetry(value=>value+1)}><Text style={styles.primaryText}>Retry restoring job timer</Text></Pressable>}
+            {workSession?.status==='completed'&&workSession.jobId!=='demo-job'&&!completedTimerSaved&&<Text style={styles.muted}>Save this completed visit before starting another job. Load its original workday below to save or confirm the matching record.</Text>}
           </View>
           <Text style={styles.muted}>Prototype customer cards below use synthetic data. Saved Cloudflare records load separately.</Text>
           {!connectedBusiness && <View style={styles.card}><Text style={styles.cardHeading}>Create or find your business</Text><Pressable style={styles.primary} disabled={loadingSaved} onPress={()=>void findMyBusiness()}><Text style={styles.primaryText}>Find my saved business</Text></Pressable><TextInput style={styles.input} placeholder="Business name" placeholderTextColor="#819b8b" value={businessName} onChangeText={setBusinessName}/><Pressable style={styles.primary} disabled={loadingSaved} onPress={()=>void registerBusiness()}><Text style={styles.primaryText}>Create business</Text></Pressable><Text style={styles.muted}>Already registered? Find your saved business above. Otherwise create a new one.</Text></View>}
@@ -677,7 +701,7 @@ function GreenCollarDashboard() {
             {!serverLocationConfirmationsBusy&&!serverLocationConfirmationsError&&serverLocationConfirmations.length===0&&<Text style={styles.muted}>No confirmations recorded on the server for this date.</Text>}
           </View>}
           {savedDay && savedDueSummary && <View style={styles.card}>
-            <Text style={styles.cardHeading}>Due today · Saved records</Text>
+            <Text style={styles.cardHeading}>Due workday · {savedDay.date} · Saved records</Text>
             <Text style={styles.body}>{savedDueSummary.pendingCount} jobs due · ${(savedDueSummary.estimatedRevenueCents / 100).toFixed(2)} expected revenue · {savedDueSummary.estimatedServiceMinutes} service minutes</Text>
             <Text style={styles.muted}>{savedDueSummary.completedCount} completed · {savedDueSummary.skippedCount} skipped. This is a saved work queue, not an optimized route; travel and fuel estimates are unavailable.</Text>
             <Pressable accessibilityRole="button" style={styles.primary} disabled={!savedQueueOrderReady||savedQueueOrderSaveBusy||!savedQueueReview||savedQueueReview.visitCount===0||savedQueueApprovalChecking||savedQueueApprovalBusy} onPress={requestSavedQueueApproval}><Text style={styles.primaryText}>{!savedQueueOrderReady?'Restore work order before approval':savedQueueOrderSaveBusy?'Saving work order…':savedQueueApprovalChecking?'Checking saved approval…':savedQueueApprovalBusy?'Saving approval…':savedQueueApproved?'Work queue approved on this device':'Review and approve work queue'}</Text></Pressable>
@@ -696,7 +720,7 @@ function GreenCollarDashboard() {
                 <Pressable accessibilityRole="button" accessibilityLabel={'Move '+j.customer+' '+j.service+' earlier'} accessibilityState={{disabled:savedQueueEditingLocked||index===0}} style={[styles.primary,{backgroundColor:'#f0f5ef'}]} disabled={savedQueueEditingLocked||index===0} onPress={()=>changeSavedQueueOrder(j.id,'earlier')}><Text style={styles.primaryText}>Move earlier</Text></Pressable>
                 <Pressable accessibilityRole="button" accessibilityLabel={'Move '+j.customer+' '+j.service+' later'} accessibilityState={{disabled:savedQueueEditingLocked||index===savedQueueVisits.length-1}} style={[styles.primary,{backgroundColor:'#f0f5ef'}]} disabled={savedQueueEditingLocked||index===savedQueueVisits.length-1} onPress={()=>changeSavedQueueOrder(j.id,'later')}><Text style={styles.primaryText}>Move later</Text></Pressable>
               </View>
-              <Pressable style={styles.primary} disabled={!savedQueueOrderReady||savedQueueOrderSaveBusy||!savedQueueApproved||savedQueueApprovalChecking||savedQueueApprovalBusy||!!workSession&&workSession.status!=='completed'} onPress={()=>timerAction('start',j.id)}><Text style={styles.primaryText}>{savedQueueApproved?'Start this service':'Approve the work queue first'}</Text></Pressable>
+              <Pressable style={styles.primary} disabled={!timerCanStart||!savedQueueOrderReady||savedQueueOrderSaveBusy||!savedQueueApproved||savedQueueApprovalChecking||savedQueueApprovalBusy} onPress={()=>timerAction('start',j.id)}><Text style={styles.primaryText}>{savedQueueApproved?'Start this service':'Approve the work queue first'}</Text></Pressable>
               <Pressable accessibilityRole="button" style={[styles.primary,{backgroundColor:'#f0f5ef'}]} disabled={!!visitSkipBusy||!!workSession&&workSession.status!=='completed'} onPress={()=>confirmSkipSavedVisit(j.id.slice(0,-(savedDay.date.length+1)),savedDay.date)}><Text style={styles.primaryText}>{visitSkipBusy===j.id?'Saving skip…':'Skip this visit'}</Text></Pressable>
             </View>)}
           </View>}
