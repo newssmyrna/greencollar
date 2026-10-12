@@ -12,7 +12,7 @@ function present(r:DraftRow){return {id:r.id,businessId:r.business_id,serviceVis
 function validDraftRow(v:unknown):v is DraftRow{return !!v&&typeof v==='object'&&typeof (v as DraftRow).id==='string'&&typeof (v as DraftRow).business_id==='string'&&typeof (v as DraftRow).service_visit_id==='string'&&typeof (v as DraftRow).customer_id==='string'&&typeof (v as DraftRow).customer_name==='string'&&typeof (v as DraftRow).issued_on==='string'&&typeof (v as DraftRow).due_on==='string'&&typeof (v as DraftRow).service_description==='string'&&Number.isInteger((v as DraftRow).quantity)&&Number.isInteger((v as DraftRow).unit_price_cents)&&Number.isInteger((v as DraftRow).tax_basis_points)&&(v as DraftRow).status==='draft'&&typeof (v as DraftRow).notes==='string';}
 function fromDraftRow(r:DraftRow){return present(r);}
 export function createInvoiceDraftApi(authenticate:typeof authenticatedSubject=authenticatedSubject){
- return async(request:Request,env:Env,url:URL):Promise<Response>=>{
+ return async(request:Request,env:Env,url=new URL(request.url)):Promise<Response>=>{
   if(!['GET','POST','PATCH'].includes(request.method))return json({error:'method_not_allowed'},405);
   if(!env.OIDC_ISSUER||!env.OIDC_AUDIENCE||!env.OIDC_JWKS_URL)return json({error:'authentication_unconfigured'},503);
   const subject=await authenticate(request,env);if(!subject)return json({error:'unauthorized'},401);
