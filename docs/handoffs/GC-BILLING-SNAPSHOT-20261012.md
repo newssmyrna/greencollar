@@ -3,11 +3,11 @@
 Work: REVIEW. Delivery: PREPARED. Primary owner: RIVET; coordination: SWITCH.
 Branch: green/billing-snapshots-20261012. Base: recurring-service PR #22 at green/recurring-setup-20261012; depends on PRs #20–#22.
 Role authority: GreenCollar role guide in main README; 15 conceptual review perspectives applied by one assistant, not separate workers or independent QA.
-Phase started October 12, 2026 at 14:59 America/New_York. Actual elapsed time and checks are recorded in the PR. Per-role attention estimates are approximate and overlap.
+Phase started October 12, 2026 at 14:59:02 America/New_York; verification finished at 15:06:03 (7m01s elapsed), including GitHub Actions run 111. Per-role attention estimates are approximate and overlap.
 Acceptance: authenticated completion atomically records a visit and its customer ID/name, service name and integer-cent agreed price; completed visits are immutable on retry; daily reads expose the snapshots; invoice drafts use those fields and hold legacy unsnapshotted visits for manual review.
 Live pages/posts impacted: none. No deployment or migration was performed.
 Planned app pages: Today completion status; Invoices draft review.
-Testing only: synthetic completion/authorization/conflict cases, legacy invoice hold, and SQLite migration/write behavior.
+Testing only: synthetic completion/authorization/conflict cases, legacy invoice hold, and exact migration/upsert SQLite checks (new completion, existing due row, repeat immutability, and tenant mismatch).
 Documentation only: this handoff and migration comments.
 Schema migration is additive and un-applied. D1 schema reconciliation, backup, staging migration and authenticated device workflow remain gates before release.
 
@@ -37,7 +37,6 @@ src/domain/invoice.ts
 src/domain/completed-invoice.ts
 App.tsx
 tests/completed-invoice.test.ts
-docs/handoffs/GC-RECURRING-SETUP-20261012.md
 cloudflare/tests/visit-completion-api.test.ts
 cloudflare/migrations/0005_visit_billing_snapshots.sql
 
