@@ -9,6 +9,7 @@ import { getBusinesses, createBusiness } from './src/data/business-api';
 import { listSavedCustomers, createSavedCustomer, type SavedCustomer } from './src/data/customer-api';
 import { startWork, pauseWork, resumeWork, completeWork, getElapsedMinutes, completionRecord, type WorkSession } from './src/domain/work-session';
 import {saveVisitCompletion} from './src/data/visit-completion';
+import {saveVisitSkip} from './src/data/visit-skip';
 import {billableCompletedServices,invoiceFromCompletedService,unbillableCompletedServiceCount} from './src/domain/completed-invoice';
 import {invoiceTotals,type InvoiceDraft} from './src/domain/invoice';
 import {loadWorkSession,saveWorkSession} from './src/data/local-work-session';
@@ -22,7 +23,7 @@ import {listLocationConfirmations,syncLocationConfirmation,type ServerLocationCo
 import {filterLocationConfirmations,type LocationConfirmationKindFilter,type LocationConfirmationSourceFilter} from './src/domain/location-confirmation-filter';
 import {
   SafeAreaView, ScrollView, View, Text, TextInput, AppState,
-  Pressable, StyleSheet, StatusBar
+  Pressable, StyleSheet, StatusBar, Alert
 } from 'react-native';
 
 type Customer = {
@@ -189,6 +190,29 @@ function GreenCollarDashboard() {
     } catch(e) {setTimerError(e instanceof Error?e.message:'Unable to save completed service');}
     finally {submitting.current=false;setLoadingSaved(false);}
   }
+  async function skipSavedVisit(agreementId:string,date:string){
+    if(!connectedBusiness||!savedDay||savedDay.date!==date){setVisitSkipError('Load the matching saved workday first.');return;}
+    const api=process.env.EXPO_PUBLIC_GREENCOLLAR_API_URL;
+    if(!api){setVisitSkipError('API URL not configured');return;}
+    if(visitSkipBusy)return;
+    setVisitSkipBusy(agreementId);setVisitSkipError('');setVisitSkipNotice('');
+    try{
+      const token=await getToken({template:'greencollar-api'});
+      if(!token)throw new Error('Sign in first');
+      await saveVisitSkip(api,token,{businessId:connectedBusiness.id,agreementId,date});
+      setVisitSkipNotice('Visit marked skipped.');
+      try{setSavedDay(await fetchDayData(api,connectedBusiness.id,date,token));}
+      catch{setVisitSkipNotice('Visit marked skipped. Reload the saved workday to refresh the queue.');}
+    }catch(e){setVisitSkipError(e instanceof Error?e.message:'Unable to mark visit skipped');}
+    finally{setVisitSkipBusy('');}
+  }
+  function confirmSkipSavedVisit(agreementId:string,date:string){
+    Alert.alert('Skip this scheduled service?','This records the visit as skipped for '+date+'. You can’t skip a completed or active visit.',[
+      {text:'Cancel',style:'cancel'},
+      {text:'Mark skipped',style:'destructive',onPress:()=>void skipSavedVisit(agreementId,date)}
+    ]);
+  }
+
   async function findMyBusiness() {
     const api=process.env.EXPO_PUBLIC_GREENCOLLAR_API_URL;
     if(!api){setSavedDayError('API URL not configured yet.');return;}
@@ -548,7 +572,7 @@ function GreenCollarDashboard() {
             </>}{serverLocationConfirmationsHasMore&&serverLocationConfirmationsCursor&&<Pressable accessibilityRole="button" style={styles.primary} disabled={serverLocationConfirmationsBusy} onPress={()=>void loadServerLocationConfirmations(serverLocationConfirmationsCursor)}><Text style={styles.primaryText}>{serverLocationConfirmationsBusy?'Loading older history…':'Load older audit history'}</Text></Pressable>}
             {!serverLocationConfirmationsBusy&&!serverLocationConfirmationsError&&serverLocationConfirmations.length===0&&<Text style={styles.muted}>No confirmations recorded on the server for this date.</Text>}
           </View>}
-          {savedDay && <View style={styles.card}><Text style={styles.cardHeading}>Due today · Saved records</Text><Text style={styles.body}>{summarizeSavedDay(savedDay).pendingCount} jobs due · ${(summarizeSavedDay(savedDay).estimatedRevenueCents / 100).toFixed(2)} expected revenue · {summarizeSavedDay(savedDay).estimatedServiceMinutes} service minutes</Text><Text style={styles.muted}>{summarizeSavedDay(savedDay).completedCount} completed · {summarizeSavedDay(savedDay).skippedCount} skipped. Due-work preview only; no road routing or fuel estimate yet.</Text>{summarizeSavedDay(savedDay).due.slice(0,12).map(j=><View key={j.id}><Text style={styles.body}>{j.customer} · {j.service} · {j.address}</Text><Pressable style={styles.primary} disabled={!!workSession&&workSession.status!=='completed'} onPress={()=>timerAction('start',j.id)}><Text style={styles.primaryText}>Start this service</Text></Pressable></View>)}</View>}
+          {savedDay && <View style={styles.card}><Text style={styles.cardHeading}>Due today · Saved records</Text><Text style={styles.body}>{summarizeSavedDay(savedDay).pendingCount} jobs due · ${(summarizeSavedDay(savedDay).estimatedRevenueCents / 100).toFixed(2)} expected revenue · {summarizeSavedDay(savedDay).estimatedServiceMinutes} service minutes</Text><Text style={styles.muted}>{summarizeSavedDay(savedDay).completedCount} completed · {summarizeSavedDay(savedDay).skippedCount} skipped. Due-work preview only; no road routing or fuel estimate yet.</Text>{!!visitSkipNotice&&<Text accessibilityLiveRegion="polite" style={styles.body}>{visitSkipNotice}</Text>}{!!visitSkipError&&<Text accessibilityLiveRegion="polite" style={styles.muted}>{visitSkipError}</Text>}{summarizeSavedDay(savedDay).due.slice(0,12).map(j=><View key={j.id}><Text style={styles.body}>{j.customer} · {j.service} · {j.address}</Text><Pressable style={styles.primary} disabled={!!workSession&&workSession.status!=='completed'} onPress={()=>timerAction('start',j.id)}><Text style={styles.primaryText}>Start this service</Text></Pressable><Pressable accessibilityRole="button" style={[styles.primary,{backgroundColor:'#f0f5ef'}]} disabled={!!visitSkipBusy||!!workSession&&workSession.status!=='completed'} onPress={()=>confirmSkipSavedVisit(j.id.slice(0,-(savedDay.date.length+1)),savedDay.date)}><Text style={styles.primaryText}>{visitSkipBusy===j.id?'Saving skip…':'Skip this visit'}</Text></Pressable></View>)}</View>}
           <View style={styles.card}>
             <Text style={styles.label}>Example customers</Text>
             <Text style={styles.big}>{customers.length}</Text>
