@@ -5,6 +5,7 @@ import { tokenCache } from '@clerk/expo/token-cache';
 import { fetchDayData, type DayData } from './src/data/greencollar-api';
 import { summarizeSavedDay } from './src/data/saved-day';
 import { getBusinesses, createBusiness } from './src/data/business-api';
+import { listSavedCustomers, createSavedCustomer, type SavedCustomer } from './src/data/customer-api';
 import {
   SafeAreaView, ScrollView, View, Text, TextInput,
   Pressable, StyleSheet, StatusBar
@@ -31,6 +32,8 @@ const pale = '#d5f48b';
 function GreenCollarDashboard() {
   const {getToken} = useAuth();
   const [savedDay,setSavedDay] = useState<DayData|null>(null);
+  const [savedCustomers,setSavedCustomers] = useState<SavedCustomer[]>([]);
+  const [savedCustomerName,setSavedCustomerName] = useState('');
   const [savedDayError,setSavedDayError] = useState('');
   const [loadingSaved,setLoadingSaved] = useState(false);
   const [businessName,setBusinessName] = useState('');
@@ -66,6 +69,30 @@ function GreenCollarDashboard() {
       service: 'General service', rate: 0, minutes: 60, notes: ''
     }]);
     setName(''); setAddress('');
+  }
+  async function loadSavedCustomers() {
+    const api=process.env.EXPO_PUBLIC_GREENCOLLAR_API_URL;
+    if(!api||!connectedBusiness){setSavedDayError('Load your business first');return;}
+    setLoadingSaved(true);setSavedDayError('');
+    try {
+      const token=await getToken({template:'greencollar-api'});
+      if(!token)throw new Error('Sign in first');
+      setSavedCustomers(await listSavedCustomers(api,connectedBusiness.id,token));
+    }catch(e){setSavedDayError(e instanceof Error?e.message:'Could not load customers');}
+    finally{setLoadingSaved(false);}
+  }
+  async function saveCustomer() {
+    const api=process.env.EXPO_PUBLIC_GREENCOLLAR_API_URL;
+    if(!api||!connectedBusiness){setSavedDayError('Load your business first');return;}
+    setLoadingSaved(true);setSavedDayError('');
+    try {
+      const token=await getToken({template:'greencollar-api'});
+      if(!token)throw new Error('Sign in first');
+      await createSavedCustomer(api,connectedBusiness.id,token,{name:savedCustomerName});
+      setSavedCustomers(await listSavedCustomers(api,connectedBusiness.id,token));
+      setSavedCustomerName('');
+    }catch(e){setSavedDayError(e instanceof Error?e.message:'Could not save customer');}
+    finally{setLoadingSaved(false);}
   }
   async function registerBusiness() {
     const api=process.env.EXPO_PUBLIC_GREENCOLLAR_API_URL;
@@ -118,6 +145,17 @@ function GreenCollarDashboard() {
 
         {tab === 'customers' && <>
           <Text style={styles.heading}>Customers</Text>
+          <View style={styles.card}>
+            <Text style={styles.cardHeading}>Saved customers · Cloudflare</Text>
+            {connectedBusiness ? <>
+              <Pressable style={styles.primary} disabled={loadingSaved} onPress={()=>void loadSavedCustomers()}><Text style={styles.primaryText}>Load saved customers</Text></Pressable>
+              {savedCustomers.map(c=><Text key={c.id} style={styles.body}>{c.name}{c.phone?' · '+c.phone:''}</Text>)}
+              <TextInput style={styles.input} placeholder="New saved customer's name" placeholderTextColor="#819b8b" value={savedCustomerName} onChangeText={setSavedCustomerName}/>
+              <Pressable style={styles.primary} disabled={loadingSaved||!savedCustomerName.trim()} onPress={()=>void saveCustomer()}><Text style={styles.primaryText}>Save customer securely</Text></Pressable>
+            </> : <Text style={styles.muted}>Create or load your business on Today before saving real customers.</Text>}
+            {!!savedDayError && <Text style={styles.muted}>{savedDayError}</Text>}
+          </View>
+          <Text style={styles.heading}>Sample data · Not saved</Text>
           {customers.map(c => <View key={c.id} style={styles.card}>
             <Text style={styles.cardHeading}>{c.name}</Text>
             <Text style={styles.muted}>{c.address} · {c.service}</Text>
@@ -128,7 +166,7 @@ function GreenCollarDashboard() {
           <TextInput style={styles.input} placeholder="Customer name" placeholderTextColor="#819b8b" value={name} onChangeText={setName} />
           <TextInput style={styles.input} placeholder="Service address" placeholderTextColor="#819b8b" value={address} onChangeText={setAddress} />
           <Pressable style={styles.primary} onPress={addCustomer}><Text style={styles.primaryText}>Add customer</Text></Pressable>
-          <Text style={styles.muted}>Prototype data is in memory only. A secure database is next.</Text>
+          <Text style={styles.muted}>Example cards above are in memory only. Use the saved-customer section for database records.</Text>
         </>}
 
         {tab === 'planner' && <>
