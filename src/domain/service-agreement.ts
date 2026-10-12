@@ -28,7 +28,7 @@ export function serviceAgreementInput(value:unknown):ServiceAgreementInput{
  if(typeof v.estimatedMinutes!=='number'||!Number.isInteger(v.estimatedMinutes)||v.estimatedMinutes<1||v.estimatedMinutes>1440)throw new Error('Estimated duration must be 1–1440 whole minutes');
  if(typeof v.startsOn!=='string'||!validCalendarDate(v.startsOn))throw new Error('Start date must be YYYY-MM-DD');
  if(v.endsOn!==undefined&&v.endsOn!==''&&(typeof v.endsOn!=='string'||!validCalendarDate(v.endsOn)||v.endsOn<v.startsOn))throw new Error('End date must be on or after the start date');
- if(!['daily','weekly','biweekly','monthly','custom'].includes(String(v.frequency)))throw new Error('Choose a supported schedule');
+ if(typeof v.frequency!=='string'||!['daily','weekly','biweekly','monthly','custom'].includes(v.frequency))throw new Error('Choose a supported schedule');
  if(v.frequency==='custom'&&(typeof v.intervalDays!=='number'||!Number.isInteger(v.intervalDays)||v.intervalDays<1||v.intervalDays>366))throw new Error('Custom interval must be 1–366 whole days');
  if(v.frequency!=='custom'&&v.intervalDays!==undefined)throw new Error('A custom interval requires the custom schedule');
  return {locationId:v.locationId,serviceName:v.serviceName.trim(),rateCents:v.rateCents,estimatedMinutes:v.estimatedMinutes,

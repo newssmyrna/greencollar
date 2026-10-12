@@ -12,7 +12,7 @@ test('calendar dates, cents, duration and schedule are validated',()=>{
  for(const price of ['1.234','-1','Infinity','1e2'])assert.throws(()=>dollarsToCents(price));
  for(const change of [
   {startsOn:'2026-02-30'},{endsOn:'2026-10-11'},{rateCents:12.5},{estimatedMinutes:0},
-  {frequency:'yearly'},{frequency:'custom',intervalDays:0},{intervalDays:7}
+  {frequency:'yearly'},{frequency:['weekly']},{frequency:'custom',intervalDays:0},{intervalDays:7}
  ])assert.throws(()=>serviceAgreementInput({...input,...change}));
  assert.deepEqual(serviceAgreementInput({...input,frequency:'custom',intervalDays:10}).intervalDays,10);
 });
