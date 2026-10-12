@@ -43,6 +43,6 @@ test('confirmation history appends without replacing entries and refuses to exce
  const first=createLocationConfirmation({jobId:'job-1',operatorId:'worker-1',kind:'arrival',confirmedAt:1000,source:'manual',manualReason:'Gate was open'});
  const second=createLocationConfirmation({jobId:'job-1',operatorId:'worker-1',kind:'departure',confirmedAt:2000,source:'manual',manualReason:'Work completed'});
  assert.deepEqual(appendLocationConfirmation([first],second,2),[first,second]);
- assert.throws(()=>appendLocationConfirmation([first,second],first,2),/history is full/);
+ assert.throws(()=>appendLocationConfirmation([first,second],first,2),/limit reached/);
  assert.throws(()=>appendLocationConfirmation([],first,0),/limit/);
 });
