@@ -13,7 +13,7 @@ test('posts a tenant-scoped confirmation with a stable ID and bearer token',asyn
   assert.deepEqual(await syncLocationConfirmation('https://api.example.test','jwt',event),{eventId:'evt-1',duplicate:false});
   assert.equal(url,'https://api.example.test/v1/location-confirmations?business_id=business-a');
   assert.equal((request?.headers as Record<string,string>).Authorization,'Bearer jwt');
-  assert.deepEqual(JSON.parse(String(request?.body)),{eventId:'evt-1',agreementId:'agreement-a',date:'2026-10-12',kind:'arrival',source:'gps_suggestion',proximity:'within_radius',confirmedAt:event.confirmedAt});
+  assert.deepEqual(JSON.parse(String(request?.body)),{eventId:'evt-1',businessId:'business-a',agreementId:'agreement-a',date:'2026-10-12',kind:'arrival',source:'gps_suggestion',proximity:'within_radius',confirmedAt:event.confirmedAt});
 });
 
 test('rejects insecure URLs and mismatched GPS confirmations before sending',async()=>{
