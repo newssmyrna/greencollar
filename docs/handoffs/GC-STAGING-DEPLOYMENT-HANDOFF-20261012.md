@@ -20,10 +20,12 @@ The product roadmap is organized into four phases and the operator experience ha
 | --- | --- | --- |
 | Merged source milestones in the prior handoff | 5/5 (100%) | PRs #20–#24 merged. |
 | Latest merge CI areas | 3/3 passed | App checks, Worker checks/auth tests, and staging dry-run bundle passed in CI #120. |
-| Seven workflow areas with substantive partial source work | 3/7 (about 43% coverage) | Setup, day-work queue, and billing calculations/snapshots have partial implementation. This is coverage, not percent-complete. |
+| Seven workflow areas with substantive partial source work | 4/7 (about 57% coverage) | Setup, day-work queue, basic timer execution, and billing calculations/snapshots have partial implementation. This is coverage, not percent-complete. |
 | Workflow areas fully release-ready | 0/7 verified | No complete, deployed end-to-end operator journey has passed acceptance. |
 | Staging deployment | 0/1 succeeded | Run #1 stopped before deployment because the token secret was missing. |
 | Live production release | Not started | No production deployment or real-business onboarding was performed in this phase. |
+
+**Coverage correction (15:46 EDT):** a later source audit confirmed that the basic timer UI/state machine already existed on `main` before PR #25. Therefore the current source-area coverage is 4/7, not 3/7; PR #25 strengthens timer recovery within that existing partial area. No workflow area is fully release-ready.
 
 **Phase view:** Phase 1 (vision/brand/workflow/prototype/repository) is complete per the roadmap. Phase 2 (foundation) is in progress. Phase 3 (integrated operating experience) and Phase 4 (product validation) remain ahead. The first paid release criteria are not yet satisfied. A single overall percentage would imply weights the owner has not set; the count above is an honest milestone/coverage rate.
 
