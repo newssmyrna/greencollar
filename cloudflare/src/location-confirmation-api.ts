@@ -31,7 +31,7 @@ export function createLocationConfirmationApi(authenticate:typeof authenticatedS
    if(!raw||typeof raw!=='object'||Array.isArray(raw))return json({error:'invalid_event'},400);
    const input=raw as Record<string,unknown>;
    const {eventId, businessId:bodyBusiness, agreementId, date, kind, source, proximity:status, manualReason, confirmedAt}=input;
-   if(!eventIdOk(eventId)||bodyBusiness!==businessId||!recordId(agreementId)||!dateOk(date)||(kind!=='arrival'&&kind!=='departure')||(source!=='gps_suggestion'&&source!=='manual')||!proximities.includes(status as typeof proximities[number])||!Number.isSafeInteger(confirmedAt)||Number(confirmedAt)<0||Number(confirmedAt)>Date.now()+300000)return json({error:'invalid_event'},400);
+   if(!eventIdOk(eventId)||bodyBusiness!==businessId||!recordId(agreementId)||!dateOk(date)||(kind!=='arrival'&&kind!=='departure')||(source!=='gps_suggestion'&&source!=='manual')||!proximities.includes(status as typeof proximities[number])||typeof confirmedAt!=='number'||!Number.isSafeInteger(confirmedAt)||confirmedAt<0||confirmedAt>Date.now()+300000)return json({error:'invalid_event'},400);
    const eventKind=kind as 'arrival'|'departure',eventSource=source as 'gps_suggestion'|'manual',eventProximity=status as typeof proximities[number];
    let reason:string|null=null;
    if(eventSource==='gps_suggestion'){
