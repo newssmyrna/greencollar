@@ -1,0 +1,9 @@
+name = "greencollar-api"
+main = "src/index.ts"
+compatibility_date = "2026-10-12"
+
+[[d1_databases]]
+binding = "DB"
+database_name = "greencollar-db"
+database_id = "2c168587-dbe5-41f2-ac57-bbe762842ea2"
+migrations_dir = "migrations"
