@@ -1,10 +1,11 @@
 import {authenticatedSubject,businessAccess,type Env} from './auth';
+
 const json=(x:unknown,status=200)=>new Response(JSON.stringify(x),{status,headers:{'content-type':'application/json','cache-control':'no-store'}});
 const dateOk=(v:string)=>/^\d{4}-\d{2}-\d{2}$/.test(v)&&!Number.isNaN(Date.parse(v))&&new Date(v+'T00:00:00Z').toISOString().slice(0,10)===v;
 
 /** Authenticated, tenant-scoped completed recurring-service record.
  * A client may submit measured minutes, never a tenant or customer identity as proof of ownership.
- * Repeat completion is rejected rather than double-counted.
+ * Repeating the same completion is idempotent so a lost response can be safely retried.
  */
 export async function completeVisitApi(request:Request,env:Env):Promise<Response>{
  if(request.method!=='POST')return json({error:'method_not_allowed'},405);
@@ -24,9 +25,12 @@ export async function completeVisitApi(request:Request,env:Env):Promise<Response
  const agreement=await env.DB.prepare('SELECT id FROM service_agreements WHERE business_id=? AND id=? AND starts_on<=? AND (ends_on IS NULL OR ends_on>=?)')
  .bind(businessId,agreementId,date,date).first();
  if(!agreement)return json({error:'agreement_not_found'},404);
- const existing=await env.DB.prepare('SELECT id,status FROM service_visits WHERE business_id=? AND agreement_id=? AND scheduled_date=?')
- .bind(businessId,agreementId,date).first<{id:string;status:string}>();
- if(existing?.status==='completed')return json({error:'already_completed'},409);
+ const existing=await env.DB.prepare('SELECT id,status,actual_minutes FROM service_visits WHERE business_id=? AND agreement_id=? AND scheduled_date=?')
+ .bind(businessId,agreementId,date).first<{id:string;status:string;actual_minutes:number|null}>();
+ if(existing?.status==='completed'){
+   if(existing.actual_minutes===actualMinutes)return json({agreementId,date,status:'completed',actualMinutes},200);
+   return json({error:'already_completed'},409);
+ }
  try{
    if(existing){
      const changed=await env.DB.prepare("UPDATE service_visits SET status='completed',actual_minutes=? WHERE id=? AND business_id=? AND status!='completed'")
