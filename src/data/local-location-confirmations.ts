@@ -72,13 +72,13 @@ export async function saveLocationConfirmation(
   const ids=await readIds(subject);
   if(ids.length>=20)throw new Error('Local confirmation limit reached; server sync is required for more history');
   const history=await loadLocationConfirmations(subject);
-  const next=appendLocationConfirmation(history,event,20);
+  appendLocationConfirmation(history,event,20);
   const eventId=Date.now().toString(36)+'_'+Math.random().toString(36).slice(2,14);
   const stored:StoredLocationConfirmation={...event,eventId,...details,syncStatus:'pending'};
   await SecureStore.setItemAsync(eventKey(subject,eventId),JSON.stringify(stored));
   ids.push(eventId);
   await SecureStore.setItemAsync(indexKey(subject),JSON.stringify(ids));
-  return [...next.slice(0,-1),stored];
+  return [...history,stored];
 }
 
 export async function markLocationConfirmationSynced(subject:string,eventId:string):Promise<StoredLocationConfirmation[]> {
