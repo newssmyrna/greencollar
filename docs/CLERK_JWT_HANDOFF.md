@@ -16,3 +16,11 @@ The supplied publishable key is a development key identifying the Clerk instance
 
 ## Current deployment
 Cloudflare GreenCollar Worker remains health-check-only. The new protected API routes remain in GitHub; the iPhone app has not been run on-device. This is a development setup, not a live customer service.
+
+## Verified from Clerk dashboard screenshot (2026-10-12)
+- Development instance issuer shown: `https://close-chipmunk-6010.clerk.accounts.dev`
+- Template claims: `{ "aud": "greencollar-api" }`
+- JWT lifetime: 60 seconds; clock skew: 5 seconds
+- Custom signing key disabled (uses instance default)
+- Dashboard displays a JWKS endpoint, but its full URL was truncated in screenshot. Confirm exact endpoint and signing algorithm before configuring or deploying the Worker.
+- External public endpoint access could not be verified from the current environment. No secrets needed or shared.
