@@ -405,10 +405,10 @@ function GreenCollarDashboard() {
     if(!/^\d{1,3}(\.\d{0,2})?$/.test(value))return;
     const percent=Number(value);if(!Number.isFinite(percent)||percent>100)return;
     const basisPoints=Math.round(percent*100);
-    setInvoiceDrafts(prev=>prev.map(d=>d.id===id&&d.status==='draft'?setInvoiceTaxBasisPoints(d,basisPoints):d));
+    setInvoiceDrafts(prev=>prev.map(d=>d.id===id&&d.status==='draft'?{...setInvoiceTaxBasisPoints(d,basisPoints),serviceVisitId:d.serviceVisitId}:d));
   }
   function editDraftDueDays(id:string,days:number){
-    setInvoiceDrafts(prev=>prev.map(d=>d.id===id&&d.status==='draft'?setInvoiceDueDays(d,days):d));
+    setInvoiceDrafts(prev=>prev.map(d=>d.id===id&&d.status==='draft'?{...setInvoiceDueDays(d,days),serviceVisitId:d.serviceVisitId}:d));
   }
   const timerNeedsRestore=useRef(true);
   const [timerRestored,setTimerRestored]=useState(false);
