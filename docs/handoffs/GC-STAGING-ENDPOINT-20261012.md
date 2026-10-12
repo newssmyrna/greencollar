@@ -13,7 +13,7 @@ Added `.github/workflows/deploy-staging.yml`: manual dispatch on `main`, require
 ## Verification / remaining work
 - Worker inventory confirmed only `greencollar-api` exists; `greencollar-api-staging` has not been uploaded. Therefore no public endpoint exists at handoff.
 - Account workers.dev subdomain read and staging config review completed.
-- CI run #115 (commit `0a4b18a`) passed the Cloudflare job, including Worker typecheck, staging dry-run bundle and auth gate tests. The app job was still in progress at the last check.
+- CI run #115 (commit `0a4b18a`) passed the Cloudflare job, including Worker typecheck, staging dry-run bundle and auth gate tests. The run was ultimately marked cancelled as later branch commits superseded it; its app typecheck and scheduling test steps completed successfully.
 - Next: finish CI; review/merge the stacked source PRs; ensure GitHub has the `CLOUDFLARE_API_TOKEN` secret; run manual staging deploy; verify `/health` and unauthenticated `/v1/session` (expected 401); then connect Clerk/app staging URL and test authenticated phone workflow with synthetic records only.
 - Production schema reconciliation and migration remain blocked pending a verified backup and baseline plan.
 
