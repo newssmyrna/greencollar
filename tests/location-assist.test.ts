@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import {assessProximity,createLocationConfirmation} from '../src/domain/location-assist';
+import {assessProximity,createLocationConfirmation,appendLocationConfirmation} from '../src/domain/location-assist';
 
 const target={latitude:29,longitude:-80.9};
 const settings={radiusMeters:100,maxAccuracyMeters:50};
@@ -37,4 +37,12 @@ test('manual confirmations require a reason and do not require GPS',()=>{
  const event=createLocationConfirmation({jobId:'job-1',operatorId:'worker-1',kind:'departure',confirmedAt:1000,source:'manual',manualReason:' Customer asked me to leave '});
  assert.equal(event.proximity,'manual');assert.equal(event.manualReason,'Customer asked me to leave');
  assert.throws(()=>createLocationConfirmation({jobId:'job-1',operatorId:'worker-1',kind:'arrival',confirmedAt:1000,source:'manual',manualReason:'x'.repeat(281)}),/at most 280/);
+});
+
+test('confirmation history appends without replacing entries and refuses to exceed its limit',()=>{
+ const first=createLocationConfirmation({jobId:'job-1',operatorId:'worker-1',kind:'arrival',confirmedAt:1000,source:'manual',manualReason:'Gate was open'});
+ const second=createLocationConfirmation({jobId:'job-1',operatorId:'worker-1',kind:'departure',confirmedAt:2000,source:'manual',manualReason:'Work completed'});
+ assert.deepEqual(appendLocationConfirmation([first],second,2),[first,second]);
+ assert.throws(()=>appendLocationConfirmation([first,second],first,2),/history is full/);
+ assert.throws(()=>appendLocationConfirmation([],first,0),/limit/);
 });
