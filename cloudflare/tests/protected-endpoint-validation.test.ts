@@ -52,7 +52,7 @@ test('customer API returns controlled 400 responses for null, arrays, and invali
       const url=new URL(request.url);
       const response=await customerApi(request,auth.env,url);
       assert.equal(response.status,400);
-      assert.equal((await response.json() as {error:string}).error,body&&typeof body==='object'&&!Array.isArray(body)&&'name'in body&&typeof body.name==='string'?'invalid_input':'invalid_input');
+      assert.equal((await response.json() as {error:string}).error,'invalid_input');
     }
     assert.equal(queries.filter(sql=>sql.includes('INSERT')).length,0);
   }finally{auth.restore();}
