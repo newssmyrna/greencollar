@@ -6,6 +6,7 @@ import { tokenCache } from '@clerk/expo/token-cache';
 import { fetchDayData, type DayData } from './src/data/greencollar-api';
 import { summarizeSavedDay } from './src/data/saved-day';
 import {createSavedQueueReview,isSavedQueueApproved} from './src/domain/saved-queue-review';
+import {orderSavedQueue,moveSavedQueueVisit,type SavedQueueOrder} from './src/domain/saved-queue-order';
 import {localSavedQueueApproval} from './src/data/local-saved-queue-approval-native';
 import { getBusinesses, createBusiness } from './src/data/business-api';
 import { listSavedCustomers, createSavedCustomer, type SavedCustomer } from './src/data/customer-api';
@@ -210,11 +211,11 @@ function GreenCollarDashboard() {
   }
   async function persistSavedQueueApproval(review:NonNullable<typeof savedQueueReview>){
     if(!userId){setSavedQueueApprovalError('Sign in to approve this saved work queue.');return;}
-    if(savedQueueReview?.approvalKey!==review.approvalKey){setSavedQueueApprovalError('The work queue changed. Review it again before approving.');return;}
+    if(currentSavedQueueContext.current.userId!==userId||currentSavedQueueContext.current.approvalKey!==review.approvalKey){setSavedQueueApprovalError('The work queue changed. Review it again before approving.');return;}
     setSavedQueueApprovalBusy(true);setSavedQueueApprovalError('');
     try{
       await localSavedQueueApproval.approve(userId,review);
-      setApprovedSavedQueueKey(review.approvalKey);
+      if(currentSavedQueueContext.current.userId===userId&&currentSavedQueueContext.current.approvalKey===review.approvalKey)setApprovedSavedQueueKey(review.approvalKey);
     }catch{
       setApprovedSavedQueueKey(null);
       setSavedQueueApprovalError('Secure device storage could not save the approval. Starting saved work is disabled.');
@@ -223,7 +224,7 @@ function GreenCollarDashboard() {
   function requestSavedQueueApproval(){
     if(!savedQueueReview)return;
     const review=savedQueueReview;
-    const details=review.visitCount+' scheduled visits · '+review.estimatedServiceMinutes+' estimated service minutes · $'+(review.expectedRevenueCents/100).toFixed(2)+' expected revenue. This is the saved work order; travel is not optimized.';
+    const details=review.visitCount+' scheduled visits · '+review.estimatedServiceMinutes+' estimated service minutes · $'+(review.expectedRevenueCents/100).toFixed(2)+' expected revenue. This is the saved work order; travel is not optimized.\n\n'+savedQueueVisits.map((visit,index)=>(index+1)+'. '+visit.customer+' · '+visit.service).join('\n');
     Alert.alert("Review today's work queue",details,[
       {text:'Keep reviewing',style:'cancel'},
       {text:'Approve work queue',onPress:()=>void persistSavedQueueApproval(review)}
@@ -282,6 +283,8 @@ function GreenCollarDashboard() {
   const [savedQueueApprovalBusy,setSavedQueueApprovalBusy]=useState(false);
   const [savedQueueApprovalError,setSavedQueueApprovalError]=useState('');
   const savedQueueApprovalRequest=useRef(0);
+  const [savedQueueOrder,setSavedQueueOrder]=useState<SavedQueueOrder|null>(null);
+  const currentSavedQueueContext=useRef<{userId:string|null|undefined;approvalKey:string|null}>({userId:null,approvalKey:null});
   const [locationAssessment,setLocationAssessment]=useState<ProximityAssessment|null>(null);
   const [locationAssessmentJob,setLocationAssessmentJob]=useState('');
   const [locationCheckError,setLocationCheckError]=useState('');
@@ -524,7 +527,22 @@ function GreenCollarDashboard() {
     finally{setLoadingSaved(false);}
   }
   const savedDueSummary=savedDay?summarizeSavedDay(savedDay):null;
-  const savedQueueReview=savedDay&&connectedBusiness&&savedDueSummary?createSavedQueueReview(connectedBusiness.id,savedDay.date,savedDueSummary.due.map(j=>({id:j.id,customer:j.customer,service:j.service,rateCents:j.rateCents,estimatedMinutes:j.estimatedMinutes}))):null;
+  const savedQueueScope=JSON.stringify([userId,connectedBusiness?.id,savedDay?.date]);
+  const savedQueueVisits=orderSavedQueue(savedDueSummary?.due??[],savedQueueScope,savedQueueOrder);
+  const savedQueueReview=savedDay&&connectedBusiness&&savedDueSummary?createSavedQueueReview(connectedBusiness.id,savedDay.date,savedQueueVisits):null;
+  currentSavedQueueContext.current={userId,approvalKey:savedQueueReview?.approvalKey??null};
+  const savedQueueEditingLocked=loadingSaved||savedQueueApprovalChecking||savedQueueApprovalBusy||!!visitSkipBusy||!!workSession&&workSession.status!=='completed';
+  const savedQueueReordered=savedQueueVisits.some((visit,index)=>visit.id!==savedDueSummary?.due[index]?.id);
+  useEffect(()=>{setSavedQueueOrder(null);},[savedQueueScope]);
+  function changeSavedQueueOrder(visitId:string,direction:'earlier'|'later'){
+    if(savedQueueEditingLocked)return;
+    setSavedQueueOrder({scopeKey:savedQueueScope,visitIds:moveSavedQueueVisit(savedQueueVisits,visitId,direction).map(visit=>visit.id)});
+    setApprovedSavedQueueKey(null);setSavedQueueApprovalError('');
+  }
+  function resetSavedQueueOrder(){
+    if(savedQueueEditingLocked)return;
+    setSavedQueueOrder(null);setApprovedSavedQueueKey(null);setSavedQueueApprovalError('');
+  }
   const savedQueueApproved=isSavedQueueApproved(savedQueueReview,approvedSavedQueueKey);
   useEffect(()=>{
     const request=++savedQueueApprovalRequest.current;
@@ -627,8 +645,15 @@ function GreenCollarDashboard() {
             {!!savedQueueApprovalError&&<Text accessibilityLiveRegion="polite" style={styles.muted}>{savedQueueApprovalError}</Text>}{!savedQueueApproved&&savedDueSummary.pendingCount>0&&<Text style={styles.muted}>Review the current work order before starting a saved visit. Approval is saved securely on this device and tied to this business, date, visit order, and estimate snapshot; changes require review again.</Text>}
             {!!visitSkipNotice&&<Text accessibilityLiveRegion="polite" style={styles.body}>{visitSkipNotice}</Text>}
             {!!visitSkipError&&<Text accessibilityLiveRegion="polite" style={styles.muted}>{visitSkipError}</Text>}
-            {savedDueSummary.due.map(j=><View key={j.id}>
-              <Text style={styles.body}>{j.customer} · {j.service} · {j.address}</Text>
+            <Text style={styles.muted}>Use Move earlier or Move later to choose your work order. This order applies while the workday is open; restarting the app restores the saved default order. Appointment times are unchanged and arrival times are not calculated.</Text>
+            {savedQueueEditingLocked&&<Text style={styles.muted}>Finish active work or wait for the current save before changing the order.</Text>}
+            <Pressable accessibilityRole="button" accessibilityState={{disabled:savedQueueEditingLocked||!savedQueueReordered}} style={[styles.primary,{backgroundColor:'#f0f5ef'}]} disabled={savedQueueEditingLocked||!savedQueueReordered} onPress={resetSavedQueueOrder}><Text style={styles.primaryText}>Restore saved order</Text></Pressable>
+            {savedQueueVisits.map((j,index)=><View key={j.id}>
+              <Text style={styles.body}>{index+1}. {j.customer} · {j.service} · {j.address}</Text>
+              <View style={{flexDirection:'row',flexWrap:'wrap',gap:8}}>
+                <Pressable accessibilityRole="button" accessibilityLabel={'Move '+j.customer+' '+j.service+' earlier'} accessibilityState={{disabled:savedQueueEditingLocked||index===0}} style={[styles.primary,{backgroundColor:'#f0f5ef'}]} disabled={savedQueueEditingLocked||index===0} onPress={()=>changeSavedQueueOrder(j.id,'earlier')}><Text style={styles.primaryText}>Move earlier</Text></Pressable>
+                <Pressable accessibilityRole="button" accessibilityLabel={'Move '+j.customer+' '+j.service+' later'} accessibilityState={{disabled:savedQueueEditingLocked||index===savedQueueVisits.length-1}} style={[styles.primary,{backgroundColor:'#f0f5ef'}]} disabled={savedQueueEditingLocked||index===savedQueueVisits.length-1} onPress={()=>changeSavedQueueOrder(j.id,'later')}><Text style={styles.primaryText}>Move later</Text></Pressable>
+              </View>
               <Pressable style={styles.primary} disabled={!savedQueueApproved||savedQueueApprovalChecking||savedQueueApprovalBusy||!!workSession&&workSession.status!=='completed'} onPress={()=>timerAction('start',j.id)}><Text style={styles.primaryText}>{savedQueueApproved?'Start this service':'Approve the work queue first'}</Text></Pressable>
               <Pressable accessibilityRole="button" style={[styles.primary,{backgroundColor:'#f0f5ef'}]} disabled={!!visitSkipBusy||!!workSession&&workSession.status!=='completed'} onPress={()=>confirmSkipSavedVisit(j.id.slice(0,-(savedDay.date.length+1)),savedDay.date)}><Text style={styles.primaryText}>{visitSkipBusy===j.id?'Saving skip…':'Skip this visit'}</Text></Pressable>
             </View>)}
