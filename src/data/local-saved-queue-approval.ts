@@ -1,5 +1,3 @@
-import * as Crypto from 'expo-crypto';
-import * as SecureStore from 'expo-secure-store';
 import type {SavedQueueReview} from '../domain/saved-queue-review';
 
 export type KeyValueSecureStore={
@@ -9,7 +7,6 @@ export type KeyValueSecureStore={
 export type Digest=(value:string)=>Promise<string>;
 type ApprovalRecord={version:1;businessDigest:string;date:string;approvalDigest:string};
 
-const digestSha256:Digest=value=>Crypto.digestStringAsync(Crypto.CryptoDigestAlgorithm.SHA256,value);
 function parseRecord(value:string|null):ApprovalRecord|null{
   if(!value)return null;
   try{
@@ -52,4 +49,3 @@ export function createLocalSavedQueueApprovalStore(storage:KeyValueSecureStore,d
     }
   };
 }
-export const localSavedQueueApproval=createLocalSavedQueueApprovalStore(SecureStore,digestSha256);
