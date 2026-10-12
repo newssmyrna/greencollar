@@ -12,7 +12,7 @@
 | Timer reliability | Local timer source in `main`; open PR adds saved visit identity, retry safety, and overwrite protection | Latest PR #10 checks pass | No device/offline acceptance | Review and merge PR #10, then test on device |
 | Visit/customer validation | Existing Worker source; open PR adds malformed-payload handling, active/due recurrence checks, and state-transition tests | Latest PR #11 checks pass | No live endpoint or D1 test | Review PR #11 after PR #10; validate against staging |
 | Customer profiles | Tenant-scoped customer API supports create/list/update; PR #14 adds saved contact-profile create/edit UI | App and Worker checks pass on PR #14 | No live endpoint or D1 test | Extend saved records with site locations and service agreements |
-| Locations and agreements | PR #15 adds tenant-scoped location and recurring-agreement APIs; PR #16 adds mobile setup forms; PR #17 adds owner/admin pause and resume controls without deleting visit history | CI pending on PR #17 | No live D1 schema, authenticated endpoint, or device test | Reconcile D1 migrations in staging and run device acceptance |
+| Locations and agreements | PR #15 adds tenant-scoped location and recurring-agreement APIs; PR #16 adds mobile setup forms; PR #17 adds owner/admin pause and resume controls without deleting visit history | Both CI jobs pass on PR #17 | No live D1 schema, authenticated endpoint, or device test | Reconcile D1 migrations in staging and run device acceptance |
 | Billing and messaging | Invoice draft preview and message-related design notes | Domain tests pass where implemented | No durable invoice API, payment reconciliation, SMS delivery, or customer portal | Design and implement durable, consent-safe workflows |
 
 ## Release rule
