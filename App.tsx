@@ -6,7 +6,7 @@ import { fetchDayData, type DayData } from './src/data/greencollar-api';
 import { summarizeSavedDay } from './src/data/saved-day';
 import { getBusinesses, createBusiness } from './src/data/business-api';
 import { listSavedCustomers, createSavedCustomer, updateSavedCustomer, type SavedCustomer } from './src/data/customer-api';
-import { listServiceLocations, createServiceLocation, listServiceAgreements, createServiceAgreement, type SavedServiceLocation, type SavedServiceAgreement, type ServiceFrequency } from './src/data/service-api';
+import { listServiceLocations, createServiceLocation, listServiceAgreements, createServiceAgreement, setServiceAgreementActive, type SavedServiceLocation, type SavedServiceAgreement, type ServiceFrequency } from './src/data/service-api';
 import { startWork, pauseWork, resumeWork, completeWork, getElapsedMinutes, completionRecord, type WorkSession } from './src/domain/work-session';
 import {saveVisitCompletion} from './src/data/visit-completion';
 import {billableCompletedServices,invoiceFromCompletedService} from './src/domain/completed-invoice';
@@ -287,6 +287,19 @@ function GreenCollarDashboard() {
     }catch(e){setSavedDayError(e instanceof Error?e.message:'Could not save service agreement');}
     finally{setLoadingSaved(false);}
   }
+  async function toggleServiceAgreement(agreement:SavedServiceAgreement) {
+    const api=process.env.EXPO_PUBLIC_GREENCOLLAR_API_URL;
+    if(!api||!connectedBusiness){setSavedDayError('Load your business first');return;}
+    setLoadingSaved(true);setSavedDayError('');
+    try{
+      const token=await getToken({template:'greencollar-api'});
+      if(!token)throw new Error('Sign in first');
+      await setServiceAgreementActive(api,connectedBusiness.id,token,agreement.id,agreement.active!==1);
+      setServiceAgreements(await listServiceAgreements(api,connectedBusiness.id,token));
+      setSavedDay(await fetchDayData(api,connectedBusiness.id,localDateInputValue(),token));
+    }catch(e){setSavedDayError(e instanceof Error?e.message:'Could not update service agreement');}
+    finally{setLoadingSaved(false);}
+  }
   async function registerBusiness() {
     const api=process.env.EXPO_PUBLIC_GREENCOLLAR_API_URL;
     if(!api){setSavedDayError('API URL not configured yet.');return;}
@@ -390,7 +403,10 @@ function GreenCollarDashboard() {
                   <Pressable style={styles.primary} disabled={loadingSaved||!serviceName.trim()||!serviceRate.trim()} onPress={()=>void saveServiceAgreement()}><Text style={styles.primaryText}>Save recurring service</Text></Pressable>
                 </>}
                 <Text style={styles.label}>Existing agreements</Text>
-                {serviceAgreements.filter(a=>a.customer_id===serviceSetupCustomer.id).map(a=><Text key={a.id} style={styles.body}>{a.service_name} · ${(a.rate_cents/100).toFixed(2)} · {a.frequency} · {a.active?'active':'inactive'}</Text>)}
+                {serviceAgreements.filter(a=>a.customer_id===serviceSetupCustomer.id).map(a=><View key={a.id} style={{gap:4}}>
+                  <Text style={styles.body}>{a.service_name} · ${(a.rate_cents/100).toFixed(2)} · {a.frequency} · {a.active?'active':'inactive'}</Text>
+                  <Pressable style={[styles.primary,{backgroundColor:'#f0f5ef'}]} disabled={loadingSaved} onPress={()=>void toggleServiceAgreement(a)}><Text style={styles.primaryText}>{a.active?'Pause agreement':'Reactivate agreement'}</Text></Pressable>
+                </View>)}
               </View>}
               <Text style={styles.cardHeading}>{editingSavedCustomerId?'Edit saved customer':'Add saved customer'}</Text>
               <TextInput style={styles.input} placeholder="Customer name" placeholderTextColor="#819b8b" value={savedCustomerName} onChangeText={setSavedCustomerName}/>

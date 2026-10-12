@@ -13,7 +13,7 @@ type AgreementInput={
 const integer=(x:unknown,min:number,max:number)=>typeof x==='number'&&Number.isInteger(x)&&x>=min&&x<=max;
 
 export async function agreementsApi(request:Request,env:Env,url:URL):Promise<Response>{
- if(!['GET','POST'].includes(request.method))return json({error:'method_not_allowed'},405);
+ if(!['GET','POST','PATCH'].includes(request.method))return json({error:'method_not_allowed'},405);
  if(!env.OIDC_ISSUER||!env.OIDC_AUDIENCE||!env.OIDC_JWKS_URL)return json({error:'authentication_unconfigured'},503);
  const subject=await authenticatedSubject(request,env);
  if(!subject)return json({error:'unauthorized'},401);
@@ -21,6 +21,25 @@ export async function agreementsApi(request:Request,env:Env,url:URL):Promise<Res
  if(!/^[a-zA-Z0-9_-]{1,100}$/.test(businessId))return json({error:'invalid_business'},400);
  const role=await businessAccess(env,subject,businessId);
  if(!role)return json({error:'forbidden'},403);
+ if(request.method==='PATCH'){
+   if(role==='worker')return json({error:'forbidden'},403);
+   const id=url.searchParams.get('id');
+   if(!uuid(id))return json({error:'invalid_agreement_id'},400);
+   let value:unknown;
+   try{value=await request.json();}catch{return json({error:'invalid_json'},400);}
+   if(!value||typeof value!=='object'||Array.isArray(value)
+      ||Object.keys(value).length!==1||typeof (value as Record<string,unknown>).active!=='boolean')
+     return json({error:'invalid_input'},400);
+   const active=(value as {active:boolean}).active?1:0;
+   const current=await env.DB.prepare('SELECT active FROM service_agreements WHERE business_id=? AND id=?')
+     .bind(businessId,id).first<{active:number}>();
+   if(!current)return json({error:'agreement_not_found'},404);
+   if(current.active===active)return json({id,active},200);
+   const changed=await env.DB.prepare('UPDATE service_agreements SET active=? WHERE business_id=? AND id=?')
+     .bind(active,businessId,id).run();
+   if(changed.meta.changes!==1)return json({error:'agreement_update_conflict'},409);
+   return json({id,active},200);
+ }
  if(request.method==='GET'){
    const data=await env.DB.prepare(`SELECT a.id,a.customer_id,a.location_id,a.service_name,a.rate_cents,a.estimated_minutes,
      a.starts_on,a.ends_on,a.frequency,a.interval_days,a.days_of_week,a.preferred_start_minute,
