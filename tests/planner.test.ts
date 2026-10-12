@@ -32,7 +32,7 @@ test('missing travel edges exclude unreachable jobs with a useful reason',()=>{
 });
 
 test('scheduled break shifts overlapping service to after the break',()=>{
-  const input={...sampleDay,jobs:[{...sampleDay.jobs[0],estimatedMinutes:30}],
+  const input={...sampleDay,jobs:[{...sampleDay.jobs[0],estimatedMinutes:25}],
     locations:[sampleDay.locations[0]],maxJobs:1,startMinute:8*60+30,endMinute:11*60,
     travelMinutes:{base:{loc1:10},loc1:{base:10}},breaks:[{startMinute:9*60,durationMinutes:30}]};
   const result=planDay(input);
