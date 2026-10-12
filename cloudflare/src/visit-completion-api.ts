@@ -27,6 +27,12 @@ export function createVisitCompletionApi(authenticate:typeof authenticatedSubjec
    const agreement=await env.DB.prepare('SELECT id FROM service_agreements WHERE business_id=? AND id=? AND starts_on<=? AND (ends_on IS NULL OR ends_on>=?)')
     .bind(businessId,agreementId,date,date).first();
    if(!agreement)return json({error:'agreement_not_found'},404);
+   const existing=await env.DB.prepare('SELECT status,actual_minutes FROM service_visits WHERE business_id=? AND agreement_id=? AND scheduled_date=?')
+    .bind(businessId,agreementId,date).first<{status:string;actual_minutes:number|null}>();
+   if(existing?.status==='completed'){
+    if(existing.actual_minutes===actualMinutes)return json({agreementId,date,status:'completed',actualMinutes},200);
+    return json({error:'already_completed'},409);
+   }
    // One statement captures the billing facts as it changes the visit state.
    // A conflicting completed visit returns no row, so concurrent retries cannot rewrite it.
    const saved=await env.DB.prepare(`INSERT INTO service_visits(
