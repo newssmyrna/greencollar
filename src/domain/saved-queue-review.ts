@@ -18,6 +18,8 @@ export type SavedQueueReview={
 export function createSavedQueueReview(businessId:string,date:string,visits:QueueReviewVisit[]):SavedQueueReview{
   if(!businessId.trim())throw new Error('Business context is required');
   if(!/^\d{4}-\d{2}-\d{2}$/.test(date))throw new Error('A local service date is required');
+  const parsedDate=new Date(date+'T00:00:00.000Z');
+  if(Number.isNaN(parsedDate.getTime())||parsedDate.toISOString().slice(0,10)!==date)throw new Error('A local service date is required');
   const ids=new Set<string>();
   for(const visit of visits){
     if(!visit.id||ids.has(visit.id))throw new Error('Visit IDs must be present and unique');
