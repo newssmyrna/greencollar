@@ -20,8 +20,6 @@
     "react-native-web": "^0.21.0",
     "@clerk/expo": "^4.0.0",
     "expo-secure-store": "~15.0.7",
-    "expo-file-system": "~19.0.24",
-    "expo-sharing": "~14.0.8",
     "expo-location": "~19.0.8",
     "expo-auth-session": "~7.0.8",
     "expo-crypto": "~15.0.7",
