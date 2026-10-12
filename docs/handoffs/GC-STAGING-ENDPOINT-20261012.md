@@ -1,7 +1,7 @@
 # GC-STAGING-ENDPOINT-20261012 — phase handoff
 
 Work: CONFIGURED. Delivery: source configuration and a manual deploy path; the Worker has not been deployed and the URL is not live.
-Phase interval: October 12, 2026 15:21:32–15:25:08 America/New_York (3m36s elapsed at this handoff). The 15 roles are conceptual review lenses used by one assistant; role times are approximate and overlap.
+Phase interval: October 12, 2026 15:21:32–15:26:30 America/New_York (about 5m elapsed at this handoff). The 15 roles are conceptual review lenses used by one assistant; role times are approximate and overlap.
 
 ## Decision and change
 The owner has no custom domain yet. Use Cloudflare's account workers.dev subdomain temporarily. Cloudflare account subdomain read-only lookup returned `email-42c.workers.dev`; expected staging URL after deploy: `https://greencollar-api-staging.email-42c.workers.dev`. This expected URL is not live yet.
