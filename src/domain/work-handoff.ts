@@ -1,10 +1,10 @@
 import {startWork,completionRecord,type WorkSession} from './work-session';
-export type SavedCompletionEvidence={agreement_id:string;scheduled_date:string;status:string;actual_minutes:number|null};
-/** Only an exact saved visit and duration confirms the local completed record. */
+export type SavedCompletionEvidence={agreement_id:string;scheduled_date:string;status:string;actual_minutes:number|null;work_note?:string|null};
+/** Only an exact saved visit, duration and note confirms the local completed record. */
 export function hasSavedWorkCompletion(session:WorkSession|null,visits:readonly SavedCompletionEvidence[]):boolean{
  if(!session||session.status!=='completed'||session.jobId==='demo-job')return false;
  const minutes=completionRecord(session).actualMinutes;
- return visits.some(visit=>visit.status==='completed'&&session.jobId===visit.agreement_id+':'+visit.scheduled_date&&visit.actual_minutes===minutes);
+ return visits.some(visit=>visit.status==='completed'&&session.jobId===visit.agreement_id+':'+visit.scheduled_date&&visit.actual_minutes===minutes&&(visit.work_note??'')===(session.note??''));
 }
 export function canStartNextWork(session:WorkSession|null,completionSaved:boolean):boolean{
  return !session||session.status==='completed'&&(session.jobId==='demo-job'||completionSaved);
