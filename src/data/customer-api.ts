@@ -21,7 +21,7 @@ export async function listSavedCustomers(apiUrl:string,businessId:string,token:s
 }
 export async function createSavedCustomer(apiUrl:string,businessId:string,token:string,customer:CustomerDetails):Promise<{id:string;name:string}>{
   if(!customer.name?.trim())throw new Error('Customer name is required');
-  const limits:{[K in keyof CustomerDetails]:number}={name:160,phone:50,email:254,notes:2000};
+  const limits:Record<keyof CustomerDetails,number>={name:160,phone:50,email:254,notes:2000};
   for(const field of Object.keys(limits) as (keyof CustomerDetails)[]){
     const value=customer[field];
     if(value!==undefined&&(typeof value!=='string'||value.length>limits[field]))
