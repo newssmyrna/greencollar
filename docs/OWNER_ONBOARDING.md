@@ -19,4 +19,7 @@
 - No real customer data or credentials in GitHub.
 
 ## Still needed
-Verified token configuration, live endpoint deployment, Clerk device sign-in, end-to-end tests, persistent customer forms and site/service agreement editing.
+Verified token configuration, live endpoint deployment, Clerk device sign-in, end-to-end tests, saved service-location entry, service-agreement creation/editing, and production migration reconciliation.
+
+## Customer details form update — 2026-10-12
+The saved-customer mobile form now captures optional phone, email, and access/preference notes alongside the required name. The client trims values and rejects fields beyond the API's documented limits before sending; persisted customer cards display the saved details. This remains source-only until authenticated Worker deployment and an end-to-end signed-in test are completed.
