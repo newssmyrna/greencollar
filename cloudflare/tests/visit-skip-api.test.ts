@@ -40,7 +40,7 @@ test('marks only eligible visits skipped and leaves completed work protected',as
  assert.equal(response.status,200);
  assert.deepEqual(await response.json(),{businessId:'business-a',agreementId:'agreement-a',date:'2026-10-12',status:'skipped'});
  const write=f.queries.find(q=>q.sql.startsWith('INSERT INTO service_visits'))!;
- assert.match(write.sql,/status IN \\('due','planned','skipped'\\)/);
+ assert.ok(write.sql.includes("status IN ('due','planned','skipped')"));
  assert.match(write.sql,/completed_rate_cents=NULL/);
  assert.deepEqual(write.values.slice(1),['business-a','agreement-a','2026-10-12']);
  const protectedVisit=fixture('worker',false);
