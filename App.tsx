@@ -12,6 +12,9 @@ import {billableCompletedServices,invoiceFromCompletedService} from './src/domai
 import {invoiceTotals,type InvoiceDraft} from './src/domain/invoice';
 import {loadWorkSession,saveWorkSession} from './src/data/local-work-session';
 import {listServiceLocations,createServiceLocation,type SavedServiceLocation} from './src/data/service-location-api';
+import {listServiceAgreements,createServiceAgreement,type SavedServiceAgreement} from './src/data/service-agreement-api';
+import {dollarsToCents,localCalendarDate} from './src/domain/service-agreement';
+import {generateDueVisits,type Frequency} from './src/domain/recurrence';
 import {
   SafeAreaView, ScrollView, View, Text, TextInput,
   Pressable, StyleSheet, StatusBar
@@ -52,18 +55,76 @@ function GreenCollarDashboard() {
   const [locationsHaveMore,setLocationsHaveMore]=useState(false);
   const locationRequest=useRef(0);
   const locationSaving=useRef(false);
+  const [serviceAgreements,setServiceAgreements]=useState<SavedServiceAgreement[]>([]);
+  const [agreementsHaveMore,setAgreementsHaveMore]=useState(false);
+  const [agreementLocationId,setAgreementLocationId]=useState('');
+  const [agreementName,setAgreementName]=useState('');
+  const [agreementPrice,setAgreementPrice]=useState('');
+  const [agreementMinutes,setAgreementMinutes]=useState('60');
+  const [agreementStart,setAgreementStart]=useState(()=>localCalendarDate());
+  const [agreementEnd,setAgreementEnd]=useState('');
+  const [agreementFrequency,setAgreementFrequency]=useState<Frequency>('weekly');
+  const [agreementInterval,setAgreementInterval]=useState('7');
+  const [agreementError,setAgreementError]=useState('');
+  const [agreementNotice,setAgreementNotice]=useState('');
+  const [agreementLoading,setAgreementLoading]=useState(false);
+  const agreementSaving=useRef(false);
+  function scheduledServicePreview():string{
+    try{
+      const due=generateDueVisits(serviceAgreements.map(a=>({
+        id:a.id,customerId:a.customer_id,locationId:a.location_id,serviceName:a.service_name,
+        rateCents:a.rate_cents,estimatedMinutes:a.estimated_minutes,startsOn:a.starts_on,
+        endsOn:a.ends_on??undefined,frequency:a.frequency as Frequency,intervalDays:a.interval_days??undefined,
+        daysOfWeek:a.days_of_week?JSON.parse(a.days_of_week):undefined,active:a.active===1
+      })),agreementStart,agreementStart);
+      return due.length+' recurring services scheduled for '+agreementStart+'. Completion status is shown on Today.';
+    }catch{return 'Enter a valid start date to preview scheduled services.';}
+  }
+  async function saveAgreement(){
+    const api=process.env.EXPO_PUBLIC_GREENCOLLAR_API_URL;
+    if(!api||!connectedBusiness||!locationCustomerId){setAgreementError('Select a saved customer first');return;}
+    if(agreementSaving.current)return;
+    agreementSaving.current=true;setAgreementLoading(true);setAgreementError('');setAgreementNotice('');
+    const sequence=locationRequest.current;
+    try{
+      if(!/^\d{1,4}$/.test(agreementMinutes.trim()))throw new Error('Enter estimated duration in whole minutes');
+      const token=await getToken({template:'greencollar-api'});if(!token)throw new Error('Sign in first');
+      const saved=await createServiceAgreement(api,connectedBusiness.id,locationCustomerId,token,{
+        locationId:agreementLocationId,serviceName:agreementName,rateCents:dollarsToCents(agreementPrice),
+        estimatedMinutes:Number(agreementMinutes),startsOn:agreementStart,endsOn:agreementEnd||undefined,
+        frequency:agreementFrequency,...(agreementFrequency==='custom'?{intervalDays:Number(agreementInterval)}:{})
+      });
+      if(sequence!==locationRequest.current)return;
+      setServiceAgreements(previous=>[...previous,saved]);setAgreementName('');setAgreementPrice('');
+      setAgreementNotice('Recurring service saved.');
+      // A failed follow-up read must not turn a successful write into a retryable save error.
+      try{
+        const day=await fetchDayData(api,connectedBusiness.id,savedDay?.date??localCalendarDate(),token);
+        if(sequence===locationRequest.current)setSavedDay(day);
+      }catch{if(sequence===locationRequest.current)setAgreementNotice('Recurring service saved. Load the saved workday on Today to refresh the queue.');}
+    }catch(e){if(sequence===locationRequest.current)setAgreementError(e instanceof Error?e.message:'Could not save recurring service');}
+    finally{agreementSaving.current=false;if(sequence===locationRequest.current)setAgreementLoading(false);}
+  }
   async function selectLocationCustomer(customerId:string){
     const sequence=++locationRequest.current;
     setLocationCustomerId(customerId);setLocations([]);setLocationsHaveMore(false);
     setLocationAddress('');setLocationPreferences('');setLocationError('');
+    setServiceAgreements([]);setAgreementsHaveMore(false);setAgreementLocationId('');
+    setAgreementName('');setAgreementPrice('');setAgreementError('');setAgreementNotice('');
     const api=process.env.EXPO_PUBLIC_GREENCOLLAR_API_URL;
     if(!api||!connectedBusiness){setLocationError('Load your business first');return;}
     setLocationLoading(true);
     try{
       const token=await getToken({template:'greencollar-api'});
       if(!token)throw new Error('Sign in first');
-      const result=await listServiceLocations(api,connectedBusiness.id,customerId,token);
-      if(sequence===locationRequest.current){setLocations(result.locations);setLocationsHaveMore(result.hasMore);}
+      const [result,services]=await Promise.all([
+        listServiceLocations(api,connectedBusiness.id,customerId,token),
+        listServiceAgreements(api,connectedBusiness.id,customerId,token)
+      ]);
+      if(sequence===locationRequest.current){
+        setLocations(result.locations);setLocationsHaveMore(result.hasMore);
+        setServiceAgreements(services.agreements);setAgreementsHaveMore(services.hasMore);
+      }
     }catch(e){if(sequence===locationRequest.current)setLocationError(e instanceof Error?e.message:'Could not load addresses');}
     finally{if(sequence===locationRequest.current)setLocationLoading(false);}
   }
@@ -130,7 +191,7 @@ function GreenCollarDashboard() {
       const business=connectedBusiness?.id??businesses[0]?.id;
       if(!business)throw new Error('Create a business before loading its workday');
       if(!connectedBusiness)setConnectedBusiness(businesses[0]);
-      const date=new Date().toLocaleDateString('en-CA');
+      const date=localCalendarDate();
       setSavedDay(await fetchDayData(api,business,date,token));
     }catch(e){setSavedDayError(e instanceof Error?e.message:'Unable to load saved data');}
     finally{setLoadingSaved(false);}
@@ -313,7 +374,7 @@ function GreenCollarDashboard() {
             <Text style={styles.cardHeading}>Service addresses</Text>
             <Text style={styles.muted}>Choose a saved customer, then add where the work happens.</Text>
             {!savedCustomers.length&&<Text style={styles.muted}>Load or save a customer above to begin.</Text>}
-            {savedCustomers.map(c=><Pressable key={c.id} accessibilityRole="button" accessibilityState={{selected:c.id===locationCustomerId,disabled:locationLoading}} style={styles.primary} disabled={locationLoading} onPress={()=>void selectLocationCustomer(c.id)}><Text style={styles.primaryText}>{c.id===locationCustomerId?'Selected: ':''}{c.name}</Text></Pressable>)}
+            {savedCustomers.map(c=><Pressable key={c.id} accessibilityRole="button" accessibilityState={{selected:c.id===locationCustomerId,disabled:locationLoading||agreementLoading}} style={styles.primary} disabled={locationLoading||agreementLoading} onPress={()=>void selectLocationCustomer(c.id)}><Text style={styles.primaryText}>{c.id===locationCustomerId?'Selected: ':''}{c.name}</Text></Pressable>)}
             {locationLoading&&<Text style={styles.muted}>Loading service addresses…</Text>}
             {locations.map(l=><View key={l.id}><Text style={styles.body}>{l.address}</Text>{!!l.preferences&&<Text style={styles.muted}>Access preferences: {l.preferences}</Text>}</View>)}
             {locationsHaveMore&&<Text style={styles.muted}>Showing the first 200 saved addresses. Additional addresses exist.</Text>}
@@ -323,6 +384,30 @@ function GreenCollarDashboard() {
               <Pressable accessibilityRole="button" style={styles.primary} disabled={locationLoading||!locationAddress.trim()} onPress={()=>void saveLocation()}><Text style={styles.primaryText}>Save service address</Text></Pressable>
             </>}
             {!!locationError&&<Text style={styles.muted}>{locationError}</Text>}
+          </View>}
+          {connectedBusiness&&!!locationCustomerId&&<View style={styles.card}>
+            <Text style={styles.cardHeading}>Recurring services</Text>
+            <Text style={styles.muted}>Choose a saved address and enter the agreed service price and schedule.</Text>
+            {!locations.length&&<Text style={styles.muted}>Save a service address above to begin.</Text>}
+            {locations.map(l=><Pressable key={l.id} accessibilityRole="button" accessibilityState={{selected:l.id===agreementLocationId}} style={styles.primary} disabled={locationLoading||agreementLoading} onPress={()=>setAgreementLocationId(l.id)}><Text style={styles.primaryText}>{l.id===agreementLocationId?'Selected: ':''}{l.address}</Text></Pressable>)}
+            {serviceAgreements.map(a=><View key={a.id}><Text style={styles.body}>{a.service_name} · ${(a.rate_cents/100).toFixed(2)} · {a.estimated_minutes} min</Text><Text style={styles.muted}>{a.address} · {a.frequency}{a.interval_days?' every '+a.interval_days+' days':''} · starts {a.starts_on}{a.ends_on?' · ends '+a.ends_on:''}</Text></View>)}
+            {agreementsHaveMore&&<Text style={styles.muted}>Showing the first 200 recurring services. Additional services exist.</Text>}
+            {!!serviceAgreements.length&&<Text style={styles.muted}>{scheduledServicePreview()}</Text>}
+            {!!agreementLocationId&&<>
+              <TextInput accessibilityLabel="Service name" style={styles.input} placeholder="Service name" placeholderTextColor="#819b8b" value={agreementName} onChangeText={setAgreementName} maxLength={160} editable={!agreementLoading}/>
+              <TextInput accessibilityLabel="Agreed service price in USD" style={styles.input} placeholder="Price per visit (USD)" placeholderTextColor="#819b8b" keyboardType="decimal-pad" value={agreementPrice} onChangeText={setAgreementPrice} editable={!agreementLoading}/>
+              <Text style={styles.label}>Estimated duration in minutes</Text>
+              <TextInput accessibilityLabel="Estimated service minutes" style={styles.input} keyboardType="number-pad" value={agreementMinutes} onChangeText={setAgreementMinutes} editable={!agreementLoading}/>
+              <Text style={styles.label}>Start date (YYYY-MM-DD)</Text>
+              <TextInput accessibilityLabel="Service start date" style={styles.input} value={agreementStart} onChangeText={setAgreementStart} editable={!agreementLoading}/>
+              <TextInput accessibilityLabel="Optional service end date" style={styles.input} placeholder="End date YYYY-MM-DD (optional)" placeholderTextColor="#819b8b" value={agreementEnd} onChangeText={setAgreementEnd} editable={!agreementLoading}/>
+              {([['daily','Daily'],['weekly','Weekly'],['biweekly','Every 2 weeks'],['monthly','Monthly'],['custom','Custom interval']] as const).map(([value,label])=><Pressable key={value} accessibilityRole="button" accessibilityState={{selected:value===agreementFrequency}} style={styles.primary} disabled={agreementLoading} onPress={()=>setAgreementFrequency(value)}><Text style={styles.primaryText}>{value===agreementFrequency?'Selected: ':''}{label}</Text></Pressable>)}
+              {agreementFrequency==='custom'&&<><Text style={styles.label}>Days between visits</Text><TextInput accessibilityLabel="Days between service visits" style={styles.input} keyboardType="number-pad" value={agreementInterval} onChangeText={setAgreementInterval} editable={!agreementLoading}/></>}
+              <Text style={styles.muted}>Weekly schedules follow the start date's weekday. Monthly schedules use its calendar day, or the last day of a shorter month.</Text>
+              <Pressable accessibilityRole="button" style={styles.primary} disabled={agreementLoading||!agreementName.trim()||!agreementPrice.trim()} onPress={()=>void saveAgreement()}><Text style={styles.primaryText}>{agreementLoading?'Saving recurring service…':'Save recurring service'}</Text></Pressable>
+            </>}
+            {!!agreementError&&<Text style={styles.muted}>{agreementError}</Text>}
+            {!!agreementNotice&&<Text style={styles.body}>{agreementNotice}</Text>}
           </View>}
           <Text style={styles.heading}>Sample data · Not saved</Text>
           {customers.map(c => <View key={c.id} style={styles.card}>
