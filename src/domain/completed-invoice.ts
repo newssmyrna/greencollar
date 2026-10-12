@@ -19,8 +19,8 @@ export function invoiceFromCompletedService(input:CompletedServiceForBilling,inv
 }
 type BillingDay={
  date:string;
- visits:Array<{agreement_id:string;status:string;scheduled_date:string;completed_customer_id:string|null;
-  completed_customer_name:string|null;completed_service_name:string|null;completed_rate_cents:number|null}>;
+ visits:Array<{agreement_id:string;status:string;scheduled_date:string;completed_customer_id?:string|null;
+  completed_customer_name?:string|null;completed_service_name?:string|null;completed_rate_cents?:number|null}>;
 };
 function hasBillingSnapshot(visit:BillingDay['visits'][number]):boolean{
  return typeof visit.completed_customer_id==='string'&&visit.completed_customer_id.length>0
