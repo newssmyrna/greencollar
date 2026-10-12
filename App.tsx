@@ -17,7 +17,8 @@ import {listServiceAgreements,createServiceAgreement,type SavedServiceAgreement}
 import {dollarsToCents,localCalendarDate} from './src/domain/service-agreement';
 import {generateDueVisits,type Frequency} from './src/domain/recurrence';
 import {assessProximity,createLocationConfirmation,type ProximityAssessment,type LocationConfirmation} from './src/domain/location-assist';
-import {loadLocationConfirmations,saveLocationConfirmation} from './src/data/local-location-confirmations';
+import {loadLocationConfirmations,saveLocationConfirmation,markLocationConfirmationSynced,pendingLocationConfirmations,type StoredLocationConfirmation} from './src/data/local-location-confirmations';
+import {syncLocationConfirmation} from './src/data/location-confirmation-api';
 import {
   SafeAreaView, ScrollView, View, Text, TextInput,
   Pressable, StyleSheet, StatusBar
@@ -231,7 +232,7 @@ function GreenCollarDashboard() {
   const [locationCheckError,setLocationCheckError]=useState('');
   const [locationCheckBusy,setLocationCheckBusy]=useState(false);
   const [locationManualReason,setLocationManualReason]=useState('');
-  const [locationConfirmations,setLocationConfirmations]=useState<LocationConfirmation[]>([]);
+  const [locationConfirmations,setLocationConfirmations]=useState<StoredLocationConfirmation[]>([]);
   const [locationConfirmError,setLocationConfirmError]=useState('');
   const [invoiceDrafts,setInvoiceDrafts]=useState<InvoiceDraft[]>([]);
   const [invoiceError,setInvoiceError]=useState('');
@@ -316,15 +317,53 @@ function GreenCollarDashboard() {
     }catch(e){setLocationCheckError(e instanceof Error?e.message:'Could not check current location');}
     finally{setLocationCheckBusy(false);}
   }
+  async function syncLocationOutbox(businessId:string,eventId?:string) {
+    const api=process.env.EXPO_PUBLIC_GREENCOLLAR_API_URL;
+    if(!api||!userId){setLocationConfirmError('Saved on this device; sync pending until API configuration and sign-in are available.');return;}
+    setLocationCheckBusy(true);
+    let synced=0,firstError='';
+    try{
+      const token=await getToken({template:'greencollar-api'});
+      if(!token)throw new Error('Sign in first');
+      const queued=await pendingLocationConfirmations(userId,businessId);
+      const selected=eventId?queued.filter(event=>event.eventId===eventId):queued;
+      for(const event of selected){
+        try{
+          if(!event.agreementId||!event.date||!event.businessId)throw new Error('Confirmation is missing its saved service scope');
+          await syncLocationConfirmation(api,token,{
+            eventId:event.eventId,businessId:event.businessId,agreementId:event.agreementId,date:event.date,
+            kind:event.kind,source:event.source,proximity:event.proximity,manualReason:event.manualReason,confirmedAt:event.confirmedAt
+          });
+          await markLocationConfirmationSynced(userId,event.eventId);
+          synced++;
+        }catch(e){if(!firstError)firstError=e instanceof Error?e.message:'Sync failed';}
+      }
+      setLocationConfirmations(await loadLocationConfirmations(userId));
+      const remaining=(await pendingLocationConfirmations(userId,businessId)).length;
+      setLocationConfirmError(firstError
+        ? 'Saved on this device; '+synced+' synced, '+remaining+' still pending. '+firstError
+        : synced?('Synced '+synced+' location confirmation'+(synced===1?'':'s')+'.'):'No pending confirmations for this business.');
+    }catch(e){
+      setLocationConfirmError('Saved on this device; sync pending. '+(e instanceof Error?e.message:'Could not sync confirmations'));
+    }finally{setLocationCheckBusy(false);}
+  }
+
   async function confirmActiveJobLocation(kind:'arrival'|'departure',source:'gps_suggestion'|'manual') {
     const job=activeSavedJob();
-    if(!job||!workSession||workSession.status==='completed'||!userId){setLocationConfirmError('Start a saved scheduled service and sign in first.');return;}
+    if(!job||!workSession||workSession.status==='completed'||!userId||!connectedBusiness||!savedDay){setLocationConfirmError('Load a saved business workday and start a scheduled service first.');return;}
     if(source==='gps_suggestion'&&(locationAssessmentJob!==job.id||!locationAssessment)){setLocationConfirmError('Check the current site location before confirming a GPS suggestion.');return;}
     setLocationConfirmError('');
     try{
       const event=createLocationConfirmation({jobId:job.id,operatorId:userId,kind,confirmedAt:Date.now(),source,assessment:source==='gps_suggestion'?locationAssessment??undefined:undefined,manualReason:source==='manual'?locationManualReason:undefined});
-      const updated=await saveLocationConfirmation(userId,event);
+      const date=savedDay.date;
+      const suffix=':'+date;
+      if(!job.id.endsWith(suffix))throw new Error('Invalid scheduled visit');
+      const agreementId=job.id.slice(0,-suffix.length);
+      if(!agreementId)throw new Error('Invalid service agreement');
+      const updated=await saveLocationConfirmation(userId,{businessId:connectedBusiness.id,agreementId,date},event);
       setLocationConfirmations(updated);setLocationManualReason('');
+      const stored=updated[updated.length-1];
+      await syncLocationOutbox(connectedBusiness.id,stored?.eventId);
     }catch(e){setLocationConfirmError(e instanceof Error?e.message:'Could not save confirmation on this device');}
   }
 
@@ -409,7 +448,7 @@ function GreenCollarDashboard() {
             {workSession?.status==='completed' && <Pressable style={styles.primary} onPress={()=>timerAction('start')}><Text style={styles.primaryText}>Start another demo</Text></Pressable>}
             {workSession&&workSession.status!=='completed'&&workSession.jobId!=='demo-job'&&<View style={styles.card}>
               <Text style={styles.cardHeading}>Service-site check</Text>
-              <Text style={styles.muted}>One foreground location check can suggest arrival or departure. It never changes the job timer, completion, or billing. Confirmations are saved on this device only.</Text>
+              <Text style={styles.muted}>One foreground location check can suggest arrival or departure. It never changes the job timer, completion, or billing. Confirmations save on this device first; pending events retry with the same ID.</Text>
               <Pressable accessibilityRole="button" style={[styles.primary,{backgroundColor:'#f0f5ef'}]} disabled={locationCheckBusy} onPress={()=>void checkActiveJobLocation()}><Text style={styles.primaryText}>{locationCheckBusy?'Checking site…':'Check current site location once'}</Text></Pressable>
               {!!locationCheckError&&<Text accessibilityLiveRegion="polite" style={styles.muted}>{locationCheckError}</Text>}
               {!!locationAssessment&&locationAssessmentJob===workSession.jobId&&<>
@@ -422,7 +461,8 @@ function GreenCollarDashboard() {
               <TextInput accessibilityLabel="Manual location confirmation reason" style={styles.input} placeholder="For example: GPS unavailable, customer confirmed" placeholderTextColor="#819b8b" value={locationManualReason} onChangeText={setLocationManualReason} maxLength={280}/>
               <View style={{flexDirection:'row',gap:8}}><Pressable accessibilityRole="button" style={[styles.primary,{flex:1}]} disabled={!locationManualReason.trim()} onPress={()=>void confirmActiveJobLocation('arrival','manual')}><Text style={styles.primaryText}>Manually confirm arrival</Text></Pressable><Pressable accessibilityRole="button" style={[styles.primary,{flex:1}]} disabled={!locationManualReason.trim()} onPress={()=>void confirmActiveJobLocation('departure','manual')}><Text style={styles.primaryText}>Manually confirm departure</Text></Pressable></View>
               {!!locationConfirmError&&<Text accessibilityLiveRegion="polite" style={styles.muted}>{locationConfirmError}</Text>}
-              {locationConfirmations.filter(event=>event.jobId===workSession.jobId).slice(-4).map((event,i)=><Text key={event.confirmedAt+'-'+i} style={styles.muted}>{event.kind==='arrival'?'Arrival':'Departure'} · {new Date(event.confirmedAt).toLocaleString()} · {event.source==='manual'?'manual: '+(event.manualReason??'reason not recorded'):'GPS suggestion'}</Text>)}
+              {locationConfirmations.some(event=>event.businessId===connectedBusiness?.id&&event.syncStatus==='pending')&&<Pressable accessibilityRole="button" style={[styles.primary,{backgroundColor:'#f0f5ef'}]} disabled={locationCheckBusy||!connectedBusiness} onPress={()=>connectedBusiness&&void syncLocationOutbox(connectedBusiness.id)}><Text style={styles.primaryText}>{locationCheckBusy?'Syncing confirmations…':'Retry pending sync'}</Text></Pressable>}
+              {locationConfirmations.filter(event=>event.jobId===workSession.jobId).slice(-4).map((event,i)=><Text key={event.eventId||event.confirmedAt+'-'+i} style={styles.muted}>{event.kind==='arrival'?'Arrival':'Departure'} · {new Date(event.confirmedAt).toLocaleString()} · {event.source==='manual'?'manual: '+(event.manualReason??'reason not recorded'):'GPS suggestion'} · {event.syncStatus==='synced'?'synced':event.syncStatus==='pending'?'sync pending':'device only'}</Text>)}
             </View>}
             {!!timerError && <Text style={styles.muted}>{timerError}</Text>}
           </View>
