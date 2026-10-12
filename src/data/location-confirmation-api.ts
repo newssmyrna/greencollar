@@ -69,7 +69,7 @@ export type ServerLocationConfirmation={
   manual_reason:string|null;
   created_at:string;
 };
-export type ServerLocationConfirmationList={events:ServerLocationConfirmation[];hasMore:boolean};
+export type ServerLocationConfirmationList={events:ServerLocationConfirmation[];hasMore:boolean;nextCursor:string|null};
 
 function isServerConfirmation(value:unknown,date:string):value is ServerLocationConfirmation{
   if(!value||typeof value!=='object')return false;
@@ -90,12 +90,17 @@ export async function listLocationConfirmations(
   apiUrl:string,
   token:string,
   businessId:string,
-  date:string
+  date:string,
+  cursor?:string
 ):Promise<ServerLocationConfirmationList>{
   if(!token)throw new Error('Sign in first');
   if(!validDate(date))throw new Error('A valid service date is required');
   const url=new URL(endpoint(apiUrl,businessId));
   url.searchParams.set('date',date);
+  if(cursor!==undefined){
+    if(!/^[0-9]{1,16}[.][a-zA-Z0-9_-]{1,80}$/.test(cursor))throw new Error('Invalid location history cursor');
+    url.searchParams.set('before',cursor);
+  }
   const response=await fetch(url.toString(),{
     headers:{Authorization:'Bearer '+token}
   });
@@ -105,9 +110,14 @@ export async function listLocationConfirmations(
     throw new Error(reason==='forbidden'?'You do not have access to this business history'
       :'Unable to load location history ('+response.status+')');
   }
-  const result=await response.json() as {events?:unknown;hasMore?:unknown};
+  const result=await response.json() as {events?:unknown;hasMore?:unknown;nextCursor?:unknown};
   if(!Array.isArray(result.events)||typeof result.hasMore!=='boolean'
+    ||!(result.nextCursor===null||typeof result.nextCursor==='string')
     ||!result.events.every(event=>isServerConfirmation(event,date)))
     throw new Error('Invalid location history response');
-  return {events:result.events,hasMore:result.hasMore};
+  const last=result.events[result.events.length-1] as ServerLocationConfirmation|undefined;
+  const expectedCursor=last?String(last.confirmed_at)+'.'+last.id:null;
+  if((result.hasMore&&(!last||result.nextCursor!==expectedCursor))||(!result.hasMore&&result.nextCursor!==null))
+    throw new Error('Invalid location history cursor response');
+  return {events:result.events,hasMore:result.hasMore,nextCursor:result.nextCursor as string|null};
 }

@@ -4,7 +4,7 @@ import {createLocationConfirmationApi} from '../src/location-confirmation-api';
 import type {Env} from '../src/auth';
 const meta={OIDC_ISSUER:'https://example.test',OIDC_AUDIENCE:'greencollar-api',OIDC_JWKS_URL:'https://example.test/jwks'};
 const payload={eventId:'evt-1',businessId:'business-a',agreementId:'agreement-a',date:'2026-10-12',kind:'arrival',source:'gps_suggestion',proximity:'within_radius',confirmedAt:1791763200000};
-function fixture(role:'owner'|'admin'|'worker'|null='worker',existing:Record<string,unknown>|null=null){
+function fixture(role:'owner'|'admin'|'worker'|null='worker',existing:Record<string,unknown>|null=null,rows:Record<string,unknown>[]=[]){
  const queries:Array<{sql:string;values:unknown[]}>=[];
  const DB={prepare(sql:string){return {bind(...values:unknown[]){queries.push({sql,values});return {
   async first(){
@@ -14,7 +14,7 @@ function fixture(role:'owner'|'admin'|'worker'|null='worker',existing:Record<str
    if(sql.includes('FROM location_confirmations WHERE id=?'))return existing;
    return null;
   },
-  async all(){return {results:[]};}
+  async all(){return {results:rows};}
  };}};}};
  return {env:{...meta,DB} as unknown as Env,queries};
 }
@@ -55,10 +55,26 @@ test('idempotent retries return success only for the exact same event',async()=>
  const clash=fixture('worker',{...existing,kind:'departure'});
  assert.equal((await api(request(),clash.env)).status,409);
 });
+
+test('GET paginates with an exclusive timestamp and ID cursor',async()=>{
+ const rows=Array.from({length:51},(_,i)=>({id:'evt-'+String(i).padStart(2,'0'),agreement_id:'agreement-a',service_date:'2026-10-12',kind:'arrival',operator_subject:'verified-subject',confirmed_at:100,source:'gps_suggestion',proximity:'within_radius',manual_reason:null,created_at:'2026-10-12T10:00:00Z'}));
+ const f=fixture('worker',null,rows);
+ const next=new Request('https://api.example.test/v1/location-confirmations?business_id=business-a&date=2026-10-12&before=200.evt-new');
+ const response=await api(next,f.env);assert.equal(response.status,200);
+ const body=await response.json() as {events:unknown[];hasMore:boolean;nextCursor:string|null};
+ assert.equal(body.events.length,50);assert.equal(body.hasMore,true);assert.equal(body.nextCursor,'100.evt-49');
+ const listing=f.queries.find(q=>q.sql.includes('FROM location_confirmations WHERE business_id=? AND service_date=?'))!;
+ assert.ok(listing.sql.includes('(confirmed_at<? OR (confirmed_at=? AND id<?))'));
+ assert.deepEqual(listing.values,['business-a','2026-10-12',200,200,'evt-new']);
+ const invalid=new Request('https://api.example.test/v1/location-confirmations?business_id=business-a&date=2026-10-12&before=bad');
+ assert.equal((await api(invalid,f.env)).status,400);
+});
+
 test('GET lists only the requested business day and rejects invalid dates',async()=>{
  const f=fixture();assert.equal((await api(request('GET'),f.env)).status,200);
  const listing=f.queries.find(q=>q.sql.includes('FROM location_confirmations WHERE business_id=? AND service_date=?'))!;
- assert.match(listing.sql,/ORDER BY confirmed_at DESC,id DESC LIMIT 201/);
+ assert.match(listing.sql,/ORDER BY confirmed_at DESC,id DESC LIMIT 51/);
+ assert.deepEqual(await (await api(request('GET'),f.env)).json(),{events:[],hasMore:false,nextCursor:null});
  const invalid=new Request('https://api.example.test/v1/location-confirmations?business_id=business-a&date=2026-02-30');
  assert.equal((await api(invalid,f.env)).status,400);
 });

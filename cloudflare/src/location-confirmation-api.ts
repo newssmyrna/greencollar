@@ -23,8 +23,20 @@ export function createLocationConfirmationApi(authenticate:typeof authenticatedS
    const role=await businessAccess(env,subject,businessId);if(!role)return json({error:'forbidden'},403);
    if(request.method==='GET'){
     const date=url.searchParams.get('date')??'';if(!dateOk(date))return json({error:'invalid_date'},400);
-    const result=await env.DB.prepare('SELECT id,agreement_id,service_date,kind,operator_subject,confirmed_at,source,proximity,manual_reason,created_at FROM location_confirmations WHERE business_id=? AND service_date=? ORDER BY confirmed_at DESC,id DESC LIMIT 201').bind(businessId,date).all();
-    return json({events:result.results.slice(0,200),hasMore:result.results.length>200});
+    const before=url.searchParams.get('before');
+    let result;
+    if(before===null){
+     result=await env.DB.prepare('SELECT id,agreement_id,service_date,kind,operator_subject,confirmed_at,source,proximity,manual_reason,created_at FROM location_confirmations WHERE business_id=? AND service_date=? ORDER BY confirmed_at DESC,id DESC LIMIT 51').bind(businessId,date).all();
+    }else{
+     const match=/^([0-9]{1,16})[.]([a-zA-Z0-9_-]{1,80})$/.exec(before);
+     const timestamp=match?Number(match[1]):NaN;
+     if(!match||!Number.isSafeInteger(timestamp))return json({error:'invalid_cursor'},400);
+     result=await env.DB.prepare('SELECT id,agreement_id,service_date,kind,operator_subject,confirmed_at,source,proximity,manual_reason,created_at FROM location_confirmations WHERE business_id=? AND service_date=? AND (confirmed_at<? OR (confirmed_at=? AND id<?)) ORDER BY confirmed_at DESC,id DESC LIMIT 51').bind(businessId,date,timestamp,timestamp,match[2]).all();
+    }
+    const events=result.results.slice(0,50) as EventRow[];
+    const hasMore=result.results.length>50;
+    const last=events[events.length-1];
+    return json({events,hasMore,nextCursor:hasMore&&last?String(last.confirmed_at)+'.'+last.id:null});
    }
    let raw:unknown;
    try{raw=await boundedJson(request);}catch(e){const large=e instanceof Error&&e.message==='payload_too_large';return json({error:large?'payload_too_large':'invalid_json'},large?413:400);}
