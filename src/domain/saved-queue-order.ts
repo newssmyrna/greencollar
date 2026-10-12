@@ -8,7 +8,7 @@ function validateVisitIds<T extends {id:string}>(visits:readonly T[]):void{
   }
 }
 
-/** Reconcile a session-local operator order with the latest authorized due visits.
+/** Reconcile a operator order with the latest authorized due visits.
  * Removed visits disappear; new visits append in source order. No visit is invented or dropped.
  * A different operator/business/date scope always uses the supplied default order.
  */
