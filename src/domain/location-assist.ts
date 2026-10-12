@@ -110,6 +110,6 @@ export function appendLocationConfirmation(
   limit = 20
 ): LocationConfirmation[] {
   if (!Number.isSafeInteger(limit) || limit < 1) throw new Error('Invalid confirmation history limit');
-  if (history.length >= limit) throw new Error('Local confirmation history is full; sync or export it before recording more');
+  if (history.length >= limit) throw new Error('Local confirmation limit reached; server sync is required for more history');
   return [...history, event];
 }
