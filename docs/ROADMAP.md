@@ -1,27 +1,33 @@
 # Roadmap
 
-## Completed
-- Product vision, brand direction, 7-step operator workflow.
-- Clickable standalone browser prototype (held outside repository).
-- Product blueprint v0.2.
-- GitHub repository initialized.
+## Foundation — source exists; integration gates remain
 
-## Phase 2 — Foundation (current)
-- Establish app code and conventions.
-- Preserve existing wireframe as design reference.
-- Build secure customer, services, locations, jobs, recurrence and business settings storage.
-- Seed synthetic business/customer fixtures.
-- Build working phone UI and automated tests.
+Implemented in the repository:
+- Expo / React Native application and Clerk sign-in flow.
+- Cloudflare Worker source for business onboarding, customers, day data, and visit completion.
+- D1 schema migrations, tenant membership checks, recurring-service date generation, and saved-day view model.
+- Local work timer persistence, recurrence/planning domain modules, road-matrix adapter, and invoice draft review.
+- App and Worker typecheck/test jobs in GitHub Actions.
 
-## Phase 3 — Integrated Operating Experience
-- Scheduling solver and road routing, vehicles/equipment and cost estimates.
-- Day execution, GPS-assisted timers, notes, photos, robust offline behavior.
-- SMS and customer notifications, invoicing and payment collection, customer portal.
-- Historical predictions and mid-day replanning.
+Still gated:
+- Inspect and reconcile the actual D1 schema against committed migrations in a staging copy.
+- Verify Clerk issuer, audience, JWKS, native sign-in, and authenticated endpoints in the deployed environment.
+- Replace synthetic planner preview with the real road-planning pipeline.
+- Finish customer location/agreement editing and durable invoice/payment workflows.
 
-## Phase 4 — Product Validation
-- Full synthetic end-to-end journey then controlled real-world trials.
-- Reliability, app-store readiness, privacy, security and support.
-- Launch paid product only after entire journey succeeds.
+## Integrated operator workflow — next product phase
 
-Keep every change narrowly scoped and tested; never silently remove agreed features.
+- Connect saved agreements to an operator-approved daily plan using real travel times and constraints.
+- Add vehicle, equipment, fuel-cost assumptions, and transparent route estimates.
+- Complete timer transitions, visit notes/photos, offline event recovery, and mid-day replanning.
+- Add consent-based customer notices and durable invoice/payment records.
+- Keep every externally visible action reviewable, retry-safe, and auditable.
+
+## Validation and launch
+
+- Test a complete synthetic journey across two isolated businesses.
+- Verify real signed tokens, authorization roles, schema constraints, retries, and data recovery in staging.
+- Run mobile/device acceptance and controlled real-world trials.
+- Complete privacy, security, support, app-store, cost, and backup checks before a paid launch.
+
+Never treat source code or green CI as proof that a production service is deployed or verified.
