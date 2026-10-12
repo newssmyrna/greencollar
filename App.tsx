@@ -693,7 +693,7 @@ function GreenCollarDashboard() {
               <Text style={styles.cardHeading}>Review completed service</Text>
               {completedServiceEstimate!==null&&<Text style={styles.body}>Scheduled estimate: {completedServiceEstimate} min</Text>}
               <Text style={styles.body}>Recorded actual: {completionRecord(workSession).actualMinutes} min</Text>
-              {workSession.jobId!=='demo-job'&&!completedTimerSaved&&<Pressable accessibilityRole="checkbox" accessibilityState={{checked:isCompletionReviewConfirmed(completedReviewKey,completionReviewConfirmedKey)}} style={styles.primary} onPress={()=>setCompletionReviewConfirmedKey(current=>isCompletionReviewConfirmed(completedReviewKey,current)?'':completedReviewKey)}>
+              {workSession.jobId!=='demo-job'&&!completedTimerSaved&&<Pressable accessibilityRole="checkbox" accessibilityState={{checked:isCompletionReviewConfirmed(completedReviewKey,completionReviewConfirmedKey)}} style={styles.primary} onPress={()=>setCompletionReviewConfirmedKey(current=>isCompletionReviewConfirmed(completedReviewKey,current)?'':(completedReviewKey??''))}>
                 <Text style={styles.primaryText}>{isCompletionReviewConfirmed(completedReviewKey,completionReviewConfirmedKey)?'✓ Duration reviewed':'Confirm recorded duration'}</Text>
               </Pressable>}
               {workSession.jobId!=='demo-job'&&!completedTimerSaved&&<Text style={styles.muted}>Check the recorded minutes before saving. Any timer or workday change clears this confirmation.</Text>}
