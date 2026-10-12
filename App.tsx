@@ -6,6 +6,7 @@ import { fetchDayData, type DayData } from './src/data/greencollar-api';
 import { summarizeSavedDay } from './src/data/saved-day';
 import { getBusinesses, createBusiness } from './src/data/business-api';
 import { listSavedCustomers, createSavedCustomer, updateSavedCustomer, type SavedCustomer } from './src/data/customer-api';
+import { listServiceLocations, createServiceLocation, listServiceAgreements, createServiceAgreement, type SavedServiceLocation, type SavedServiceAgreement, type ServiceFrequency } from './src/data/service-api';
 import { startWork, pauseWork, resumeWork, completeWork, getElapsedMinutes, completionRecord, type WorkSession } from './src/domain/work-session';
 import {saveVisitCompletion} from './src/data/visit-completion';
 import {billableCompletedServices,invoiceFromCompletedService} from './src/domain/completed-invoice';
@@ -33,6 +34,7 @@ const seed: Customer[] = [
 ];
 const green = '#183d2b';
 const pale = '#d5f48b';
+const localDateInputValue=()=>{const now=new Date();return new Date(now.getTime()-now.getTimezoneOffset()*60000).toISOString().slice(0,10);};
 
 function GreenCollarDashboard() {
   const {getToken,userId} = useAuth();
@@ -43,6 +45,17 @@ function GreenCollarDashboard() {
   const [savedCustomerEmail,setSavedCustomerEmail] = useState('');
   const [savedCustomerNotes,setSavedCustomerNotes] = useState('');
   const [editingSavedCustomerId,setEditingSavedCustomerId] = useState<string|null>(null);
+  const [serviceSetupCustomer,setServiceSetupCustomer] = useState<SavedCustomer|null>(null);
+  const [serviceLocations,setServiceLocations] = useState<SavedServiceLocation[]>([]);
+  const [serviceAgreements,setServiceAgreements] = useState<SavedServiceAgreement[]>([]);
+  const [selectedServiceLocationId,setSelectedServiceLocationId] = useState('');
+  const [serviceAddress,setServiceAddress] = useState('');
+  const [servicePreferences,setServicePreferences] = useState('');
+  const [serviceName,setServiceName] = useState('');
+  const [serviceRate,setServiceRate] = useState('');
+  const [serviceMinutes,setServiceMinutes] = useState('60');
+  const [serviceStartDate,setServiceStartDate] = useState(localDateInputValue());
+  const [serviceFrequency,setServiceFrequency] = useState<ServiceFrequency>('weekly');
   const [savedDayError,setSavedDayError] = useState('');
   const [loadingSaved,setLoadingSaved] = useState(false);
   const [businessName,setBusinessName] = useState('');
@@ -216,6 +229,64 @@ function GreenCollarDashboard() {
     setSavedCustomerName('');setSavedCustomerPhone('');setSavedCustomerEmail('');setSavedCustomerNotes('');
     setEditingSavedCustomerId(null);setSavedDayError('');
   }
+  async function openServiceSetup(customer:SavedCustomer) {
+    const api=process.env.EXPO_PUBLIC_GREENCOLLAR_API_URL;
+    if(!api||!connectedBusiness){setSavedDayError('Load your business first');return;}
+    setServiceSetupCustomer(customer);setSelectedServiceLocationId('');setSavedDayError('');
+    setLoadingSaved(true);
+    try{
+      const token=await getToken({template:'greencollar-api'});
+      if(!token)throw new Error('Sign in first');
+      const [locations,agreements]=await Promise.all([
+        listServiceLocations(api,connectedBusiness.id,token,customer.id),
+        listServiceAgreements(api,connectedBusiness.id,token)
+      ]);
+      setServiceLocations(locations);setServiceAgreements(agreements);
+      if(locations.length)setSelectedServiceLocationId(locations[0].id);
+    }catch(e){setSavedDayError(e instanceof Error?e.message:'Could not load service setup');}
+    finally{setLoadingSaved(false);}
+  }
+  async function saveServiceLocation() {
+    const api=process.env.EXPO_PUBLIC_GREENCOLLAR_API_URL;
+    if(!api||!connectedBusiness||!serviceSetupCustomer){setSavedDayError('Select a saved customer first');return;}
+    if(!serviceAddress.trim()){setSavedDayError('Service address is required');return;}
+    setLoadingSaved(true);setSavedDayError('');
+    try{
+      const token=await getToken({template:'greencollar-api'});
+      if(!token)throw new Error('Sign in first');
+      const location=await createServiceLocation(api,connectedBusiness.id,token,{
+        customerId:serviceSetupCustomer.id,address:serviceAddress.trim(),
+        preferences:servicePreferences.trim()||undefined
+      });
+      const locations=await listServiceLocations(api,connectedBusiness.id,token,serviceSetupCustomer.id);
+      setServiceLocations(locations);setSelectedServiceLocationId(location.id);
+      setServiceAddress('');setServicePreferences('');
+    }catch(e){setSavedDayError(e instanceof Error?e.message:'Could not save service location');}
+    finally{setLoadingSaved(false);}
+  }
+  async function saveServiceAgreement() {
+    const api=process.env.EXPO_PUBLIC_GREENCOLLAR_API_URL;
+    if(!api||!connectedBusiness||!serviceSetupCustomer||!selectedServiceLocationId){setSavedDayError('Choose a saved service location first');return;}
+    const dollars=Number(serviceRate),minutes=Number(serviceMinutes);
+    if(!serviceName.trim()||!Number.isFinite(dollars)||dollars<0||dollars>1000000||!Number.isInteger(minutes)||minutes<1||minutes>1440){
+      setSavedDayError('Enter a service name, a rate from $0 to $1,000,000, and a duration from 1 to 1,440 minutes');return;
+    }
+    setLoadingSaved(true);setSavedDayError('');
+    try{
+      const token=await getToken({template:'greencollar-api'});
+      if(!token)throw new Error('Sign in first');
+      await createServiceAgreement(api,connectedBusiness.id,token,{
+        customerId:serviceSetupCustomer.id,locationId:selectedServiceLocationId,
+        serviceName:serviceName.trim(),rateCents:Math.round(dollars*100),estimatedMinutes:minutes,
+        startsOn:serviceStartDate,frequency:serviceFrequency
+      });
+      setServiceAgreements(await listServiceAgreements(api,connectedBusiness.id,token));
+      setServiceName('');setServiceRate('');
+      const date=localDateInputValue();
+      setSavedDay(await fetchDayData(api,connectedBusiness.id,date,token));
+    }catch(e){setSavedDayError(e instanceof Error?e.message:'Could not save service agreement');}
+    finally{setLoadingSaved(false);}
+  }
   async function registerBusiness() {
     const api=process.env.EXPO_PUBLIC_GREENCOLLAR_API_URL;
     if(!api){setSavedDayError('API URL not configured yet.');return;}
@@ -293,7 +364,34 @@ function GreenCollarDashboard() {
                 {!!c.email&&<Text style={styles.body}>{c.email}</Text>}
                 {!!c.notes&&<Text style={styles.muted}>{c.notes}</Text>}
                 <Pressable style={styles.primary} onPress={()=>editSavedCustomer(c)}><Text style={styles.primaryText}>Edit profile</Text></Pressable>
+                <Pressable style={[styles.primary,{backgroundColor:'#f0f5ef'}]} disabled={loadingSaved} onPress={()=>void openServiceSetup(c)}><Text style={styles.primaryText}>Set up service</Text></Pressable>
               </View>)}
+              {serviceSetupCustomer&&<View style={styles.card}>
+                <Text style={styles.cardHeading}>Service setup · {serviceSetupCustomer.name}</Text>
+                <Pressable style={[styles.primary,{backgroundColor:'#f0f5ef'}]} onPress={()=>setServiceSetupCustomer(null)}><Text style={styles.primaryText}>Close service setup</Text></Pressable>
+                <Text style={styles.label}>Saved service locations</Text>
+                {!serviceLocations.length&&<Text style={styles.muted}>No service address saved yet.</Text>}
+                {serviceLocations.map(location=><Pressable key={location.id} style={[styles.primary,{backgroundColor:selectedServiceLocationId===location.id?pale:'#f0f5ef'}]} onPress={()=>setSelectedServiceLocationId(location.id)}>
+                  <Text style={styles.primaryText}>{selectedServiceLocationId===location.id?'Selected · ':''}{location.address}</Text>
+                  {!!location.preferences&&<Text style={styles.muted}>{location.preferences}</Text>}
+                </Pressable>)}
+                <TextInput style={styles.input} placeholder="Service address" placeholderTextColor="#819b8b" value={serviceAddress} onChangeText={setServiceAddress}/>
+                <TextInput style={styles.input} placeholder="Site preferences (optional)" placeholderTextColor="#819b8b" multiline value={servicePreferences} onChangeText={setServicePreferences}/>
+                <Pressable style={styles.primary} disabled={loadingSaved||!serviceAddress.trim()} onPress={()=>void saveServiceLocation()}><Text style={styles.primaryText}>Save service location</Text></Pressable>
+                {!!selectedServiceLocationId&&<>
+                  <Text style={styles.label}>New recurring service</Text>
+                  <TextInput style={styles.input} placeholder="Service name" placeholderTextColor="#819b8b" value={serviceName} onChangeText={setServiceName}/>
+                  <TextInput style={styles.input} placeholder="Rate in dollars" placeholderTextColor="#819b8b" keyboardType="decimal-pad" value={serviceRate} onChangeText={setServiceRate}/>
+                  <TextInput style={styles.input} placeholder="Estimated minutes" placeholderTextColor="#819b8b" keyboardType="number-pad" value={serviceMinutes} onChangeText={setServiceMinutes}/>
+                  <TextInput style={styles.input} placeholder="Start date (YYYY-MM-DD)" placeholderTextColor="#819b8b" value={serviceStartDate} onChangeText={setServiceStartDate}/>
+                  <Text style={styles.label}>Repeat</Text>
+                  <View style={styles.tabs}>{(['weekly','biweekly','monthly','daily'] as const).map(frequency=><Pressable key={frequency} style={[styles.tab,serviceFrequency===frequency&&styles.activeTab]} onPress={()=>setServiceFrequency(frequency)}><Text style={[styles.tabText,serviceFrequency===frequency&&styles.activeTabText]}>{frequency.toUpperCase()}</Text></Pressable>)}</View>
+                  <Text style={styles.muted}>Weekly repeats every 7 days from the start date. Add a weekday picker before using a fixed weekday schedule.</Text>
+                  <Pressable style={styles.primary} disabled={loadingSaved||!serviceName.trim()||!serviceRate.trim()} onPress={()=>void saveServiceAgreement()}><Text style={styles.primaryText}>Save recurring service</Text></Pressable>
+                </>}
+                <Text style={styles.label}>Existing agreements</Text>
+                {serviceAgreements.filter(a=>a.customer_id===serviceSetupCustomer.id).map(a=><Text key={a.id} style={styles.body}>{a.service_name} · ${(a.rate_cents/100).toFixed(2)} · {a.frequency} · {a.active?'active':'inactive'}</Text>)}
+              </View>}
               <Text style={styles.cardHeading}>{editingSavedCustomerId?'Edit saved customer':'Add saved customer'}</Text>
               <TextInput style={styles.input} placeholder="Customer name" placeholderTextColor="#819b8b" value={savedCustomerName} onChangeText={setSavedCustomerName}/>
               <TextInput style={styles.input} placeholder="Phone (optional)" placeholderTextColor="#819b8b" keyboardType="phone-pad" value={savedCustomerPhone} onChangeText={setSavedCustomerPhone}/>
