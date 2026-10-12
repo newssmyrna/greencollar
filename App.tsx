@@ -253,6 +253,9 @@ function GreenCollarDashboard() {
   const [timerNow,setTimerNow]=useState(Date.now());
   const [timerError,setTimerError]=useState('');
   const [timerSaved,setTimerSaved]=useState(false);
+  const [visitSkipBusy,setVisitSkipBusy]=useState('');
+  const [visitSkipError,setVisitSkipError]=useState('');
+  const [visitSkipNotice,setVisitSkipNotice]=useState('');
   const [locationAssessment,setLocationAssessment]=useState<ProximityAssessment|null>(null);
   const [locationAssessmentJob,setLocationAssessmentJob]=useState('');
   const [locationCheckError,setLocationCheckError]=useState('');
