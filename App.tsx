@@ -11,6 +11,7 @@ import {saveVisitCompletion} from './src/data/visit-completion';
 import {billableCompletedServices,invoiceFromCompletedService} from './src/domain/completed-invoice';
 import {invoiceTotals,type InvoiceDraft} from './src/domain/invoice';
 import {loadWorkSession,saveWorkSession} from './src/data/local-work-session';
+import {listServiceLocations,createServiceLocation,type SavedServiceLocation} from './src/data/service-location-api';
 import {
   SafeAreaView, ScrollView, View, Text, TextInput,
   Pressable, StyleSheet, StatusBar
@@ -42,6 +43,46 @@ function GreenCollarDashboard() {
   const [savedCustomerPhone,setSavedCustomerPhone] = useState('');
   const [savedCustomerEmail,setSavedCustomerEmail] = useState('');
   const [savedCustomerNotes,setSavedCustomerNotes] = useState('');
+  const [locationCustomerId,setLocationCustomerId]=useState('');
+  const [locations,setLocations]=useState<SavedServiceLocation[]>([]);
+  const [locationAddress,setLocationAddress]=useState('');
+  const [locationPreferences,setLocationPreferences]=useState('');
+  const [locationError,setLocationError]=useState('');
+  const [locationLoading,setLocationLoading]=useState(false);
+  const [locationsHaveMore,setLocationsHaveMore]=useState(false);
+  const locationRequest=useRef(0);
+  const locationSaving=useRef(false);
+  async function selectLocationCustomer(customerId:string){
+    const sequence=++locationRequest.current;
+    setLocationCustomerId(customerId);setLocations([]);setLocationsHaveMore(false);
+    setLocationAddress('');setLocationPreferences('');setLocationError('');
+    const api=process.env.EXPO_PUBLIC_GREENCOLLAR_API_URL;
+    if(!api||!connectedBusiness){setLocationError('Load your business first');return;}
+    setLocationLoading(true);
+    try{
+      const token=await getToken({template:'greencollar-api'});
+      if(!token)throw new Error('Sign in first');
+      const result=await listServiceLocations(api,connectedBusiness.id,customerId,token);
+      if(sequence===locationRequest.current){setLocations(result.locations);setLocationsHaveMore(result.hasMore);}
+    }catch(e){if(sequence===locationRequest.current)setLocationError(e instanceof Error?e.message:'Could not load addresses');}
+    finally{if(sequence===locationRequest.current)setLocationLoading(false);}
+  }
+  async function saveLocation(){
+    const api=process.env.EXPO_PUBLIC_GREENCOLLAR_API_URL;
+    if(!api||!connectedBusiness||!locationCustomerId){setLocationError('Select a saved customer first');return;}
+    if(locationSaving.current)return;
+    locationSaving.current=true;setLocationLoading(true);setLocationError('');
+    const sequence=locationRequest.current;
+    try{
+      const token=await getToken({template:'greencollar-api'});
+      if(!token)throw new Error('Sign in first');
+      const saved=await createServiceLocation(api,connectedBusiness.id,locationCustomerId,token,{address:locationAddress,preferences:locationPreferences});
+      if(sequence===locationRequest.current){
+        setLocations(previous=>[...previous,saved]);setLocationAddress('');setLocationPreferences('');
+      }
+    }catch(e){if(sequence===locationRequest.current)setLocationError(e instanceof Error?e.message:'Could not save address');}
+    finally{locationSaving.current=false;if(sequence===locationRequest.current)setLocationLoading(false);}
+  }
   const [savedDayError,setSavedDayError] = useState('');
   const [loadingSaved,setLoadingSaved] = useState(false);
   const [businessName,setBusinessName] = useState('');
@@ -268,6 +309,21 @@ function GreenCollarDashboard() {
             </> : <Text style={styles.muted}>Create or load your business on Today before saving real customers.</Text>}
             {!!savedDayError && <Text style={styles.muted}>{savedDayError}</Text>}
           </View>
+          {connectedBusiness&&<View style={styles.card}>
+            <Text style={styles.cardHeading}>Service addresses</Text>
+            <Text style={styles.muted}>Choose a saved customer, then add where the work happens.</Text>
+            {!savedCustomers.length&&<Text style={styles.muted}>Load or save a customer above to begin.</Text>}
+            {savedCustomers.map(c=><Pressable key={c.id} accessibilityRole="button" accessibilityState={{selected:c.id===locationCustomerId,disabled:locationLoading}} style={styles.primary} disabled={locationLoading} onPress={()=>void selectLocationCustomer(c.id)}><Text style={styles.primaryText}>{c.id===locationCustomerId?'Selected: ':''}{c.name}</Text></Pressable>)}
+            {locationLoading&&<Text style={styles.muted}>Loading service addresses…</Text>}
+            {locations.map(l=><View key={l.id}><Text style={styles.body}>{l.address}</Text>{!!l.preferences&&<Text style={styles.muted}>Access preferences: {l.preferences}</Text>}</View>)}
+            {locationsHaveMore&&<Text style={styles.muted}>Showing the first 200 saved addresses. Additional addresses exist.</Text>}
+            {!!locationCustomerId&&<>
+              <TextInput accessibilityLabel="Service address" style={styles.input} placeholder="Service address" placeholderTextColor="#819b8b" value={locationAddress} onChangeText={setLocationAddress} editable={!locationLoading} maxLength={500}/>
+              <TextInput accessibilityLabel="Service address access preferences" style={styles.input} placeholder="Gate, parking, or access preferences (optional)" placeholderTextColor="#819b8b" value={locationPreferences} onChangeText={setLocationPreferences} editable={!locationLoading} multiline maxLength={2000}/>
+              <Pressable accessibilityRole="button" style={styles.primary} disabled={locationLoading||!locationAddress.trim()} onPress={()=>void saveLocation()}><Text style={styles.primaryText}>Save service address</Text></Pressable>
+            </>}
+            {!!locationError&&<Text style={styles.muted}>{locationError}</Text>}
+          </View>}
           <Text style={styles.heading}>Sample data · Not saved</Text>
           {customers.map(c => <View key={c.id} style={styles.card}>
             <Text style={styles.cardHeading}>{c.name}</Text>
