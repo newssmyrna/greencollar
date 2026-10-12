@@ -1,5 +1,5 @@
 import {generateDueVisits, type Agreement} from './recurrence';
-import {planDay} from './planner';
+import {planDay, predictDuration} from './planner';
 import type {PlannerInput,PlanResult,ServiceJob} from './types';
 
 export type DailyWorkflowInput=Omit<PlannerInput,'jobs'> & {
@@ -8,6 +8,8 @@ export type DailyWorkflowInput=Omit<PlannerInput,'jobs'> & {
   extraJobs?:ServiceJob[];
   completedVisitIds?:string[];
   skippedVisitIds?:string[];
+  /** Actual completed service minutes grouped by agreement ID. */
+  durationHistoryByAgreement?:Record<string,number[]>;
 };
 export type DailyWorkflowResult=PlanResult & {
   date:string;
@@ -15,6 +17,7 @@ export type DailyWorkflowResult=PlanResult & {
   scheduledCount:number;
   alreadyHandledCount:number;
   unscheduledVisitIds:string[];
+  predictions:Array<{agreementId:string;minutes:number;samples:number;confidence:'low'|'medium'|'high'}>;
 };
 
 /**
@@ -28,10 +31,12 @@ export function buildDailyWorkflow(input:DailyWorkflowInput):DailyWorkflowResult
   const due=generateDueVisits(input.agreements,input.date,input.date);
   const handled=new Set([...(input.completedVisitIds??[]),...(input.skippedVisitIds??[])]);
   const pending=due.filter(v=>!handled.has(v.id));
+  const predictions=pending.map(v=>({agreementId:v.agreementId,...predictDuration(input.durationHistoryByAgreement?.[v.agreementId]??[],v.estimatedMinutes)}));
+  const predicted=new Map(predictions.map(p=>[p.agreementId,p.minutes]));
   const recurringJobs:ServiceJob[]=pending.map(v=>({
     id:v.id,customerId:v.customerId,locationId:v.locationId,
     serviceName:v.serviceName,rateCents:v.rateCents,
-    estimatedMinutes:v.estimatedMinutes,
+    estimatedMinutes:predicted.get(v.agreementId)??v.estimatedMinutes,
     earliestStartMinute:v.earliestStartMinute,latestFinishMinute:v.latestFinishMinute,
     fixedStartMinute:v.fixedStartMinute,due:true
   }));
@@ -45,7 +50,7 @@ export function buildDailyWorkflow(input:DailyWorkflowInput):DailyWorkflowResult
   const scheduled=new Set(result.stops.map(stop=>stop.jobId));
   return {
     ...result,date:input.date,dueCount:due.length,
-    scheduledCount:result.stops.length,
+    scheduledCount:result.stops.length,predictions,
     alreadyHandledCount:due.length-pending.length,
     unscheduledVisitIds:pending.filter(v=>!scheduled.has(v.id)).map(v=>v.id)
   };
