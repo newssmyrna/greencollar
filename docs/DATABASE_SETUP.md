@@ -1,19 +1,22 @@
 # Database setup and validation
 
-Migration `supabase/migrations/0001_core.sql` has been updated to constrain cross-tenant references and separate owner/admin rights from worker rights, but **is not deployed or security-certified**.
+## Active path: Cloudflare D1
 
-## Before connecting any real customer data
+Cloudflare D1 is the current backend direction. Migration source is in `cloudflare/migrations/`; it must be reconciled with the actual hosted schema before real customer use.
 
-1. Create a dedicated Supabase staging project. Never commit project secrets or service-role keys.
-2. Apply the migration to a fresh staging database.
-3. Provision businesses and initial memberships atomically using a reviewed server-side onboarding path.
-4. Test authenticated users from two different businesses. Reject cross-tenant reads/writes and foreign-key references, including customer/location mismatches inside the same tenant.
-5. Test owner, admin, worker and unauthenticated access independently.
-6. Verify no direct client route can change membership roles, create a new owner, or bypass the business creation flow.
-7. Inspect function grants/security-definer ownership, profile information access, public schema grants and storage bucket policies.
-8. Exercise concurrent changes and deletion workflows; customer deletion with associated jobs currently requires an explicit retention decision.
-9. Add a tested rollback/backups plan.
+The latest recorded live-data review found that recurring-service tables had been created with a minimal schema that differs from the stricter committed migrations. `CREATE TABLE IF NOT EXISTS` will not retrofit missing constraints or indexes. This review did not inspect the live database during the current code changes.
 
-## Status
+Before connecting real customer data:
 
-Schema drafted in GitHub; Supabase project connection and integration tests are **not yet completed**. No real customer data should be added before these checks pass.
+1. Make a reviewed staging copy or create a clean staging database.
+2. Inspect actual tables, indexes, constraints, and applied migration history.
+3. Prepare an additive reconciliation migration for the real schema; do not apply the stricter create-table script as if it altered existing tables.
+4. Test business isolation, owner/admin/worker roles, cross-tenant foreign keys, onboarding races, duplicate completion, invalid payloads, and rollback.
+5. Verify backup and restore procedures, then document the tested snapshot and migration state.
+6. Only after staging passes, decide and record the production migration and deployment.
+
+Do not place live customer data in test fixtures or source control.
+
+## Archived alternative
+
+`supabase/migrations/0001_core.sql` is retained as an alternative design only. Supabase is not the active backend path and that migration is not a production deployment artifact.
