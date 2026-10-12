@@ -289,7 +289,9 @@ function GreenCollarDashboard() {
     setServerLocationConfirmationsHasMore(false);
     setServerLocationConfirmationsError('');
     setServerLocationConfirmationsBusy(false);
-  },[connectedBusiness?.id,savedDay?.date]);
+    if(userId&&connectedBusiness?.id&&savedDay?.date&&process.env.EXPO_PUBLIC_GREENCOLLAR_API_URL)
+      void loadServerLocationConfirmations();
+  },[userId,connectedBusiness?.id,savedDay?.date]);
   useEffect(()=>{
     if(!userId||!connectedBusiness?.id||!process.env.EXPO_PUBLIC_GREENCOLLAR_API_URL)return;
     let active=true;
@@ -340,7 +342,8 @@ function GreenCollarDashboard() {
   }
   async function loadServerLocationConfirmations() {
     const api=process.env.EXPO_PUBLIC_GREENCOLLAR_API_URL;
-    if(!api||!connectedBusiness||!savedDay){setServerLocationConfirmationsError('Load a saved business workday first.');return;}
+    if(!api){setServerLocationConfirmationsError('API URL not configured.');return;}
+    if(!connectedBusiness||!savedDay){setServerLocationConfirmationsError('Load a saved business workday first.');return;}
     const requestId=++serverAuditRequest.current;
     setServerLocationConfirmationsBusy(true);setServerLocationConfirmationsError('');
     try{
@@ -381,6 +384,8 @@ function GreenCollarDashboard() {
       }
       setLocationConfirmations(await loadLocationConfirmations(userId));
       const remaining=(await pendingLocationConfirmations(userId,businessId)).length;
+      if(synced>0&&connectedBusiness?.id===businessId&&savedDay?.date&&selected.some(event=>event.date===savedDay.date))
+        await loadServerLocationConfirmations();
       setLocationConfirmError(firstError
         ? 'Saved on this device; '+synced+' synced, '+remaining+' still pending. '+firstError
         : 'Synced '+synced+' location confirmation'+(synced===1?'':'s')+'.');
@@ -523,7 +528,7 @@ function GreenCollarDashboard() {
             {!!serverLocationConfirmationsError&&<Text accessibilityLiveRegion="polite" style={styles.muted}>{serverLocationConfirmationsError}</Text>}
             {serverLocationConfirmations.slice(0,10).map(event=><Text key={event.id} style={styles.muted}>{event.kind==='arrival'?'Arrival':'Departure'} · {new Date(event.confirmed_at).toLocaleString()} · {event.source==='manual'?'manual: '+(event.manual_reason??'reason not recorded'):'GPS suggestion'} · {event.proximity}</Text>)}
             {serverLocationConfirmations.length>10&&<Text style={styles.muted}>Showing the 10 most recent of {serverLocationConfirmations.length} retrieved confirmations.</Text>}{serverLocationConfirmationsHasMore&&<Text style={styles.muted}>Additional older confirmations exist beyond the 200 most recent returned by the API.</Text>}
-            {!serverLocationConfirmationsBusy&&!serverLocationConfirmationsError&&serverLocationConfirmations.length===0&&<Text style={styles.muted}>No server history loaded yet.</Text>}
+            {!serverLocationConfirmationsBusy&&!serverLocationConfirmationsError&&serverLocationConfirmations.length===0&&<Text style={styles.muted}>No confirmations recorded on the server for this date.</Text>}
           </View>}
           {savedDay && <View style={styles.card}><Text style={styles.cardHeading}>Due today · Saved records</Text><Text style={styles.body}>{summarizeSavedDay(savedDay).pendingCount} jobs due · ${(summarizeSavedDay(savedDay).estimatedRevenueCents / 100).toFixed(2)} expected revenue · {summarizeSavedDay(savedDay).estimatedServiceMinutes} service minutes</Text><Text style={styles.muted}>{summarizeSavedDay(savedDay).completedCount} completed · {summarizeSavedDay(savedDay).skippedCount} skipped. Due-work preview only; no road routing or fuel estimate yet.</Text>{summarizeSavedDay(savedDay).due.slice(0,12).map(j=><View key={j.id}><Text style={styles.body}>{j.customer} · {j.service} · {j.address}</Text><Pressable style={styles.primary} disabled={!!workSession&&workSession.status!=='completed'} onPress={()=>timerAction('start',j.id)}><Text style={styles.primaryText}>Start this service</Text></Pressable></View>)}</View>}
           <View style={styles.card}>
