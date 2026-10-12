@@ -13,6 +13,7 @@ import { getBusinesses, createBusiness } from './src/data/business-api';
 import { listSavedCustomers, createSavedCustomer, type SavedCustomer } from './src/data/customer-api';
 import { pauseWork, resumeWork, completeWork, completionRecord, type WorkSession } from './src/domain/work-session';
 import {canStartNextWork,startNextWork,hasSavedWorkCompletion,workSessionDate} from './src/domain/work-handoff';
+import {normalizeWorkNote,withWorkNote} from './src/domain/work-note';
 import {saveVisitCompletion} from './src/data/visit-completion';
 import {saveVisitSkip} from './src/data/visit-skip';
 import {billableCompletedServices,invoiceFromCompletedService,unbillableCompletedServiceCount} from './src/domain/completed-invoice';
@@ -196,13 +197,41 @@ function GreenCollarDashboard() {
       const prefix=workSession.jobId;
       const agreementId=prefix.slice(0,-(savedDay.date.length+1));
       if(!agreementId||!prefix.endsWith(':'+savedDay.date))throw new Error('Invalid scheduled visit');
-      await saveVisitCompletion(api,token,{businessId:connectedBusiness.id,agreementId,date:savedDay.date,actualMinutes:completionRecord(workSession).actualMinutes});
+      await saveVisitCompletion(api,token,{businessId:connectedBusiness.id,agreementId,date:savedDay.date,actualMinutes:completionRecord(workSession).actualMinutes,workNote:workSession.note??''});
       if(timerOperator.current!==userId||workSessionCurrent.current!==workSession)return;
       setTimerSaved(true);
       setSavedDay(await fetchDayData(api,connectedBusiness.id,savedDay.date,token));
     } catch(e) {setTimerError(e instanceof Error?e.message:'Unable to save completed service');}
     finally {submitting.current=false;setLoadingSaved(false);}
   }
+  async function saveWorkNote(){
+    if(timerTransition.current.busy){setWorkNoteError('Wait for the current timer save to finish.');return;}
+    const operator=userId,current=workSessionCurrent.current;
+    if(!operator||!current||current.jobId==='demo-job'||!timerReady||timerNeedsRestore.current){
+      setWorkNoteError('Restore a saved job timer before saving its note.');return;
+    }
+    if(current.status==='completed'&&(timerSaved||hasSavedWorkCompletion(current,savedDay?.visits??[]))){
+      setWorkNoteError('This completed visit is already saved.');return;
+    }
+    let writing=false;
+    try{
+      const next=withWorkNote(current,workNoteDraft);
+      if(next.note===(current.note??'')){setWorkNoteError('');return;}
+      writing=true;setTimerTransitionBusy(true);setWorkNoteError('');
+      const applied=await timerTransition.current.run(next,snapshot=>saveWorkSession(operator,snapshot),
+        ()=>timerOperator.current===operator&&workSessionCurrent.current===current,
+        snapshot=>{workSessionCurrent.current=snapshot;setWorkSession(snapshot);});
+      if(!applied&&timerOperator.current===operator)throw new Error('The active job changed before the note save completed.');
+    }catch(e){
+      if(timerOperator.current===operator){
+        if(writing){timerNeedsRestore.current=true;setTimerRestored(false);setTimerReadyUser(null);}
+        setWorkNoteError(writing
+          ?'Could not confirm the note save. Restore the job timer before continuing; the note may have been written.'
+          :e instanceof Error?e.message:'Unable to save work note');
+      }
+    }finally{if(writing)setTimerTransitionBusy(false);}
+  }
+
   async function skipSavedVisit(agreementId:string,date:string){
     if(!connectedBusiness||!savedDay||savedDay.date!==date){setVisitSkipError('Load the matching saved workday first.');return;}
     const api=process.env.EXPO_PUBLIC_GREENCOLLAR_API_URL;
@@ -288,6 +317,8 @@ function GreenCollarDashboard() {
   const [timerNow,setTimerNow]=useState(Date.now());
   const displayedTimer=timerDisplay(workSession,timerNow);
   const [timerError,setTimerError]=useState('');
+  const [workNoteDraft,setWorkNoteDraft]=useState('');
+  const [workNoteError,setWorkNoteError]=useState('');
   const [timerSaved,setTimerSaved]=useState(false);
   const [completionReviewConfirmedKey,setCompletionReviewConfirmedKey]=useState('');
   const [visitSkipBusy,setVisitSkipBusy]=useState('');
@@ -403,6 +434,8 @@ function GreenCollarDashboard() {
       if(submitting.current)throw new Error('Wait for the completed visit to finish saving');
       const now=Date.now();setTimerNow(now);setTimerError('');
       const current=workSessionCurrent.current;
+      if(action==='complete'&&current&&current.jobId!=='demo-job'&&normalizeWorkNote(workNoteDraft)!==(current.note??''))
+        throw new Error('Save the work note before completing this visit.');
       let next:WorkSession;
       if(action==='start'){
         const completionSaved=timerSaved||hasSavedWorkCompletion(current,savedDay?.visits??[]);
@@ -589,6 +622,9 @@ function GreenCollarDashboard() {
   const completedTimerSaved=timerSaved||hasSavedWorkCompletion(workSession,savedDay?.visits??[]);
   const completedTimerDate=workSessionDate(workSession);
   const completedReviewKey=completionReviewKey(userId,workSession,savedDay?.date??null);
+  useEffect(()=>{
+    setWorkNoteDraft(workSession?.note??'');setWorkNoteError('');
+  },[userId,workSession?.jobId,workSession?.startedAt,workSession?.note]);
   const completedServiceEstimate=workSession?.status==='completed'&&savedDay
     ?savedDay.agreements.find(agreement=>workSession.jobId===agreement.id+':'+savedDay.date)?.estimated_minutes??null
     :null;
@@ -687,8 +723,15 @@ function GreenCollarDashboard() {
             {!workSession && <Pressable style={styles.primary} disabled={!timerCanStart} onPress={()=>timerAction('start')}><Text style={styles.primaryText}>Start demo job</Text></Pressable>}
             {workSession?.status==='running' && <Pressable style={styles.primary} disabled={!timerReady||timerTransitionBusy} onPress={()=>void timerAction('pause')}><Text style={styles.primaryText}>Pause job</Text></Pressable>}
             {workSession?.status==='paused' && <Pressable style={styles.primary} disabled={!timerReady||timerTransitionBusy} onPress={()=>void timerAction('resume')}><Text style={styles.primaryText}>Resume job</Text></Pressable>}
-            {workSession && workSession.status!=='completed' && <Pressable style={styles.primary} disabled={!timerReady||timerTransitionBusy} onPress={()=>void timerAction('complete')}><Text style={styles.primaryText}>Complete job</Text></Pressable>}
+            {workSession && workSession.status!=='completed' && <Pressable style={styles.primary} disabled={!timerReady||timerTransitionBusy||workSession.jobId!=='demo-job'&&workNoteDraft.trim()!==(workSession.note??'')} onPress={()=>void timerAction('complete')}><Text style={styles.primaryText}>Complete job</Text></Pressable>}
             {workSession?.status==='running' && <Pressable style={styles.primary} onPress={()=>setTimerNow(Date.now())}><Text style={styles.primaryText}>Refresh elapsed time</Text></Pressable>}
+            {workSession&&workSession.jobId!=='demo-job'&&timerRestored&&timerReadyUser===userId&&<View style={styles.card}>
+              <Text style={styles.cardHeading}>Visit work note</Text>
+              <TextInput accessibilityLabel="Visit work note" style={[styles.input,{minHeight:84,textAlignVertical:'top'}]} placeholder="Record work completed or follow-up needed" placeholderTextColor="#819b8b" value={workNoteDraft} onChangeText={setWorkNoteDraft} multiline maxLength={1000} editable={!timerTransitionBusy&&!completedTimerSaved}/>
+              <Text style={styles.muted}>{workNoteDraft.length}/1000 · {completedTimerSaved?'Saved with the completed visit.':'Saved on this device until completion is submitted.'}</Text>
+              {!!workNoteError&&<Text accessibilityLiveRegion="polite" style={styles.muted}>{workNoteError}</Text>}
+              {!completedTimerSaved&&<Pressable accessibilityRole="button" style={styles.primary} disabled={!timerReady||timerTransitionBusy||loadingSaved} onPress={()=>void saveWorkNote()}><Text style={styles.primaryText}>{timerTransitionBusy?'Saving work note…':'Save work note'}</Text></Pressable>}
+            </View>}
             {workSession?.status==='completed' && <View style={styles.card}>
               <Text style={styles.cardHeading}>Review completed service</Text>
               {completedServiceEstimate!==null&&<Text style={styles.body}>Scheduled estimate: {completedServiceEstimate} min</Text>}
@@ -753,6 +796,7 @@ function GreenCollarDashboard() {
             <Text style={styles.cardHeading}>Due workday · {savedDay.date} · Saved records</Text>
             <Text style={styles.body}>{savedDueSummary.pendingCount} jobs due · ${(savedDueSummary.estimatedRevenueCents / 100).toFixed(2)} expected revenue · {savedDueSummary.estimatedServiceMinutes} service minutes</Text>
             <Text style={styles.muted}>{savedDueSummary.completedCount} completed · {savedDueSummary.skippedCount} skipped. This is a saved work queue, not an optimized route; travel and fuel estimates are unavailable.</Text>
+            {savedDay.visits.filter(visit=>visit.status==='completed'&&!!visit.work_note?.trim()).map(visit=><Text key={visit.agreement_id+':'+visit.scheduled_date} style={styles.body}>{visit.completed_service_name??visit.agreement_id}: {visit.work_note}</Text>)}
             <Pressable accessibilityRole="button" style={styles.primary} disabled={!savedQueueOrderReady||savedQueueOrderSaveBusy||!savedQueueReview||savedQueueReview.visitCount===0||savedQueueApprovalChecking||savedQueueApprovalBusy} onPress={requestSavedQueueApproval}><Text style={styles.primaryText}>{!savedQueueOrderReady?'Restore work order before approval':savedQueueOrderSaveBusy?'Saving work order…':savedQueueApprovalChecking?'Checking saved approval…':savedQueueApprovalBusy?'Saving approval…':savedQueueApproved?'Work queue approved on this device':'Review and approve work queue'}</Text></Pressable>
             {!!savedQueueApprovalError&&<Text accessibilityLiveRegion="polite" style={styles.muted}>{savedQueueApprovalError}</Text>}{!savedQueueApproved&&savedDueSummary.pendingCount>0&&<Text style={styles.muted}>Review the current work order before starting a saved visit. Approval is saved securely on this device and tied to this business, date, visit order, and estimate snapshot; changes require review again.</Text>}
             {!!visitSkipNotice&&<Text accessibilityLiveRegion="polite" style={styles.body}>{visitSkipNotice}</Text>}

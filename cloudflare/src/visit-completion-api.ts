@@ -17,10 +17,13 @@ export function createVisitCompletionApi(authenticate:typeof authenticatedSubjec
   }
   if(!data||typeof data!=='object'||Array.isArray(data))return json({error:'invalid_input'},400);
   const {businessId,agreementId,date,actualMinutes}=data as Record<string,unknown>;
+  const rawWorkNote=(data as Record<string,unknown>).workNote;
+  const workNote=rawWorkNote===undefined?'':rawWorkNote;
   if(typeof businessId!=='string'||!/^[a-zA-Z0-9_-]{1,100}$/.test(businessId)
      ||typeof agreementId!=='string'||!/^[a-zA-Z0-9_-]{1,100}$/.test(agreementId)
      ||typeof date!=='string'||!dateOk(date)
-     ||typeof actualMinutes!=='number'||!Number.isInteger(actualMinutes)||actualMinutes<1||actualMinutes>1440)
+     ||typeof actualMinutes!=='number'||!Number.isInteger(actualMinutes)||actualMinutes<1||actualMinutes>1440
+     ||typeof workNote!=='string'||workNote.length>1000)
     return json({error:'invalid_completion'},400);
   try{
    if(!await businessAccess(env,sub,businessId))return json({error:'forbidden'},403);
@@ -31,9 +34,9 @@ export function createVisitCompletionApi(authenticate:typeof authenticatedSubjec
    // A conflicting completed visit returns no row, so concurrent retries cannot rewrite it.
    const saved=await env.DB.prepare(`INSERT INTO service_visits(
      id,business_id,agreement_id,scheduled_date,status,actual_minutes,
-     completed_customer_id,completed_customer_name,completed_service_name,completed_rate_cents
+     completed_customer_id,completed_customer_name,completed_service_name,completed_rate_cents,work_note
     )
-    SELECT ?,a.business_id,a.id,?,'completed',?,a.customer_id,c.name,a.service_name,a.rate_cents
+    SELECT ?,a.business_id,a.id,?,'completed',?,a.customer_id,c.name,a.service_name,a.rate_cents,?
     FROM service_agreements a JOIN customers c ON c.id=a.customer_id AND c.business_id=a.business_id
     WHERE a.business_id=? AND a.id=? AND a.starts_on<=? AND (a.ends_on IS NULL OR a.ends_on>=?)
     ON CONFLICT(agreement_id,scheduled_date) DO UPDATE SET
@@ -41,11 +44,12 @@ export function createVisitCompletionApi(authenticate:typeof authenticatedSubjec
      completed_customer_id=excluded.completed_customer_id,
      completed_customer_name=excluded.completed_customer_name,
      completed_service_name=excluded.completed_service_name,
-     completed_rate_cents=excluded.completed_rate_cents
+     completed_rate_cents=excluded.completed_rate_cents,
+     work_note=excluded.work_note
     WHERE service_visits.business_id=excluded.business_id AND service_visits.status!='completed'
-    RETURNING id`).bind(crypto.randomUUID(),date,actualMinutes,businessId,agreementId,date,date).first<{id:string}>();
+    RETURNING id`).bind(crypto.randomUUID(),date,actualMinutes,workNote,businessId,agreementId,date,date).first<{id:string}>();
    if(!saved)return json({error:'already_completed'},409);
-   return json({agreementId,date,status:'completed',actualMinutes},201);
+   return json({agreementId,date,status:'completed',actualMinutes,workNote},201);
   }catch{return json({error:'completion_storage_unavailable'},503);}
  };
 }

@@ -4,7 +4,7 @@
  */
 export type WorkSession={
  jobId:string;status:'running'|'paused'|'completed';
- startedAt:number;lastResumedAt:number|null;elapsedMs:number;completedAt:number|null
+ startedAt:number;lastResumedAt:number|null;elapsedMs:number;completedAt:number|null;note?:string
 };
 function time(t:number) {if(!Number.isSafeInteger(t)||t<0)throw new Error('Invalid timestamp');return t;}
 export function startWork(jobId:string,at:number):WorkSession{

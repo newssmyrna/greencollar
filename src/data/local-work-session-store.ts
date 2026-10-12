@@ -21,7 +21,8 @@ export function parseWorkSessionRecord(value:string|null,now:number):WorkSession
  if(!parsed||typeof parsed!=='object')throw new Error('Saved timer is invalid; it has not been replaced');
  const s=parsed as Partial<WorkSession>;
  const invalid=()=>new Error('Saved timer state or timestamps are invalid; check the device clock before retrying');
- if(typeof s.jobId!=='string'||!s.jobId.trim()||!validTime(s.startedAt)||s.startedAt>now||!validTime(s.elapsedMs))throw invalid();
+ if(typeof s.jobId!=='string'||!s.jobId.trim()||!validTime(s.startedAt)||s.startedAt>now||!validTime(s.elapsedMs)
+   ||(s.note!==undefined&&(typeof s.note!=='string'||s.note.length>1000)))throw invalid();
  if(s.status==='running'){
   if(!validTime(s.lastResumedAt)||s.lastResumedAt<s.startedAt||s.lastResumedAt>now||s.completedAt!==null||s.elapsedMs>s.lastResumedAt-s.startedAt)throw invalid();
  }else if(s.status==='paused'){
@@ -29,7 +30,7 @@ export function parseWorkSessionRecord(value:string|null,now:number):WorkSession
  }else if(s.status==='completed'){
   if(s.lastResumedAt!==null||!validTime(s.completedAt)||s.completedAt<s.startedAt||s.completedAt>now||s.elapsedMs>s.completedAt-s.startedAt)throw invalid();
  }else throw invalid();
- return {jobId:s.jobId,status:s.status,startedAt:s.startedAt,lastResumedAt:s.lastResumedAt??null,elapsedMs:s.elapsedMs,completedAt:s.completedAt??null};
+ return {jobId:s.jobId,status:s.status,startedAt:s.startedAt,lastResumedAt:s.lastResumedAt??null,elapsedMs:s.elapsedMs,completedAt:s.completedAt??null,...(s.note===undefined?{}:{note:s.note})};
 }
 /** Per-operator FIFO writes. Loads await the latest pending write.
  * Snapshot serialization happens at invocation; one failure does not poison later writes.

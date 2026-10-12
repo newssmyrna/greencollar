@@ -94,3 +94,10 @@ This response check does not change the tenant-scoped server write or billing sn
 ## Location history storage scope
 
 Location confirmation index and event keys now accept only operator identifiers containing 1–80 ASCII letters, digits, underscores or hyphens. Standard IDs retain their existing SecureStore key names. Unsupported IDs reject instead of being normalized or truncated into a potentially colliding operator key. Event IDs use the same bounded safe alphabet. Device acceptance should confirm the active identity provider continues to issue IDs in this format.
+
+
+## Per-visit work notes
+
+Today supports an optional note up to 1,000 characters on a saved service visit. The note is saved with the durable timer record before it is submitted with the completion write. A changed draft must be saved before the timer can be completed. If a device save fails or may have committed despite an error, the timer restore gate requires storage reconciliation before work continues.
+
+The tenant-scoped completion endpoint stores the note on the visit and returns it in the acknowledgment. Today displays saved notes on the loaded workday. Existing records migrate with an empty note; no note is invented or backfilled. Notes remain local until the completion write succeeds and then become part of the business's server-side visit record. Retention, deletion, access review and real-device interruption testing remain release gates.
