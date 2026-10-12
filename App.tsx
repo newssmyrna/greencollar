@@ -2,6 +2,7 @@ import React, { useState } from 'react';
 import { ClerkProvider, useAuth, useClerk } from '@clerk/expo';
 import { useHostedAuth } from '@clerk/expo/hosted-auth';
 import { tokenCache } from '@clerk/expo/token-cache';
+import { fetchDayData, type DayData } from './src/data/greencollar-api';
 import {
   SafeAreaView, ScrollView, View, Text, TextInput,
   Pressable, StyleSheet, StatusBar
@@ -26,6 +27,23 @@ const green = '#183d2b';
 const pale = '#d5f48b';
 
 function GreenCollarDashboard() {
+  const {getToken} = useAuth();
+  const [savedDay,setSavedDay] = useState<DayData|null>(null);
+  const [savedDayError,setSavedDayError] = useState('');
+  const [loadingSaved,setLoadingSaved] = useState(false);
+  async function loadSavedDay() {
+    const api=process.env.EXPO_PUBLIC_GREENCOLLAR_API_URL;
+    const business=process.env.EXPO_PUBLIC_GREENCOLLAR_BUSINESS_ID;
+    if(!api||!business){setSavedDayError('Backend connection and business onboarding are not configured yet.');return;}
+    setLoadingSaved(true);setSavedDayError('');
+    try{
+      const token=await getToken();
+      if(!token)throw new Error('Sign in first');
+      const date=new Date().toLocaleDateString('en-CA');
+      setSavedDay(await fetchDayData(api,business,date,token));
+    }catch(e){setSavedDayError(e instanceof Error?e.message:'Unable to load saved data');}
+    finally{setLoadingSaved(false);}
+  }
   const [tab, setTab] = useState<'today' | 'customers' | 'planner'>('today');
   const [customers, setCustomers] = useState<Customer[]>(seed);
   const [name, setName] = useState('');
@@ -61,7 +79,10 @@ function GreenCollarDashboard() {
 
         {tab === 'today' && <>
           <Text style={styles.heading}>Today's overview</Text>
-          <Text style={styles.muted}>Synthetic development data — not a live schedule</Text>
+          <Text style={styles.muted}>Prototype customer cards below use synthetic data. Saved Cloudflare records load separately.</Text>
+          <Pressable style={styles.primary} disabled={loadingSaved} onPress={()=>void loadSavedDay()}><Text style={styles.primaryText}>{loadingSaved?'Loading...':'Load saved workday'}</Text></Pressable>
+          {!!savedDayError && <Text style={styles.muted}>{savedDayError}</Text>}
+          {savedDay && <View style={styles.card}><Text style={styles.cardHeading}>Saved Cloudflare records</Text><Text style={styles.body}>{savedDay.customers.length} customers · {savedDay.agreements.length} active agreements · {savedDay.visits.length} recorded visits</Text><Text style={styles.muted}>Source data only — route optimization is not connected yet.</Text>{savedDay.agreements.slice(0,8).map(a=><Text key={a.id} style={styles.body}>{a.service_name} · {a.address}</Text>)}</View>}
           <View style={styles.card}>
             <Text style={styles.label}>Example customers</Text>
             <Text style={styles.big}>{customers.length}</Text>
