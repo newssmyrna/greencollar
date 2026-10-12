@@ -15,14 +15,14 @@
 
 - `src/domain/location-assist.ts` validates coordinate inputs, classifies one fix using reported accuracy and uncertainty, creates a confirmation event only after operator action, and bounds local history to 20 events.
 - `src/data/local-location-confirmations.ts` stores compact confirmation events in a device-local SecureStore outbox scoped to the signed-in operator. Each new record has a stable event ID, business/agreement/date scope, and pending/synced state; retrying sends the same ID.
-- The review branch adds `POST/GET /v1/location-confirmations` and migration `0006_location_confirmations.sql`. The API verifies JWT and business membership, checks the service agreement/date, enforces GPS action matching or a manual reason, and supports idempotent retries by event ID. It stores no exact coordinates and offers no edit/delete route.
+- The review branch adds `POST/GET /v1/location-confirmations` and migration `0006_location_confirmations.sql`. The API verifies JWT and business membership, checks the service agreement/date, enforces GPS action matching or a manual reason, and supports idempotent retries by event ID. It stores no exact coordinates and offers no edit/delete route. The read endpoint returns the newest 200 business/day events first.
 - The Today screen connects the active scheduled job with its saved site pin and provides one-shot GPS suggestions, matching explicit GPS confirmation, manual arrival/departure, reason capture, and recent history.
 - Service-site coordinates are optional, captured only on the operator's tap (or manually entered), explicitly saved to the tenant-scoped service location, and carried through the authenticated business-scoped day API.
 - Tests cover boundary uncertainty, poor accuracy, invalid inputs, matching GPS confirmation, required/length-bounded manual reasons, and bounded history.
 
 ## Remaining integration and release checks
 
-- Client sync/retry is implemented in the review branch. New confirmations are saved locally first, then POSTed to the audit endpoint; failures remain pending and can be retried without changing the event ID. The app retries when a business is loaded and when the app returns to the foreground, with a manual retry control available as well.
+- Client sync/retry and a read-only server audit view are implemented in the review branch. New confirmations are saved locally first, then POSTed to the audit endpoint; failures remain pending and can be retried without changing the event ID. The app retries when a business is loaded and when the app returns to the foreground, with a manual retry control available as well. Today can load the selected business/day audit history, showing the newest 10 returned events.
 - The API and migration are review-branch code only. Apply and reconcile migration 0006 only in a separately verified staging D1; no hosted D1 migration or Worker deployment was performed.
 - Add server retention/export controls and document the audit policy before production.
 - Local history is capped at 20 entries. When full, the oldest server-synced local copy is evicted first; pending and older device-only events are preserved. If all entries are unsynced, new confirmations are blocked until pending records sync. Server retention and export are not solved.
