@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import {invoiceTotals,createInvoiceDraft,issueInvoice,markInvoicePaid,voidInvoice} from '../src/domain/invoice';
+import {invoiceTotals,createInvoiceDraft,issueInvoice,markInvoicePaid,voidInvoice,setInvoiceDueDays,setInvoiceTaxBasisPoints} from '../src/domain/invoice';
 const draft=()=>createInvoiceDraft({
  id:'inv-1',businessId:'biz',customerId:'c1',issuedOn:'2026-10-12',dueOn:'2026-10-26',
  lines:[{description:'Pool cleaning',quantity:2,unitPriceCents:7500}],
@@ -25,3 +25,6 @@ test('invalid quantities, amounts and due dates fail closed',()=>{
  assert.throws(()=>createInvoiceDraft({...draft(),dueOn:'2026-10-01'}),/Due date/);
  assert.throws(()=>createInvoiceDraft({...draft(),dueOn:'2026-02-30'}),/calendar date/);
 });
+
+test('draft review can set bounded due-date presets without timezone drift',()=>{const original=draft();assert.equal(setInvoiceDueDays(original,0).dueOn,'2026-10-12');assert.equal(setInvoiceDueDays(original,30).dueOn,'2026-11-11');assert.equal(original.dueOn,'2026-10-26');assert.throws(()=>setInvoiceDueDays(original,-1),/0–365/);assert.throws(()=>setInvoiceDueDays(original,366),/0–365/);});
+test('draft review accepts only validated operator tax basis points',()=>{const original=draft();const taxed=setInvoiceTaxBasisPoints(original,725);assert.equal(taxed.taxBasisPoints,725);assert.equal(invoiceTotals(taxed.lines,taxed.taxBasisPoints).taxCents,109);assert.equal(original.taxBasisPoints,0);assert.throws(()=>setInvoiceTaxBasisPoints(original,10001),/Invalid tax rate/);assert.throws(()=>setInvoiceTaxBasisPoints(issueInvoice(original),725),/Only draft invoices/);});

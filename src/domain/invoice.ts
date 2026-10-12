@@ -34,6 +34,19 @@ export function createInvoiceDraft(input:Omit<InvoiceDraft,'status'>):InvoiceDra
  invoiceTotals(input.lines,input.taxBasisPoints);
  return {...input,status:'draft',lines:input.lines.map(line=>({...line}))};
 }
+/** Set a bounded due date offset from the service date for review-only drafts. */
+export function setInvoiceDueDays(invoice:InvoiceDraft,days:number):InvoiceDraft{
+ if(invoice.status!=='draft')throw new Error('Only draft invoices may be edited');
+ if(!Number.isInteger(days)||days<0||days>365)throw new Error('Due date offset must be 0–365 days');
+ const due=new Date(invoice.issuedOn+'T00:00:00.000Z');
+ due.setUTCDate(due.getUTCDate()+days);
+ return createInvoiceDraft({...invoice,dueOn:due.toISOString().slice(0,10)});
+}
+/** Store only the business-confirmed rate; this helper makes no taxability decision. */
+export function setInvoiceTaxBasisPoints(invoice:InvoiceDraft,basisPoints:number):InvoiceDraft{
+ if(invoice.status!=='draft')throw new Error('Only draft invoices may be edited');
+ return createInvoiceDraft({...invoice,taxBasisPoints:basisPoints});
+}
 export function issueInvoice(invoice:InvoiceDraft):InvoiceDraft{
  if(invoice.status!=='draft')throw new Error('Only draft invoices may be issued');
  invoiceTotals(invoice.lines,invoice.taxBasisPoints);

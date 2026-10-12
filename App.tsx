@@ -17,7 +17,7 @@ import {normalizeWorkNote,withWorkNote} from './src/domain/work-note';
 import {saveVisitCompletion} from './src/data/visit-completion';
 import {saveVisitSkip} from './src/data/visit-skip';
 import {billableCompletedServices,invoiceFromCompletedService,unbillableCompletedServiceCount} from './src/domain/completed-invoice';
-import {invoiceTotals,type InvoiceDraft} from './src/domain/invoice';
+import {invoiceTotals,setInvoiceDueDays,setInvoiceTaxBasisPoints,type InvoiceDraft} from './src/domain/invoice';
 import {timerDisplay,createForegroundTimerTicker} from './src/domain/timer-display';
 import {completionReviewKey,isCompletionReviewConfirmed} from './src/domain/completion-review';
 import {createDurableTimerTransition} from './src/domain/durable-timer-transition';
@@ -376,6 +376,15 @@ function GreenCollarDashboard() {
     if(!Number.isFinite(dollars)||dollars>1000000)return;
     const cents=Math.round(dollars*100);
     setInvoiceDrafts(prev=>prev.map(d=>d.id===id&&d.status==='draft'?{...d,lines:d.lines.map((line,i)=>i===0?{...line,unitPriceCents:cents}:line)}:d));
+  }
+  function editDraftTaxRate(id:string,value:string){
+    if(!/^\d{1,3}(\.\d{0,2})?$/.test(value))return;
+    const percent=Number(value);if(!Number.isFinite(percent)||percent>100)return;
+    const basisPoints=Math.round(percent*100);
+    setInvoiceDrafts(prev=>prev.map(d=>d.id===id&&d.status==='draft'?setInvoiceTaxBasisPoints(d,basisPoints):d));
+  }
+  function editDraftDueDays(id:string,days:number){
+    setInvoiceDrafts(prev=>prev.map(d=>d.id===id&&d.status==='draft'?setInvoiceDueDays(d,days):d));
   }
   const timerNeedsRestore=useRef(true);
   const [timerRestored,setTimerRestored]=useState(false);
@@ -909,10 +918,14 @@ function GreenCollarDashboard() {
             <Text style={styles.cardHeading}>{d.lines[0]?.description||'Invoice'} · {d.status}</Text>
             <Text style={styles.muted}>Customer: {d.customerName??d.customerId}</Text>
             <Text style={styles.muted}>Service date: {d.issuedOn} · Due: {d.dueOn}</Text>
+            <Text style={styles.label}>Set due date from service date</Text>
+            <View style={{flexDirection:'row',gap:8,flexWrap:'wrap'}}>{[0,7,14,30].map(days=><Pressable key={days} accessibilityRole="button" accessibilityLabel={days===0?'Due on service date':`Due ${days} days after service date`} style={[styles.primary,{padding:11}]} onPress={()=>editDraftDueDays(d.id,days)}><Text style={styles.primaryText}>{days===0?'Service date':`+${days} days`}</Text></Pressable>)}</View>
             <Text style={styles.label}>Service price (USD)</Text>
             <TextInput style={styles.input} keyboardType="decimal-pad" value={(d.lines[0].unitPriceCents/100).toFixed(2)} onChangeText={v=>editDraftPrice(d.id,v)}/>
+            <Text style={styles.label}>Business-confirmed tax rate (%)</Text>
+            <TextInput accessibilityLabel="Business-confirmed tax rate percent" style={styles.input} keyboardType="decimal-pad" value={(d.taxBasisPoints/100).toFixed(2)} onChangeText={v=>editDraftTaxRate(d.id,v)}/>
             <Text style={styles.body}>Draft total: ${(invoiceTotals(d.lines,d.taxBasisPoints).totalCents/100).toFixed(2)}</Text>
-            <Text style={styles.muted}>Tax defaults to $0. Review tax treatment before issuing. Save, send, and payment tracking are not connected yet.</Text>
+            <Text style={styles.muted}>Tax starts at 0.00%. Enter a rate confirmed for this business; GreenCollar does not determine taxability. Draft edits are in memory only. Nothing is saved, issued, sent, charged, or marked paid.</Text>
           </View>)}
           {!invoiceDrafts.length && <Text style={styles.muted}>No drafts prepared. Load a workday with completed visits on Today first.</Text>}
         </>}
