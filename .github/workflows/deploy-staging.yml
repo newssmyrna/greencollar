@@ -1,0 +1,36 @@
+name: Deploy GreenCollar staging
+
+on:
+  workflow_dispatch:
+    inputs:
+      confirm_staging:
+        description: Type DEPLOY-STAGING to confirm a staging deployment
+        required: true
+        type: string
+
+permissions:
+  contents: read
+
+concurrency:
+  group: greencollar-staging-deploy
+  cancel-in-progress: false
+
+jobs:
+  deploy:
+    if: github.ref == 'refs/heads/main' && inputs.confirm_staging == 'DEPLOY-STAGING'
+    runs-on: ubuntu-latest
+    environment: staging
+    defaults:
+      run:
+        working-directory: cloudflare
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+      - name: Install Worker dependencies
+        run: npm install
+      - name: Deploy staging Worker only
+        run: npx wrangler deploy --env staging
+        env:
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
