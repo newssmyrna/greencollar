@@ -11,7 +11,7 @@ const fixture:DayData={
   frequency:'weekly',interval_days:null,days_of_week:null,preferred_start_minute:null,
   preferred_finish_minute:null,fixed_start_minute:null,active:1,
   address:'Fictional Address',preferences:null}],
- visits:[]
+ visits:[],durationHistory:[]
 };
 test('summarize actual due recurring work by local date',()=>{
  const out=summarizeSavedDay(fixture);
@@ -27,4 +27,14 @@ test('completed visit is not shown again',()=>{
 test('not-due service is excluded',()=>{
  const out=summarizeSavedDay({...fixture,date:'2026-10-13'});
  assert.equal(out.pendingCount,0);
+});
+
+test('uses prior completed services to improve future time estimate',()=>{
+ const out=summarizeSavedDay({...fixture,durationHistory:[
+  {agreement_id:'s1',actual_minutes:20},{agreement_id:'s1',actual_minutes:22},
+  {agreement_id:'s1',actual_minutes:21},{agreement_id:'s1',actual_minutes:23}
+ ]});
+ assert.equal(out.pendingCount,1);
+ assert.ok(out.estimatedServiceMinutes<55);
+ assert.equal(out.estimatedServiceMinutes,out.due[0].estimatedMinutes);
 });
