@@ -1,6 +1,6 @@
 # Foreground location assistance
 
-**Status:** active-job GPS suggestions and operator confirmations are integrated on a review branch. Service coordinates flow from the saved location into today's due-work view. This remains a prototype pending device acceptance testing and server-side audit storage and mobile sync.
+**Status:** active-job GPS suggestions and operator confirmations are integrated on a review branch. Service coordinates flow from the saved location into today's due-work view. This remains a prototype pending device acceptance testing, production deployment, and server-side retention/export policy.
 
 ## Operator behavior
 
@@ -14,7 +14,7 @@
 ## Implemented
 
 - `src/domain/location-assist.ts` validates coordinate inputs, classifies one fix using reported accuracy and uncertainty, creates a confirmation event only after operator action, and bounds local history to 20 events.
-- `src/data/local-location-confirmations.ts` stores compact confirmation events in device SecureStore, scoped to the signed-in operator. The mobile client still uses local storage only.
+- `src/data/local-location-confirmations.ts` stores compact confirmation events in a device-local SecureStore outbox scoped to the signed-in operator. Each new record has a stable event ID, business/agreement/date scope, and pending/synced state; retrying sends the same ID.
 - The review branch adds `POST/GET /v1/location-confirmations` and migration `0006_location_confirmations.sql`. The API verifies JWT and business membership, checks the service agreement/date, enforces GPS action matching or a manual reason, and supports idempotent retries by event ID. It stores no exact coordinates and offers no edit/delete route.
 - The Today screen connects the active scheduled job with its saved site pin and provides one-shot GPS suggestions, matching explicit GPS confirmation, manual arrival/departure, reason capture, and recent history.
 - Service-site coordinates are optional, captured only on the operator's tap (or manually entered), explicitly saved to the tenant-scoped service location, and carried through the authenticated business-scoped day API.
@@ -22,9 +22,10 @@
 
 ## Remaining integration and release checks
 
-- Wire the mobile client to the new API as a retryable sync queue; no client sync is included in this phase.
-- Apply and reconcile migration 0006 only in a separately verified staging D1. No hosted D1 migration or Worker deployment was performed.
+- Client sync/retry is implemented in the review branch. New confirmations are saved locally first, then POSTed to the audit endpoint; failures remain pending and can be retried without changing the event ID.
+- The API and migration are review-branch code only. Apply and reconcile migration 0006 only in a separately verified staging D1; no hosted D1 migration or Worker deployment was performed.
 - Add server retention/export controls and document the audit policy before production.
+- Pending local records are limited to 20 entries; older pre-sync events remain visible as local-only and cannot be reconstructed into the server queue. Server retention and export are not solved.
 - Test denied/approximate permission, delayed or stale fixes, indoor drift, airplane mode, app termination, storage failure, and manual correction on current iOS and Android devices.
 - Review the 100 m / 50 m thresholds with field testing and product feedback.
 - Verify on-device that a location event never changes timer, service status, invoice, or payment state.
