@@ -8,20 +8,20 @@ The owner has no custom domain yet. Use Cloudflare's account workers.dev subdoma
 
 In the staging environment only, `cloudflare/wrangler.toml` now sets `workers_dev = true` and `preview_urls = false`. Production has no workers.dev setting change, route or deployment. Staging binds only D1 `greencollar-staging` (`8e427f86-efc4-4a1c-a92c-1d2f57093bf8`), with the five migrations and public Clerk development OIDC metadata. No secrets were added.
 
-Added `.github/workflows/deploy-staging.yml`: manual dispatch on `main`, requires typing `DEPLOY-STAGING`, uses the GitHub `staging` environment, and runs only `npx wrangler deploy --env staging` with `CLOUDFLARE_API_TOKEN`. No automatic deploy, preview URL, or production deploy is configured. The workflow cannot run successfully until the PR chain is merged and that secret is available.
+Added `.github/workflows/deploy-staging.yml`: manual dispatch on `main`, requires typing `DEPLOY-STAGING`, uses the GitHub `staging` environment, and runs only `npx wrangler deploy --env staging` with `CLOUDFLARE_API_TOKEN`. No automatic deploy, preview URL, or production deploy is configured. PRs #20–#24 are now merged to `main`; the workflow still needs GitHub secret `CLOUDFLARE_API_TOKEN` and a manual dispatch.
 
 ## Verification / remaining work
 - Worker inventory confirmed only `greencollar-api` exists; `greencollar-api-staging` has not been uploaded. Therefore no public endpoint exists at handoff.
 - Account workers.dev subdomain read and staging config review completed.
-- CI run #115 (commit `0a4b18a`) passed the Cloudflare job, including Worker typecheck, staging dry-run bundle and auth gate tests. The run was ultimately marked cancelled as later branch commits superseded it; its app typecheck and scheduling test steps completed successfully.
-- Next: finish CI; review/merge the stacked source PRs; ensure GitHub has the `CLOUDFLARE_API_TOKEN` secret; run manual staging deploy; verify `/health` and unauthenticated `/v1/session` (expected 401); then connect Clerk/app staging URL and test authenticated phone workflow with synthetic records only.
+- CI run #120 passed at PR #24's final head: app typecheck/tests; Worker typecheck/auth tests; staging dry-run bundle validation.
+- Next: confirm the public staging deployment, ensure the deploy secret is configured, run the manual staging workflow, verify `/health` and unauthenticated `/v1/session` (expected 401), then connect the app and run the authenticated phone workflow with synthetic records only.
 - Production schema reconciliation and migration remain blocked pending a verified backup and baseline plan.
 
 ## Surface impact
 - **Live:** no public pages, production API, or production data changed.
 - **Planned:** temporary staging API URL for Today/Invoices device tests; custom branded domain can replace it after purchase.
 - **Documentation only:** this handoff.
-- **Testing only:** account subdomain/config inspection and CI dry-run; no staging Worker/device tests yet.
+- **Testing only:** account subdomain/config inspection and CI dry-run; no staging Worker/device tests yet; source PR chain is merged.
 
 | Role | Considered | Completed | Approx. attention | Pages/posts impact |
 | --- | --- | --- | ---: | --- |
