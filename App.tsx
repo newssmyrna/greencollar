@@ -1,4 +1,7 @@
 import React, { useState } from 'react';
+import { ClerkProvider, useAuth, useClerk } from '@clerk/expo';
+import { useHostedAuth } from '@clerk/expo/hosted-auth';
+import { tokenCache } from '@clerk/expo/token-cache';
 import {
   SafeAreaView, ScrollView, View, Text, TextInput,
   Pressable, StyleSheet, StatusBar
@@ -22,7 +25,7 @@ const seed: Customer[] = [
 const green = '#183d2b';
 const pale = '#d5f48b';
 
-export default function App() {
+function GreenCollarDashboard() {
   const [tab, setTab] = useState<'today' | 'customers' | 'planner'>('today');
   const [customers, setCustomers] = useState<Customer[]>(seed);
   const [name, setName] = useState('');
@@ -123,3 +126,33 @@ const styles = StyleSheet.create({
   primary: { backgroundColor: pale, padding: 15, borderRadius: 10, alignItems: 'center', marginTop: 5 },
   primaryText: { color: green, fontWeight: '800' },
 });
+
+function AuthGate() {
+  const { isLoaded, isSignedIn } = useAuth();
+  const { startHostedAuth } = useHostedAuth();
+  const { signOut } = useClerk();
+  const [authError, setAuthError] = useState('');
+  if (!isLoaded) return <SafeAreaView style={styles.page}><Text style={styles.logo}>greencollar.</Text><Text style={styles.muted}>Loading secure sign-in...</Text></SafeAreaView>;
+  if (isSignedIn) return <><GreenCollarDashboard/><Pressable accessibilityRole="button" style={{backgroundColor:'#183d2b',padding:10,alignItems:'center'}} onPress={() => void signOut()}><Text style={{color:'#d5f48b'}}>Sign out</Text></Pressable></>;
+  return (
+    <SafeAreaView style={[styles.page,{justifyContent:'center',padding:24,gap:16}]}>
+      <Text style={styles.logo}>greencollar.</Text>
+      <Text style={styles.subtitle}>Your business. On autopilot.</Text>
+      <Pressable style={styles.primary} onPress={() => {setAuthError('');void startHostedAuth({mode:'sign-in'}).catch(() => setAuthError('Unable to open sign-in. Check Clerk Native API configuration.'));}}><Text style={styles.primaryText}>Sign in</Text></Pressable>
+      <Pressable style={[styles.primary,{backgroundColor:'#f0f5ef'}]} onPress={() => {setAuthError('');void startHostedAuth({mode:'sign-up'}).catch(() => setAuthError('Unable to open sign-up. Check Clerk Native API configuration.'));}}><Text style={styles.primaryText}>Create account</Text></Pressable>
+      {!!authError && <Text style={styles.muted}>{authError}</Text>}
+      <Text style={styles.muted}>Development build. Customer records are still example data until business onboarding is connected.</Text>
+    </SafeAreaView>
+  );
+}
+
+export default function App() {
+  const key = process.env.EXPO_PUBLIC_CLERK_PUBLISHABLE_KEY;
+  if (!key) return (
+    <SafeAreaView style={[styles.page,{padding:24,justifyContent:'center'}]}>
+      <Text style={styles.logo}>greencollar.</Text>
+      <Text style={styles.muted}>Clerk publishable key not configured. Add EXPO_PUBLIC_CLERK_PUBLISHABLE_KEY to your local .env file.</Text>
+    </SafeAreaView>
+  );
+  return <ClerkProvider publishableKey={key} tokenCache={tokenCache}><AuthGate/></ClerkProvider>;
+}
