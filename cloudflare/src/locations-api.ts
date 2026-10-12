@@ -34,8 +34,8 @@ export async function locationsApi(request:Request,env:Env,url:URL):Promise<Resp
  const id=crypto.randomUUID();
  const preferences=typeof input.preferences==='string'&&input.preferences.trim()?input.preferences.trim():null;
  try{
-   const result=await env.DB.prepare('INSERT INTO service_locations(id,business_id,customer_id,address,preferences) SELECT ?,business_id,id,?,?,? FROM customers WHERE business_id=? AND id=?')
-     .bind(id,businessId,input.address.trim(),preferences,businessId,input.customerId).run();
+   const result=await env.DB.prepare('INSERT INTO service_locations(id,business_id,customer_id,address,preferences) SELECT ?,business_id,id,?,? FROM customers WHERE business_id=? AND id=?')
+     .bind(id,input.address.trim(),preferences,businessId,input.customerId).run();
    if(result.meta.changes!==1)return json({error:'customer_not_found'},404);
  }catch{return json({error:'location_conflict'},409);}
  return json({id,customer_id:input.customerId,address:input.address.trim(),preferences},201);
