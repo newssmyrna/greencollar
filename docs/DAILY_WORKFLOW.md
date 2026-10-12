@@ -53,3 +53,13 @@ Task: GC-TIMER-STORAGE-20261012. Branch: `codex/phase-ordered-timer-storage`; so
 Device acceptance remains pending for rapid timer transitions, background/restart during writes, storage failures, and clock changes. This serializes one process's device writes; it does not create offline completion sync, cross-device locking, or a full timer correction workflow. Next owner/action: reviewer checks storage compatibility and preservation; device tester exercises these cases; release coordinator handles the stacked chain.
 
 Next: real-device acceptance for the review, start, completion and skip flow, including secure approval restore after app restart. Server-synced approvals, real road travel, owner-controlled replanning and customer updates remain future integrations.
+
+## Confirm timer transitions before displaying them
+
+Task: GC-DURABLE-TIMER-TRANSITION-20261012. Prepared branch: `codex/phase-durable-timer-transitions`; base: PR #46 at `65994b2454dc4e3226b490422333279e1b631eac`. Delivery: PREPARED; self-review; no merge or deployment.
+
+Start, pause, resume and complete now await the secure device write before applying the new displayed timer. The previous effect-driven save is removed, including redundant saves on restoration. A synchronous guard blocks repeated timer actions while the write is pending; timer controls, completion submission, skip and queue editing are disabled during the save.
+
+Save failures leave the previous displayed record in place and invalidate timer readiness. The operator must use Retry restoring job timer to reconcile with device storage before continuing. This also handles a native write that may have committed before reporting failure: the UI does not assume either outcome. A changed operator or session suppresses late successful results. Device persistence does not mean server completion or billing succeeded.
+
+Five focused synthetic tests cover save-before-display, repeated taps, failures and subsequent recovery, late results after context changes, and immutable transition snapshots. Full CI evidence is recorded on the PR. iOS/Android acceptance remains pending: slow and failed native saves for each action, repeated taps, sign-out during save, failure after a native write commits, restart during save, and completion submission gating. No schema, hosted data, provider calls or production pages changed.
