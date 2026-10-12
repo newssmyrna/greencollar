@@ -1,6 +1,7 @@
 import { customerApi } from './customer-api';
 import { dayDataApi } from './day-data-api';
 import { businessApi } from './business-api';
+import { completeVisitApi } from './visit-completion-api';
 import { authenticatedSubject } from './auth';
 import type { Env } from './auth';
 
@@ -24,6 +25,7 @@ export default {
     if(url.pathname==='/v1/business')return businessApi(request,env);
     if(url.pathname==='/v1/customers')return customerApi(request,env,url);
     if(url.pathname==='/v1/day')return dayDataApi(request,env,url);
+    if(url.pathname==='/v1/visits/complete')return completeVisitApi(request,env);
     return json({error:'not_found'},404);
   }
 };
