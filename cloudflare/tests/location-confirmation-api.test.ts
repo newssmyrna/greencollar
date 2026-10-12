@@ -19,7 +19,7 @@ function fixture(role:'owner'|'admin'|'worker'|null='worker',existing:Record<str
  return {env:{...meta,DB} as unknown as Env,queries};
 }
 const api=createLocationConfirmationApi(async()=> 'verified-subject');
-const request=(method:'GET'|'POST'='POST',value:unknown=payload)=>new Request('https://api.example.test/v1/location-confirmations'+(method==='GET'?'?business_id=business-a&date=2026-10-12':''),{method,headers:{'content-type':'application/json'},...(method==='POST'?{body:JSON.stringify(value)}:{})});
+const request=(method:'GET'|'POST'='POST',value:unknown=payload)=>new Request('https://api.example.test/v1/location-confirmations?business_id=business-a'+(method==='GET'?'&date=2026-10-12':''),{method,headers:{'content-type':'application/json'},...(method==='POST'?{body:JSON.stringify(value)}:{})});
 test('requires configured and verified identity before database access',async()=>{
  const denied=createLocationConfirmationApi(async()=>null);
  assert.equal((await denied(request(),{...meta,get DB(){throw Error('unexpected database access');}} as unknown as Env)).status,401);
