@@ -11,12 +11,13 @@ import {localSavedQueueOrder} from './src/data/local-saved-queue-order-native';
 import {localSavedQueueApproval} from './src/data/local-saved-queue-approval-native';
 import { getBusinesses, createBusiness } from './src/data/business-api';
 import { listSavedCustomers, createSavedCustomer, type SavedCustomer } from './src/data/customer-api';
-import { pauseWork, resumeWork, completeWork, getElapsedMinutes, completionRecord, type WorkSession } from './src/domain/work-session';
+import { pauseWork, resumeWork, completeWork, completionRecord, type WorkSession } from './src/domain/work-session';
 import {canStartNextWork,startNextWork,hasSavedWorkCompletion,workSessionDate} from './src/domain/work-handoff';
 import {saveVisitCompletion} from './src/data/visit-completion';
 import {saveVisitSkip} from './src/data/visit-skip';
 import {billableCompletedServices,invoiceFromCompletedService,unbillableCompletedServiceCount} from './src/domain/completed-invoice';
 import {invoiceTotals,type InvoiceDraft} from './src/domain/invoice';
+import {timerDisplay,createForegroundTimerTicker} from './src/domain/timer-display';
 import {createDurableTimerTransition} from './src/domain/durable-timer-transition';
 import {loadWorkSession,saveWorkSession} from './src/data/local-work-session';
 import {listServiceLocations,createServiceLocation,type SavedServiceLocation} from './src/data/service-location-api';
@@ -280,6 +281,7 @@ function GreenCollarDashboard() {
   const timerOperator=useRef<string|null|undefined>(userId);
   timerOperator.current=userId;
   const [timerNow,setTimerNow]=useState(Date.now());
+  const displayedTimer=timerDisplay(workSession,timerNow);
   const [timerError,setTimerError]=useState('');
   const [timerSaved,setTimerSaved]=useState(false);
   const [visitSkipBusy,setVisitSkipBusy]=useState('');
@@ -417,6 +419,16 @@ function GreenCollarDashboard() {
       }
     }finally{if(saving)setTimerTransitionBusy(false);}
   }
+
+  useEffect(()=>{
+    if(workSession?.status!=='running'||tab!=='today'){setTimerNow(Date.now());return;}
+    const ticker=createForegroundTimerTicker(setTimerNow,Date.now,{
+      every(callback,milliseconds){const id=setInterval(callback,milliseconds);return ()=>clearInterval(id);}
+    });
+    ticker.setActive(AppState.currentState==='active'||AppState.currentState===null);
+    const subscription=AppState.addEventListener('change',state=>ticker.setActive(state==='active'));
+    return ()=>{ticker.dispose();subscription.remove();};
+  },[workSession?.status,workSession?.startedAt,userId,tab]);
 
   function activeSavedJob(){
     if(!savedDay||!workSession||workSession.jobId==='demo-job')return null;
@@ -656,8 +668,9 @@ function GreenCollarDashboard() {
           <Text style={styles.heading}>Today's overview</Text>
           <View style={styles.card}>
             <Text style={styles.cardHeading}>Job timer</Text>
-            <Text style={styles.muted}>Use a saved scheduled service below to record its completion. The timer is saved on this device and restored after reopening.</Text>
-            <Text style={styles.big}>{workSession?getElapsedMinutes(workSession,timerNow):0} min</Text>
+            <Text style={styles.muted}>Use a saved scheduled service below to record its completion. The timer is saved on this device and restored after reopening. Elapsed time updates automatically while this screen is active.</Text>
+            <Text style={styles.big}>{displayedTimer.minutes===null?'—':displayedTimer.minutes} min</Text>
+            {!!displayedTimer.error&&<Text accessibilityLiveRegion="polite" style={styles.muted}>{displayedTimer.error}</Text>}
             <Text style={styles.body}>Status: {workSession?.status??'not started'} {workSession?.jobId!=='demo-job'&&workSession?.jobId?'· Saved visit':''}</Text>
             {timerTransitionBusy&&<Text style={styles.muted}>Saving timer change…</Text>}
             {!workSession && <Pressable style={styles.primary} disabled={!timerCanStart} onPress={()=>timerAction('start')}><Text style={styles.primaryText}>Start demo job</Text></Pressable>}
