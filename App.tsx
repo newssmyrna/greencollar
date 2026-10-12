@@ -19,6 +19,7 @@ import {generateDueVisits,type Frequency} from './src/domain/recurrence';
 import {assessProximity,createLocationConfirmation,type ProximityAssessment,type LocationConfirmation} from './src/domain/location-assist';
 import {loadLocationConfirmations,saveLocationConfirmation,markLocationConfirmationSynced,pendingLocationConfirmations,type StoredLocationConfirmation} from './src/data/local-location-confirmations';
 import {listLocationConfirmations,syncLocationConfirmation,type ServerLocationConfirmation} from './src/data/location-confirmation-api';
+import {filterLocationConfirmations,type LocationConfirmationKindFilter,type LocationConfirmationSourceFilter} from './src/domain/location-confirmation-filter';
 import {
   SafeAreaView, ScrollView, View, Text, TextInput, AppState,
   Pressable, StyleSheet, StatusBar
@@ -239,6 +240,8 @@ function GreenCollarDashboard() {
   const [serverLocationConfirmationsError,setServerLocationConfirmationsError]=useState('');
   const [serverLocationConfirmationsHasMore,setServerLocationConfirmationsHasMore]=useState(false);
   const [serverLocationConfirmationsCursor,setServerLocationConfirmationsCursor]=useState<string|null>(null);
+  const [serverAuditKindFilter,setServerAuditKindFilter]=useState<LocationConfirmationKindFilter>('all');
+  const [serverAuditSourceFilter,setServerAuditSourceFilter]=useState<LocationConfirmationSourceFilter>('all');
   const serverAuditRequest=useRef(0);
   const [locationConfirmError,setLocationConfirmError]=useState('');
   const [invoiceDrafts,setInvoiceDrafts]=useState<InvoiceDraft[]>([]);
@@ -289,6 +292,7 @@ function GreenCollarDashboard() {
     setServerLocationConfirmations([]);
     setServerLocationConfirmationsHasMore(false);
     setServerLocationConfirmationsCursor(null);
+    setServerAuditKindFilter('all');setServerAuditSourceFilter('all');
     setServerLocationConfirmationsError('');
     setServerLocationConfirmationsBusy(false);
     if(userId&&connectedBusiness?.id&&savedDay?.date&&process.env.EXPO_PUBLIC_GREENCOLLAR_API_URL)
@@ -468,6 +472,7 @@ function GreenCollarDashboard() {
   }
   const visible = customers.slice(0, Math.max(0, parseInt(maxJobs, 10) || 0));
   const estimatedMinutes = visible.reduce((total, c) => total + c.minutes, 0);
+  const visibleServerLocationConfirmations=filterLocationConfirmations(serverLocationConfirmations,serverAuditKindFilter,serverAuditSourceFilter);
 
   return (
     <SafeAreaView style={styles.page}>
@@ -533,7 +538,7 @@ function GreenCollarDashboard() {
             <Text style={styles.muted}>Read-only server history for this business and work date. Latest confirmations appear first.</Text>
             <Pressable accessibilityRole="button" style={[styles.primary,{backgroundColor:'#f0f5ef'}]} disabled={serverLocationConfirmationsBusy} onPress={()=>void loadServerLocationConfirmations()}><Text style={styles.primaryText}>{serverLocationConfirmationsBusy?'Loading audit…':'Load synced audit history'}</Text></Pressable>
             {!!serverLocationConfirmationsError&&<Text accessibilityLiveRegion="polite" style={styles.muted}>{serverLocationConfirmationsError}</Text>}
-            {serverLocationConfirmations.map(event=><Text key={event.id} style={styles.muted}>{event.kind==='arrival'?'Arrival':'Departure'} · {new Date(event.confirmed_at).toLocaleString()} · {event.source==='manual'?'manual: '+(event.manual_reason??'reason not recorded'):'GPS suggestion'} · {event.proximity}</Text>)}
+            {visibleServerLocationConfirmations.map(event=><Text key={event.id} style={styles.muted}>{event.kind==='arrival'?'Arrival':'Departure'} · {new Date(event.confirmed_at).toLocaleString()} · {event.source==='manual'?'manual: '+(event.manual_reason??'reason not recorded'):'GPS suggestion'} · {event.proximity}</Text>)}
             {serverLocationConfirmations.length>0&&<Text style={styles.muted}>Showing {serverLocationConfirmations.length} confirmations for this date.</Text>}{serverLocationConfirmationsHasMore&&serverLocationConfirmationsCursor&&<Pressable accessibilityRole="button" style={styles.primary} disabled={serverLocationConfirmationsBusy} onPress={()=>void loadServerLocationConfirmations(serverLocationConfirmationsCursor)}><Text style={styles.primaryText}>{serverLocationConfirmationsBusy?'Loading older history…':'Load older audit history'}</Text></Pressable>}
             {!serverLocationConfirmationsBusy&&!serverLocationConfirmationsError&&serverLocationConfirmations.length===0&&<Text style={styles.muted}>No confirmations recorded on the server for this date.</Text>}
           </View>}
