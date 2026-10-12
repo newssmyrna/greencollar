@@ -14,10 +14,11 @@ OIDC_ISSUER = "https://close-chipmunk-6010.clerk.accounts.dev"
 OIDC_AUDIENCE = "greencollar-api"
 OIDC_JWKS_URL = "https://close-chipmunk-6010.clerk.accounts.dev/.well-known/jwks.json"
 
-# Isolated staging binding. Public access stays disabled until a staging route is selected.
+# Staging-only temporary workers.dev endpoint; the production environment is unchanged.
 [env.staging]
 name = "greencollar-api-staging"
-workers_dev = false
+workers_dev = true
+preview_urls = false
 
 [[env.staging.d1_databases]]
 binding = "DB"
