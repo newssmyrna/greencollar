@@ -21,7 +21,7 @@ export async function dayDataApi(request:Request,env:Env,url:URL):Promise<Respon
   if(!await businessAccess(env,subject,businessId))return json({error:'forbidden'},403);
 
   // Exact tenant filtering occurs independently on every query.
-  const [agreements,visits,customers]=await env.DB.batch([
+  const [agreements,visits,customers,history]=await env.DB.batch([
     env.DB.prepare(`SELECT a.id,a.customer_id,a.location_id,a.service_name,a.rate_cents,a.estimated_minutes,
       a.starts_on,a.ends_on,a.frequency,a.interval_days,a.days_of_week,
       a.preferred_start_minute,a.preferred_finish_minute,a.fixed_start_minute,a.active,
@@ -33,8 +33,9 @@ export async function dayDataApi(request:Request,env:Env,url:URL):Promise<Respon
       ORDER BY a.id LIMIT 2000`).bind(businessId,date,date),
     env.DB.prepare(`SELECT agreement_id,scheduled_date,status,actual_minutes
       FROM service_visits WHERE business_id=? AND scheduled_date=?`).bind(businessId,date),
-    env.DB.prepare('SELECT id,name,phone,notes FROM customers WHERE business_id=? ORDER BY name LIMIT 2000').bind(businessId)
+    env.DB.prepare('SELECT id,name,phone,notes FROM customers WHERE business_id=? ORDER BY name LIMIT 2000').bind(businessId),
+    env.DB.prepare("SELECT agreement_id,actual_minutes FROM service_visits WHERE business_id=? AND status='completed' AND actual_minutes BETWEEN 1 AND 1439 AND scheduled_date<? ORDER BY scheduled_date DESC LIMIT 2000").bind(businessId,date)
   ]);
   return json({date,agreements:agreements.results,visits:visits.results,customers:customers.results,
-    planningStatus:'source-data-only',roadOptimization:false});
+    durationHistory:history.results,planningStatus:'source-data-only',roadOptimization:false});
 }
