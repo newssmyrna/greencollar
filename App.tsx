@@ -16,6 +16,8 @@ import {listServiceLocations,createServiceLocation,type SavedServiceLocation} fr
 import {listServiceAgreements,createServiceAgreement,type SavedServiceAgreement} from './src/data/service-agreement-api';
 import {dollarsToCents,localCalendarDate} from './src/domain/service-agreement';
 import {generateDueVisits,type Frequency} from './src/domain/recurrence';
+import {assessProximity,createLocationConfirmation,type ProximityAssessment,type LocationConfirmation} from './src/domain/location-assist';
+import {loadLocationConfirmations,saveLocationConfirmation} from './src/data/local-location-confirmations';
 import {
   SafeAreaView, ScrollView, View, Text, TextInput,
   Pressable, StyleSheet, StatusBar
@@ -224,6 +226,13 @@ function GreenCollarDashboard() {
   const [timerNow,setTimerNow]=useState(Date.now());
   const [timerError,setTimerError]=useState('');
   const [timerSaved,setTimerSaved]=useState(false);
+  const [locationAssessment,setLocationAssessment]=useState<ProximityAssessment|null>(null);
+  const [locationAssessmentJob,setLocationAssessmentJob]=useState('');
+  const [locationCheckError,setLocationCheckError]=useState('');
+  const [locationCheckBusy,setLocationCheckBusy]=useState(false);
+  const [locationManualReason,setLocationManualReason]=useState('');
+  const [locationConfirmations,setLocationConfirmations]=useState<LocationConfirmation[]>([]);
+  const [locationConfirmError,setLocationConfirmError]=useState('');
   const [invoiceDrafts,setInvoiceDrafts]=useState<InvoiceDraft[]>([]);
   const [invoiceError,setInvoiceError]=useState('');
   function prepareInvoiceDrafts(){
@@ -261,6 +270,13 @@ function GreenCollarDashboard() {
     return ()=>{active=false;};
   },[userId]);
   useEffect(()=>{
+    let active=true;
+    setLocationConfirmations([]);
+    if(!userId)return ()=>{active=false;};
+    void loadLocationConfirmations(userId).then(events=>{if(active)setLocationConfirmations(events);}).catch(()=>{if(active)setLocationConfirmError('Could not load this device’s confirmation history');});
+    return ()=>{active=false;};
+  },[userId]);
+  useEffect(()=>{
     if(!userId||!timerRestored)return;
     void saveWorkSession(userId,workSession).catch(()=>setTimerError('Could not preserve job timer'));
   },[userId,timerRestored,workSession]);
@@ -273,6 +289,43 @@ function GreenCollarDashboard() {
       const next=action==='pause'?pauseWork(workSession,now):action==='resume'?resumeWork(workSession,now):completeWork(workSession,now);
       setWorkSession(next);
     }catch(e){setTimerError(e instanceof Error?e.message:'Timer error');}
+  }
+
+  function activeSavedJob(){
+    if(!savedDay||!workSession||workSession.jobId==='demo-job')return null;
+    return summarizeSavedDay(savedDay).due.find(job=>job.id===workSession.jobId)??null;
+  }
+  async function checkActiveJobLocation(){
+    const job=activeSavedJob();
+    setLocationAssessment(null);setLocationAssessmentJob('');setLocationCheckError('');setLocationConfirmError('');
+    if(!workSession||workSession.status==='completed'){setLocationCheckError('Start a saved scheduled service before checking the site.');return;}
+    if(!job){setLocationCheckError('This active job has no matching saved site in today’s workday. Use manual confirmation if appropriate.');return;}
+    if(job.lat===null||job.lon===null){setLocationCheckError('This service address has no saved site pin. Add coordinates under Customers, or use manual confirmation.');return;}
+    setLocationCheckBusy(true);
+    try{
+      const permission=await Location.requestForegroundPermissionsAsync();
+      if(permission.status!=='granted')throw new Error('Location permission is off. You can continue with a manual confirmation.');
+      const fix=await Location.getCurrentPositionAsync({accuracy:Location.Accuracy.High});
+      const fixAge=Date.now()-fix.timestamp;
+      if(!Number.isFinite(fixAge)||fixAge<0||fixAge>120000)throw new Error('The location fix is stale. Retry for a fresh reading or confirm manually.');
+      const accuracy=fix.coords.accuracy;
+      if(accuracy===null||!Number.isFinite(accuracy)||accuracy<0)throw new Error('The device did not return a usable accuracy estimate. Confirm manually or retry.');
+      const result=assessProximity({latitude:job.lat,longitude:job.lon},{latitude:fix.coords.latitude,longitude:fix.coords.longitude,accuracyMeters:accuracy},{radiusMeters:100,maxAccuracyMeters:50});
+      setLocationAssessment(result);setLocationAssessmentJob(job.id);
+      if(result.status==='unavailable')setLocationCheckError('GPS accuracy is too low for a suggestion. Confirm manually or retry outdoors.');
+    }catch(e){setLocationCheckError(e instanceof Error?e.message:'Could not check current location');}
+    finally{setLocationCheckBusy(false);}
+  }
+  async function confirmActiveJobLocation(kind:'arrival'|'departure',source:'gps_suggestion'|'manual') {
+    const job=activeSavedJob();
+    if(!job||!workSession||workSession.status==='completed'||!userId){setLocationConfirmError('Start a saved scheduled service and sign in first.');return;}
+    if(source==='gps_suggestion'&&(locationAssessmentJob!==job.id||!locationAssessment)){setLocationConfirmError('Check the current site location before confirming a GPS suggestion.');return;}
+    setLocationConfirmError('');
+    try{
+      const event=createLocationConfirmation({jobId:job.id,operatorId:userId,kind,confirmedAt:Date.now(),source,assessment:source==='gps_suggestion'?locationAssessment??undefined:undefined,manualReason:source==='manual'?locationManualReason:undefined});
+      const updated=await saveLocationConfirmation(userId,event);
+      setLocationConfirmations(updated);setLocationManualReason('');
+    }catch(e){setLocationConfirmError(e instanceof Error?e.message:'Could not save confirmation on this device');}
   }
 
   function addCustomer() {
@@ -354,6 +407,23 @@ function GreenCollarDashboard() {
             {workSession?.status==='completed' && workSession.jobId!=='demo-job' && !timerSaved && <Pressable style={styles.primary} disabled={loadingSaved} onPress={()=>void saveCompletedService()}><Text style={styles.primaryText}>Save completed visit</Text></Pressable>}
             {timerSaved && <Text style={styles.body}>Visit completion saved to Cloudflare.</Text>}
             {workSession?.status==='completed' && <Pressable style={styles.primary} onPress={()=>timerAction('start')}><Text style={styles.primaryText}>Start another demo</Text></Pressable>}
+            {workSession&&workSession.status!=='completed'&&workSession.jobId!=='demo-job'&&<View style={styles.card}>
+              <Text style={styles.cardHeading}>Service-site check</Text>
+              <Text style={styles.muted}>One foreground location check can suggest arrival or departure. It never changes the job timer, completion, or billing. Confirmations are saved on this device only.</Text>
+              <Pressable accessibilityRole="button" style={[styles.primary,{backgroundColor:'#f0f5ef'}]} disabled={locationCheckBusy} onPress={()=>void checkActiveJobLocation()}><Text style={styles.primaryText}>{locationCheckBusy?'Checking site…':'Check current site location once'}</Text></Pressable>
+              {!!locationCheckError&&<Text accessibilityLiveRegion="polite" style={styles.muted}>{locationCheckError}</Text>}
+              {!!locationAssessment&&locationAssessmentJob===workSession.jobId&&<>
+                <Text accessibilityLiveRegion="polite" style={styles.body}>{locationAssessment.status==='within_radius'?'GPS suggests arrival.':locationAssessment.status==='outside_radius'?'GPS suggests departure.':locationAssessment.status==='uncertain'?'Location is near the boundary; confirm manually.':'GPS is unavailable; confirm manually.'}{locationAssessment.distanceMeters!==undefined?' Approx. '+Math.round(locationAssessment.distanceMeters)+' m from the saved pin.':''}</Text>
+                {locationAssessment.status==='within_radius'&&<Pressable accessibilityRole="button" style={styles.primary} onPress={()=>void confirmActiveJobLocation('arrival','gps_suggestion')}><Text style={styles.primaryText}>Confirm arrival</Text></Pressable>}
+                {locationAssessment.status==='outside_radius'&&<Pressable accessibilityRole="button" style={styles.primary} onPress={()=>void confirmActiveJobLocation('departure','gps_suggestion')}><Text style={styles.primaryText}>Confirm departure</Text></Pressable>}
+                <Pressable accessibilityRole="button" style={[styles.primary,{backgroundColor:'#f0f5ef'}]} onPress={()=>{setLocationAssessment(null);setLocationAssessmentJob('');}}><Text style={styles.primaryText}>Dismiss suggestion</Text></Pressable>
+              </>}
+              <Text style={styles.label}>Manual confirmation reason</Text>
+              <TextInput accessibilityLabel="Manual location confirmation reason" style={styles.input} placeholder="For example: GPS unavailable, customer confirmed" placeholderTextColor="#819b8b" value={locationManualReason} onChangeText={setLocationManualReason} maxLength={280}/>
+              <View style={{flexDirection:'row',gap:8}}><Pressable accessibilityRole="button" style={[styles.primary,{flex:1}]} disabled={!locationManualReason.trim()} onPress={()=>void confirmActiveJobLocation('arrival','manual')}><Text style={styles.primaryText}>Manually confirm arrival</Text></Pressable><Pressable accessibilityRole="button" style={[styles.primary,{flex:1}]} disabled={!locationManualReason.trim()} onPress={()=>void confirmActiveJobLocation('departure','manual')}><Text style={styles.primaryText}>Manually confirm departure</Text></Pressable></View>
+              {!!locationConfirmError&&<Text accessibilityLiveRegion="polite" style={styles.muted}>{locationConfirmError}</Text>}
+              {locationConfirmations.filter(event=>event.jobId===workSession.jobId).slice(-4).map((event,i)=><Text key={event.confirmedAt+'-'+i} style={styles.muted}>{event.kind==='arrival'?'Arrival':'Departure'} · {new Date(event.confirmedAt).toLocaleString()} · {event.source==='manual'?'manual: '+(event.manualReason??'reason not recorded'):'GPS suggestion'}</Text>)}
+            </View>}
             {!!timerError && <Text style={styles.muted}>{timerError}</Text>}
           </View>
           <Text style={styles.muted}>Prototype customer cards below use synthetic data. Saved Cloudflare records load separately.</Text>
