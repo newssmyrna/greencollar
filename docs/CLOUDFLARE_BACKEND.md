@@ -1,19 +1,20 @@
 # GreenCollar on Cloudflare
 
-Cloudflare account is shared with News Smyrna but GreenCollar resources are fully separate.
+GreenCollar's Cloudflare resources are separate from News Smyrna. Do not connect this app to any News Smyrna database or Worker.
 
-- D1 database: `greencollar-db` (US jurisdiction), id `2c168587-dbe5-41f2-ac57-bbe762842ea2`
-- Worker: `greencollar-api` (health check only until user auth is finished)
-- Schema source: `cloudflare/migrations/0001_core.sql`
+- D1 database: `greencollar-db` (US jurisdiction; configured ID is recorded in the existing operator setup).
+- Worker: `greencollar-api`.
+- Migration source: `cloudflare/migrations/`.
+- Worker source: `cloudflare/src/`.
 
-DO NOT connect GreenCollar to `news-smyrna-food`, `news-smyrna-votes`, or any News Smyrna worker.
+## Current status
 
-## Security gate
+The repository contains signed-token verification, business onboarding, customer/day/visit endpoint source, membership checks, and Worker tests. The latest recorded deployment status says the Worker is health-only; this has not been freshly inspected during this work. Treat authenticated routes as undeployed until a direct deployment check confirms otherwise.
 
-D1 has no PostgreSQL-style RLS. Every access must validate a signed session and derive a business id from the authenticated membership on the server. Never accept a client-supplied business id as proof of access. Cross-business reference integrity is protected with composite foreign keys. Customer endpoints have not been enabled.
+The actual hosted recurring-service tables were previously reported to use a minimal schema that differs from committed migrations. Do not run migrations against production until the schema and migration history are reviewed and a staging reconciliation passes.
 
-## Still needed
+## Security
 
-Authentication/verification, business and membership tables, managed onboarding, tenant filtering and tests, customer photo R2 store, recurring visit system, routing, notifications, billing, background processing. No real customer data until these are implemented and tested.
+D1 does not provide PostgreSQL-style row-level security. Every protected request must verify identity and check membership server-side. Filter every query by business ID and preserve tenant-scoped foreign-key integrity.
 
 No keys or tokens in this repository.
