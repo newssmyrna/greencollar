@@ -11,7 +11,7 @@ export type LocationConfirmationSyncInput={
 };
 export type LocationConfirmationSyncResult={eventId:string;duplicate:boolean};
 
-function endpoint(apiUrl:string,businessId:string):string{
+function validDate(value:string):boolean{return /^\d{4}-\d{2}-\d{2}$/.test(value)&&!Number.isNaN(Date.parse(value))&&new Date(value+'T00:00:00Z').toISOString().slice(0,10)===value;}\n\nfunction endpoint(apiUrl:string,businessId:string):string{
   const base=new URL(apiUrl);
   if(base.protocol!=='https:'||base.username||base.password)throw new Error('An HTTPS API URL is required');
   if(!/^[a-zA-Z0-9_-]{1,100}$/.test(businessId))throw new Error('Select a valid business');
