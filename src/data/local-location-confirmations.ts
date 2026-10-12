@@ -1,5 +1,6 @@
 import * as SecureStore from 'expo-secure-store';
 import {appendLocationConfirmation,type LocationConfirmation} from '../domain/location-assist';
+import {oldestSyncedConfirmationId} from '../domain/location-outbox';
 
 export type StoredLocationConfirmation = LocationConfirmation & {
   eventId: string;
@@ -54,6 +55,7 @@ export async function loadLocationConfirmations(subject:string):Promise<StoredLo
       const parsed:unknown=JSON.parse(value);
       if(!isStoredConfirmation(parsed))return null;
       if(!parsed.eventId)return {...parsed,eventId:id,syncStatus:'local_only' as const};
+      if(parsed.eventId!==id)return null;
       return parsed;
     }catch{return null;}
   }));
@@ -69,16 +71,26 @@ export async function saveLocationConfirmation(
   if(!subject)throw new Error('Signed-in operator is required');
   if(!details.businessId||!details.agreementId||!validDate(details.date))throw new Error('A saved business, agreement, and service date are required');
   if(!isStoredConfirmation(event))throw new Error('Invalid location confirmation');
-  const ids=await readIds(subject);
-  if(ids.length>=20)throw new Error('Local confirmation limit reached; server sync is required for more history');
+  let ids=await readIds(subject);
   const history=await loadLocationConfirmations(subject);
-  appendLocationConfirmation(history,event,20);
+  const knownIds=new Set(history.map(item=>item.eventId));
+  ids=[...new Set(ids.filter(id=>knownIds.has(id)))];
+  const evictedId=ids.length>=20?oldestSyncedConfirmationId(history):undefined;
+  if(ids.length>=20&&!evictedId)throw new Error('Local confirmation limit reached; sync pending events before recording more history');
+  const retained=evictedId?history.filter(item=>item.eventId!==evictedId):history;
+  appendLocationConfirmation(retained,event,20);
   const eventId=Date.now().toString(36)+'_'+Math.random().toString(36).slice(2,14);
   const stored:StoredLocationConfirmation={...event,eventId,...details,syncStatus:'pending'};
+  const newIds=[...ids.filter(id=>id!==evictedId),eventId];
   await SecureStore.setItemAsync(eventKey(subject,eventId),JSON.stringify(stored));
-  ids.push(eventId);
-  await SecureStore.setItemAsync(indexKey(subject),JSON.stringify(ids));
-  return [...history,stored];
+  try{
+    await SecureStore.setItemAsync(indexKey(subject),JSON.stringify(newIds));
+  }catch(error){
+    await SecureStore.deleteItemAsync(eventKey(subject,eventId)).catch(()=>undefined);
+    throw error;
+  }
+  if(evictedId)await SecureStore.deleteItemAsync(eventKey(subject,evictedId)).catch(()=>undefined);
+  return [...retained,stored];
 }
 
 export async function markLocationConfirmationSynced(subject:string,eventId:string):Promise<StoredLocationConfirmation[]> {
