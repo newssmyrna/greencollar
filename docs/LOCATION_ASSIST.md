@@ -25,7 +25,7 @@
 - Client sync/retry is implemented in the review branch. New confirmations are saved locally first, then POSTed to the audit endpoint; failures remain pending and can be retried without changing the event ID. The app retries when a business is loaded and when the app returns to the foreground, with a manual retry control available as well.
 - The API and migration are review-branch code only. Apply and reconcile migration 0006 only in a separately verified staging D1; no hosted D1 migration or Worker deployment was performed.
 - Add server retention/export controls and document the audit policy before production.
-- Pending local records are limited to 20 entries; older pre-sync events remain visible as local-only and cannot be reconstructed into the server queue. Server retention and export are not solved.
+- Local history is capped at 20 entries. When full, the oldest server-synced local copy is evicted first; pending and older device-only events are preserved. If all entries are unsynced, new confirmations are blocked until pending records sync. Server retention and export are not solved.
 - Test denied/approximate permission, delayed or stale fixes, indoor drift, airplane mode, app termination, storage failure, and manual correction on current iOS and Android devices.
 - Review the 100 m / 50 m thresholds with field testing and product feedback.
 - Verify on-device that a location event never changes timer, service status, invoice, or payment state.
