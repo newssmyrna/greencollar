@@ -1,4 +1,5 @@
 import { customerApi } from './customer-api';
+import { dayDataApi } from './day-data-api';
 import type { Env } from './auth';
 
 function json(data:unknown,status=200):Response{
@@ -12,6 +13,7 @@ export default {
       catch{return json({service:'greencollar-api',status:'unavailable'},503);}
     }
     if(url.pathname==='/v1/customers')return customerApi(request,env,url);
+    if(url.pathname==='/v1/day')return dayDataApi(request,env,url);
     return json({error:'not_found'},404);
   }
 };
