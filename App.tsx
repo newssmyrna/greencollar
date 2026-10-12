@@ -3,6 +3,7 @@ import { ClerkProvider, useAuth, useClerk } from '@clerk/expo';
 import { useHostedAuth } from '@clerk/expo/hosted-auth';
 import { tokenCache } from '@clerk/expo/token-cache';
 import { fetchDayData, type DayData } from './src/data/greencollar-api';
+import { summarizeSavedDay } from './src/data/saved-day';
 import {
   SafeAreaView, ScrollView, View, Text, TextInput,
   Pressable, StyleSheet, StatusBar
@@ -82,7 +83,7 @@ function GreenCollarDashboard() {
           <Text style={styles.muted}>Prototype customer cards below use synthetic data. Saved Cloudflare records load separately.</Text>
           <Pressable style={styles.primary} disabled={loadingSaved} onPress={()=>void loadSavedDay()}><Text style={styles.primaryText}>{loadingSaved?'Loading...':'Load saved workday'}</Text></Pressable>
           {!!savedDayError && <Text style={styles.muted}>{savedDayError}</Text>}
-          {savedDay && <View style={styles.card}><Text style={styles.cardHeading}>Saved Cloudflare records</Text><Text style={styles.body}>{savedDay.customers.length} customers · {savedDay.agreements.length} active agreements · {savedDay.visits.length} recorded visits</Text><Text style={styles.muted}>Source data only — route optimization is not connected yet.</Text>{savedDay.agreements.slice(0,8).map(a=><Text key={a.id} style={styles.body}>{a.service_name} · {a.address}</Text>)}</View>}
+          {savedDay && <View style={styles.card}><Text style={styles.cardHeading}>Due today · Saved records</Text><Text style={styles.body}>{summarizeSavedDay(savedDay).pendingCount} jobs due · ${(summarizeSavedDay(savedDay).estimatedRevenueCents / 100).toFixed(2)} expected revenue · {summarizeSavedDay(savedDay).estimatedServiceMinutes} service minutes</Text><Text style={styles.muted}>{summarizeSavedDay(savedDay).completedCount} completed · {summarizeSavedDay(savedDay).skippedCount} skipped. Due-work preview only; no road routing or fuel estimate yet.</Text>{summarizeSavedDay(savedDay).due.slice(0,12).map(j=><Text key={j.id} style={styles.body}>{j.customer} · {j.service} · {j.address}</Text>)}</View>}
           <View style={styles.card}>
             <Text style={styles.label}>Example customers</Text>
             <Text style={styles.big}>{customers.length}</Text>
