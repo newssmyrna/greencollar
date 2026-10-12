@@ -31,7 +31,7 @@ test('provider distances produce route mileage and editable towing fuel estimate
 });
 test('missing road distances do not fabricate mileage or fuel',()=>{
  const result=planWithRoadMatrix({...input,fuelAssumptions:{vehicleMpg:20,towingMpg:10,trailerAttached:true}},points,{durations,distances:[
-  [0,16093.44,8046.72],[16093.44,0,null],[24140.16,14484.096,0]
+  [0,16093.44,8046.72],[16093.44,0,14484.096],[24140.16,null,0]
  ]});
  assert.equal(result.totalDriveDistanceMiles,null);assert.equal(result.fuelEstimate,null);
 });
