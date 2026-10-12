@@ -591,7 +591,7 @@ function GreenCollarDashboard() {
             {!savedQueueApproved&&savedDueSummary.pendingCount>0&&<Text style={styles.muted}>Review the current work order before starting a saved visit. Approval is tied to this business, date, visit order, and estimate snapshot; changes require review again.</Text>}
             {!!visitSkipNotice&&<Text accessibilityLiveRegion="polite" style={styles.body}>{visitSkipNotice}</Text>}
             {!!visitSkipError&&<Text accessibilityLiveRegion="polite" style={styles.muted}>{visitSkipError}</Text>}
-            {savedDueSummary.due.slice(0,12).map(j=><View key={j.id}>
+            {savedDueSummary.due.map(j=><View key={j.id}>
               <Text style={styles.body}>{j.customer} · {j.service} · {j.address}</Text>
               <Pressable style={styles.primary} disabled={!savedQueueApproved||!!workSession&&workSession.status!=='completed'} onPress={()=>timerAction('start',j.id)}><Text style={styles.primaryText}>{savedQueueApproved?'Start this service':'Approve the work queue first'}</Text></Pressable>
               <Pressable accessibilityRole="button" style={[styles.primary,{backgroundColor:'#f0f5ef'}]} disabled={!!visitSkipBusy||!!workSession&&workSession.status!=='completed'} onPress={()=>confirmSkipSavedVisit(j.id.slice(0,-(savedDay.date.length+1)),savedDay.date)}><Text style={styles.primaryText}>{visitSkipBusy===j.id?'Saving skip…':'Skip this visit'}</Text></Pressable>
