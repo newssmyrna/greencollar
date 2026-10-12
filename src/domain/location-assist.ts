@@ -59,6 +59,7 @@ export type LocationConfirmation = {
   source: 'gps_suggestion' | 'manual';
   /** Coarse assessment only; exact coordinates are intentionally excluded. */
   proximity: ProximityStatus | 'manual';
+  manualReason?: string;
 };
 
 /**
@@ -78,6 +79,7 @@ export function createLocationConfirmation(input: {
   if (!Number.isSafeInteger(input.confirmedAt) || input.confirmedAt < 0) throw new Error('Invalid confirmation time');
 
   let proximity: LocationConfirmation['proximity'];
+  let manualReason: string | undefined;
   if (input.source === 'gps_suggestion') {
     if (!input.assessment) throw new Error('GPS assessment is required');
     const expected = input.kind === 'arrival' ? 'within_radius' : 'outside_radius';
@@ -85,6 +87,8 @@ export function createLocationConfirmation(input: {
     proximity = input.assessment.status;
   } else {
     if (!input.manualReason?.trim()) throw new Error('Manual confirmation reason is required');
+    if (input.manualReason.trim().length > 280) throw new Error('Manual confirmation reason must be at most 280 characters');
+    manualReason = input.manualReason.trim();
     proximity = input.assessment?.status ?? 'manual';
   }
 
@@ -94,6 +98,7 @@ export function createLocationConfirmation(input: {
     kind: input.kind,
     confirmedAt: input.confirmedAt,
     source: input.source,
-    proximity
+    proximity,
+    ...(manualReason ? { manualReason } : {})
   };
 }
