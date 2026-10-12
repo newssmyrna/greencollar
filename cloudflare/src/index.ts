@@ -4,6 +4,7 @@ import { serviceAgreementApi } from './service-agreement-api';
 import { dayDataApi } from './day-data-api';
 import { businessApi } from './business-api';
 import { completeVisitApi } from './visit-completion-api';
+import { skipVisitApi } from './visit-skip-api';
 import { locationConfirmationApi } from './location-confirmation-api';
 import { authenticatedSubject } from './auth';
 import type { Env } from './auth';
@@ -31,6 +32,7 @@ export default {
     if(url.pathname==='/v1/agreements')return serviceAgreementApi(request,env,url);
     if(url.pathname==='/v1/day')return dayDataApi(request,env,url);
     if(url.pathname==='/v1/visits/complete')return completeVisitApi(request,env);
+    if(url.pathname==='/v1/visits/skip')return skipVisitApi(request,env);
     if(url.pathname==='/v1/location-confirmations')return locationConfirmationApi(request,env);
     return json({error:'not_found'},404);
   }

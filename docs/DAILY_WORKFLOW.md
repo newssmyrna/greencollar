@@ -10,4 +10,6 @@ Outputs: selected ordered visits with predicted start/finish times, projected re
 
 Do not schedule a visit twice. Do not silently drop visits that cannot fit. The operator must approve proposed day changes.
 
-Next: authenticated D1 customer/service agreement API; real road travel-matrix provider; visit status persistence; mobile planner integration and real-device testing.
+The review branch includes authenticated tenant-scoped writes for completed and explicitly skipped visits. Today asks for confirmation before marking a due visit skipped, then refreshes the saved day. The API protects completed and active visits from being overwritten; skip persistence remains unmerged and not deployed.
+
+Next: plan approval and visit lifecycle integration across the mobile planner, followed by real-device testing. Real road travel, owner-controlled replanning and customer updates remain future integrations.
