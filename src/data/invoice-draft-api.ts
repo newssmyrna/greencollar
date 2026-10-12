@@ -9,7 +9,7 @@ function parseDraft(value:unknown):PersistedInvoiceDraft{
  const line=lines[0] as Record<string,unknown>;
  if(typeof line.description!=='string'||typeof line.quantity!=='number'||typeof line.unitPriceCents!=='number')throw mismatch();
  try{
-  const draft=createInvoiceDraft({id:r.id,businessId:r.businessId,customerId:r.customerId,customerName:r.customerName,issuedOn:r.issuedOn,dueOn:r.dueOn,status:'draft',lines:[{description:line.description,quantity:line.quantity,unitPriceCents:line.unitPriceCents}],taxBasisPoints:r.taxBasisPoints,notes:r.notes});
+  const draft=createInvoiceDraft({id:r.id,businessId:r.businessId,customerId:r.customerId,customerName:r.customerName,issuedOn:r.issuedOn,dueOn:r.dueOn,lines:[{description:line.description,quantity:line.quantity,unitPriceCents:line.unitPriceCents}],taxBasisPoints:r.taxBasisPoints,notes:r.notes});
   return {...draft,serviceVisitId:r.serviceVisitId};
  }catch{throw mismatch();}
 }
