@@ -51,6 +51,35 @@ test('fixed appointment that conflicts with a scheduled break is explained',()=>
   assert.equal(result.excluded[0].reason,'fixed appointment overlaps a scheduled break');
 });
 
+test('narrow service windows are selected before less urgent jobs',()=>{
+  const jobs=[
+    {...sampleDay.jobs[0],id:'broad-window',locationId:'loc1',latestFinishMinute:10*60,priority:0},
+    {...sampleDay.jobs[1],id:'closing-window',locationId:'loc2',latestFinishMinute:9*60,priority:0}
+  ];
+  const result=planDay({...sampleDay,jobs,locations:sampleDay.locations.slice(0,2),maxJobs:1});
+  assert.equal(result.stops[0].jobId,'closing-window');
+});
+
+test('due work beats a closer optional job when time-window urgency is equal',()=>{
+  const jobs=[
+    {...sampleDay.jobs[0],id:'optional-near',locationId:'loc1',due:false,latestFinishMinute:10*60},
+    {...sampleDay.jobs[1],id:'recurring-due',locationId:'loc2',due:true,latestFinishMinute:10*60+10}
+  ];
+  const travelMinutes={base:{loc1:2,loc2:12},loc1:{base:2},loc2:{base:12}};
+  const result=planDay({...sampleDay,jobs,locations:sampleDay.locations.slice(0,2),travelMinutes,maxJobs:1});
+  assert.equal(result.stops[0].jobId,'recurring-due');
+});
+
+test('higher numeric priority wins after appointment and urgency ties',()=>{
+  const jobs=[
+    {...sampleDay.jobs[0],id:'low-priority',locationId:'loc1',due:false,priority:1,latestFinishMinute:10*60},
+    {...sampleDay.jobs[1],id:'high-priority',locationId:'loc2',due:false,priority:5,latestFinishMinute:10*60}
+  ];
+  const travelMinutes={base:{loc1:5,loc2:5},loc1:{base:5},loc2:{base:5}};
+  const result=planDay({...sampleDay,jobs,locations:sampleDay.locations.slice(0,2),travelMinutes,maxJobs:1});
+  assert.equal(result.stops[0].jobId,'high-priority');
+});
+
 test('duration forecast learns without overreacting to one outlier',()=>{
   const p=predictDuration([45,46,47,48,49,50,51,110],60);
   assert.equal(p.confidence,'high');
