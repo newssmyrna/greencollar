@@ -89,3 +89,8 @@ This phase does not edit or overwrite timer duration, alter the completion paylo
 The mobile client treats a visit as saved only when the completion endpoint returns a valid acknowledgment matching the submitted agreement, scheduled date, completed status, and actual minutes. Non-success responses remain errors; malformed or mismatched success responses keep the local timer unsaved and direct the operator to reload the saved workday before retrying. Writes are never automatically repeated. Server readback can reconcile a committed write if its response was lost or malformed.
 
 This response check does not change the tenant-scoped server write or billing snapshot. Device/network interruption and real server readback remain acceptance checks.
+
+
+## Location history storage scope
+
+Location confirmation index and event keys now accept only operator identifiers containing 1–80 ASCII letters, digits, underscores or hyphens. Standard IDs retain their existing SecureStore key names. Unsupported IDs reject instead of being normalized or truncated into a potentially colliding operator key. Event IDs use the same bounded safe alphabet. Device acceptance should confirm the active identity provider continues to issue IDs in this format.

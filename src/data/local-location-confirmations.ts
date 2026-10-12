@@ -1,6 +1,7 @@
 import * as SecureStore from 'expo-secure-store';
 import {appendLocationConfirmation,type LocationConfirmation} from '../domain/location-assist';
 import {oldestSyncedConfirmationId} from '../domain/location-outbox';
+import {locationEventStorageKey,locationIndexStorageKey} from './location-storage-keys';
 
 export type StoredLocationConfirmation = LocationConfirmation & {
   eventId: string;
@@ -10,9 +11,6 @@ export type StoredLocationConfirmation = LocationConfirmation & {
   syncStatus: 'pending'|'synced'|'local_only';
 };
 
-const safeSubject=(subject:string)=>subject.replace(/[^a-zA-Z0-9_-]/g,'_').slice(0,80);
-const indexKey=(subject:string)=>'greencollar_location_index_'+safeSubject(subject);
-const eventKey=(subject:string,id:string)=>'greencollar_location_event_'+safeSubject(subject)+'_'+id;
 const validId=(value:unknown):value is string=>typeof value==='string'&&/^[a-zA-Z0-9_-]{1,80}$/.test(value);
 const validDate=(value:unknown):value is string=>typeof value==='string'&&/^\d{4}-\d{2}-\d{2}$/.test(value)
   &&!Number.isNaN(Date.parse(value))&&new Date(value+'T00:00:00Z').toISOString().slice(0,10)===value;
@@ -37,7 +35,7 @@ function isStoredConfirmation(value:unknown):value is StoredLocationConfirmation
 }
 
 async function readIds(subject:string):Promise<string[]> {
-  const value=await SecureStore.getItemAsync(indexKey(subject));
+  const value=await SecureStore.getItemAsync(locationIndexStorageKey(subject));
   if(!value)return [];
   try{
     const parsed:unknown=JSON.parse(value);
@@ -49,7 +47,7 @@ export async function loadLocationConfirmations(subject:string):Promise<StoredLo
   if(!subject)return [];
   const ids=await readIds(subject);
   const events=await Promise.all(ids.map(async id=>{
-    const value=await SecureStore.getItemAsync(eventKey(subject,id));
+    const value=await SecureStore.getItemAsync(locationEventStorageKey(subject,id));
     if(!value)return null;
     try{
       const parsed:unknown=JSON.parse(value);
@@ -82,20 +80,20 @@ export async function saveLocationConfirmation(
   const eventId=Date.now().toString(36)+'_'+Math.random().toString(36).slice(2,14);
   const stored:StoredLocationConfirmation={...event,eventId,...details,syncStatus:'pending'};
   const newIds=[...ids.filter(id=>id!==evictedId),eventId];
-  await SecureStore.setItemAsync(eventKey(subject,eventId),JSON.stringify(stored));
+  await SecureStore.setItemAsync(locationEventStorageKey(subject,eventId),JSON.stringify(stored));
   try{
-    await SecureStore.setItemAsync(indexKey(subject),JSON.stringify(newIds));
+    await SecureStore.setItemAsync(locationIndexStorageKey(subject),JSON.stringify(newIds));
   }catch(error){
-    await SecureStore.deleteItemAsync(eventKey(subject,eventId)).catch(()=>undefined);
+    await SecureStore.deleteItemAsync(locationEventStorageKey(subject,eventId)).catch(()=>undefined);
     throw error;
   }
-  if(evictedId)await SecureStore.deleteItemAsync(eventKey(subject,evictedId)).catch(()=>undefined);
+  if(evictedId)await SecureStore.deleteItemAsync(locationEventStorageKey(subject,evictedId)).catch(()=>undefined);
   return [...retained,stored];
 }
 
 export async function markLocationConfirmationSynced(subject:string,eventId:string):Promise<StoredLocationConfirmation[]> {
   if(!subject||!validId(eventId))throw new Error('Invalid local confirmation ID');
-  const key=eventKey(subject,eventId);
+  const key=locationEventStorageKey(subject,eventId);
   const value=await SecureStore.getItemAsync(key);
   if(!value)throw new Error('Local confirmation was not found');
   const parsed:unknown=JSON.parse(value);
