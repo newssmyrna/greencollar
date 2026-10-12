@@ -40,4 +40,16 @@ Task: GC-TIMER-HANDOFF-20261012. Branch: `codex/phase-protected-timer-handoff`; 
 
 Phone acceptance remains pending: rapid start taps, completed-but-unsaved protection, restart with prior-day completion, failed timer reads/retry, sign-out during completion save, and matching/mismatched server duration. Next owner: reviewer checks preservation and device tester runs these scenarios; release coordinator handles the stacked chain.
 
+## Ordered timer storage and restore validation
+
+Timer writes and deletions run in invocation order for each operator. A later save cannot be overwritten by an older pending write. Loads wait for all currently queued writes; one write failure is reported to its caller and does not prevent a later queued save. Serialization snapshots the input before waiting. Different operators have independent queues.
+
+Valid existing timer records keep their standard `greencollar_timer_<operator>` keys. Operator IDs must match the existing safe alphabet and 1–80 character length; unsupported IDs reject rather than normalize/truncate into another operator's key. No data migration or silent deletion occurs.
+
+Only a missing record restores as no timer. Invalid JSON, blank IDs, negative or unsafe numbers, future dates relative to the device clock, contradictory state fields, and elapsed values exceeding the possible wall-clock interval reject restoration. The original record remains untouched and the previous phase's restore gate keeps work disabled. Restore errors expose the reason and retry path. If a device clock has moved backward, correct it before retrying.
+
+Task: GC-TIMER-STORAGE-20261012. Branch: `codex/phase-ordered-timer-storage`; source base: `5f51d2936620abb5f81a980281a22fcf96b76f40` (PR #45). Prepared and self-reviewed; unmerged and undeployed. Nine synthetic tests cover record compatibility, invalid records, FIFO save/load/delete, a write arriving during a pending read, failure recovery, operator separation, snapshot preservation, and no overwrites on invalid input. CI evidence is recorded on the branch PR.
+
+Device acceptance remains pending for rapid timer transitions, background/restart during writes, storage failures, and clock changes. This serializes one process's device writes; it does not create offline completion sync, cross-device locking, or a full timer correction workflow. Next owner/action: reviewer checks storage compatibility and preservation; device tester exercises these cases; release coordinator handles the stacked chain.
+
 Next: real-device acceptance for the review, start, completion and skip flow, including secure approval restore after app restart. Server-synced approvals, real road travel, owner-controlled replanning and customer updates remain future integrations.

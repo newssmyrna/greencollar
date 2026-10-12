@@ -351,7 +351,7 @@ function GreenCollarDashboard() {
     setTimerRestoreBusy(true);
     void loadWorkSession(userId).then(saved=>{
       if(active){workSessionCurrent.current=saved;setWorkSession(saved);setTimerReadyUser(userId);setTimerRestored(true);}
-    }).catch(()=>{if(active)setTimerError('Could not restore job timer. Retry before starting work; the saved timer has not been replaced.');})
+    }).catch(error=>{if(active)setTimerError('Could not restore job timer. '+(error instanceof Error?error.message:'Storage is unavailable')+'. Retry before starting work; the saved timer has not been replaced.');})
       .finally(()=>{if(active)setTimerRestoreBusy(false);});
     return ()=>{active=false;};
   },[userId,timerRestoreRetry]);
