@@ -102,3 +102,14 @@ export function createLocationConfirmation(input: {
     ...(manualReason ? { manualReason } : {})
   };
 }
+
+/** Append one confirmed event, stopping before local history can grow without bound. */
+export function appendLocationConfirmation(
+  history: LocationConfirmation[],
+  event: LocationConfirmation,
+  limit = 20
+): LocationConfirmation[] {
+  if (!Number.isSafeInteger(limit) || limit < 1) throw new Error('Invalid confirmation history limit');
+  if (history.length >= limit) throw new Error('Local confirmation history is full; sync or export it before recording more');
+  return [...history, event];
+}
