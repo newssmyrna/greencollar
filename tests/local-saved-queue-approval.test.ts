@@ -34,7 +34,7 @@ test('a later approval replaces the previous saved approval for that operator',a
 test('missing and malformed stored approvals fail closed',async()=>{
  memory.clear();
  assert.equal(await store.isApproved('operator-1',makeReview()),false);
- memory.set('greencollar_approved_queue_test-hash:operator-1','not-json');
+ memory.set('greencollar_approved_queue_'+await digest('operator:operator-1'),'not-json');
  assert.equal(await store.isApproved('operator-1',makeReview()),false);
 });
 test('cannot approve without a signed-in user or an eligible visit',async()=>{
