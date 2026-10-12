@@ -34,6 +34,7 @@ const seed: Customer[] = [
 ];
 const green = '#183d2b';
 const pale = '#d5f48b';
+const localDateInputValue=()=>{const now=new Date();return new Date(now.getTime()-now.getTimezoneOffset()*60000).toISOString().slice(0,10);};
 
 function GreenCollarDashboard() {
   const {getToken,userId} = useAuth();
@@ -53,7 +54,7 @@ function GreenCollarDashboard() {
   const [serviceName,setServiceName] = useState('');
   const [serviceRate,setServiceRate] = useState('');
   const [serviceMinutes,setServiceMinutes] = useState('60');
-  const [serviceStartDate,setServiceStartDate] = useState(new Date().toLocaleDateString('en-CA'));
+  const [serviceStartDate,setServiceStartDate] = useState(localDateInputValue());
   const [serviceFrequency,setServiceFrequency] = useState<ServiceFrequency>('weekly');
   const [savedDayError,setSavedDayError] = useState('');
   const [loadingSaved,setLoadingSaved] = useState(false);
@@ -281,7 +282,7 @@ function GreenCollarDashboard() {
       });
       setServiceAgreements(await listServiceAgreements(api,connectedBusiness.id,token));
       setServiceName('');setServiceRate('');
-      const date=new Date().toLocaleDateString('en-CA');
+      const date=localDateInputValue();
       setSavedDay(await fetchDayData(api,connectedBusiness.id,date,token));
     }catch(e){setSavedDayError(e instanceof Error?e.message:'Could not save service agreement');}
     finally{setLoadingSaved(false);}
