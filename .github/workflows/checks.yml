@@ -15,7 +15,7 @@ jobs:
         with:
           node-version: '22'
       - name: Install dependencies
-        run: npm install
+        run: npm ci
       - name: Typecheck
         run: npm run typecheck
       - name: Scheduling tests
@@ -31,7 +31,7 @@ jobs:
         with:
           node-version: '22'
       - name: Install Worker dependencies
-        run: npm install
+        run: npm ci
       - name: Typecheck Cloudflare API
         run: npm run typecheck
       - name: Verify authentication gates
