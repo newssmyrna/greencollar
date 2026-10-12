@@ -23,13 +23,13 @@ This ports the useful timer-safety portion of older open PR #10 onto current `ma
 | --- | --- |
 | Prior merged implementation milestones | 5/5 targeted PRs (#20–#24) merged |
 | Current PR CI | 2/2 jobs passed |
-| Workflow areas with partial source work on current `main` | 3/7: setup, day-work queue, billing |
-| Workflow areas with partial work including PR #25 | 4/7 (about 57% area coverage): adds timer recovery under perform/track |
+| Workflow areas with partial source work on current `main` | 4/7 (about 57% area coverage): setup, day-work queue, basic timer, billing |
+| Workflow areas touched by PR #25 | Same 4/7 areas; it strengthens timer recovery inside the already-partial perform/track area |
 | Fully end-to-end release-ready workflow areas | 0/7 verified |
 | Staging deployment | 0/1 succeeded; blocked by missing `CLOUDFLARE_API_TOKEN` |
 | Production release | Not started |
 
-The coverage fraction counts workflow areas with meaningful partial implementation. It is not a weighted product-completion percentage. The seven-step paid-release workflow has no fully verified area yet.
+The coverage fraction counts workflow areas with meaningful partial implementation. It is not a weighted product-completion percentage; PR #25 improves reliability within an existing partial area rather than adding a new workflow area. The seven-step paid-release workflow has no fully verified area yet.
 
 ## Fifteen-role handoff
 
