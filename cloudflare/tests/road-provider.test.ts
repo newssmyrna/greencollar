@@ -25,7 +25,7 @@ test('rejects unsafe or malformed provider configuration before network calls',a
 });
 test('rejects bad provider response rather than fabricating travel times',async()=>{
  const invalid=async()=>new Response(JSON.stringify({code:'Ok',durations:[[0,3]]}));
- await assert.rejects(requestRoadTable('https://router.example.test/',points,invalid as typeof fetch),/matrix shape/);
+ await assert.rejects(requestRoadTable('https://router.example.test/',points,invalid as typeof fetch),/invalid matrix/);
  const fail=async()=>new Response('offline',{status:503});
  await assert.rejects(requestRoadTable('https://router.example.test/',points,fail as typeof fetch),/unavailable/);
 });
