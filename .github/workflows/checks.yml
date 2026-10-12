@@ -17,3 +17,17 @@ jobs:
         run: npm run typecheck
       - name: Scheduling tests
         run: npm test
+  cloudflare:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: cloudflare
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+      - name: Install Worker dependencies
+        run: npm install
+      - name: Typecheck Cloudflare API
+        run: npm run typecheck
