@@ -8,6 +8,8 @@ import { getBusinesses, createBusiness } from './src/data/business-api';
 import { listSavedCustomers, createSavedCustomer, type SavedCustomer } from './src/data/customer-api';
 import { startWork, pauseWork, resumeWork, completeWork, getElapsedMinutes, completionRecord, type WorkSession } from './src/domain/work-session';
 import {saveVisitCompletion} from './src/data/visit-completion';
+import {billableCompletedServices,invoiceFromCompletedService} from './src/domain/completed-invoice';
+import {invoiceTotals,type InvoiceDraft} from './src/domain/invoice';
 import {loadWorkSession,saveWorkSession} from './src/data/local-work-session';
 import {
   SafeAreaView, ScrollView, View, Text, TextInput,
@@ -89,7 +91,7 @@ function GreenCollarDashboard() {
     }catch(e){setSavedDayError(e instanceof Error?e.message:'Unable to load saved data');}
     finally{setLoadingSaved(false);}
   }
-  const [tab, setTab] = useState<'today' | 'customers' | 'planner'>('today');
+  const [tab, setTab] = useState<'today' | 'customers' | 'planner' | 'invoices'>('today');
   const [customers, setCustomers] = useState<Customer[]>(seed);
   const [name, setName] = useState('');
   const [address, setAddress] = useState('');
@@ -100,6 +102,30 @@ function GreenCollarDashboard() {
   const [timerNow,setTimerNow]=useState(Date.now());
   const [timerError,setTimerError]=useState('');
   const [timerSaved,setTimerSaved]=useState(false);
+  const [invoiceDrafts,setInvoiceDrafts]=useState<InvoiceDraft[]>([]);
+  const [invoiceError,setInvoiceError]=useState('');
+  function prepareInvoiceDrafts(){
+    if(!savedDay||!connectedBusiness){setInvoiceError('Load a saved workday and business first');return;}
+    try {
+      const jobs=billableCompletedServices(savedDay,connectedBusiness.id);
+      setInvoiceDrafts(previous=>{
+        const prior=new Map(previous.map(d=>[d.id,d]));
+        for(const j of jobs){
+          const id='draft:'+j.businessId+':'+j.agreementId+':'+j.visitDate;
+          if(!prior.has(id))prior.set(id,invoiceFromCompletedService(j,id,j.visitDate));
+        }
+        return [...prior.values()];
+      });
+      setInvoiceError('');
+    }catch(e){setInvoiceError(e instanceof Error?e.message:'Could not prepare drafts');}
+  }
+  function editDraftPrice(id:string,value:string){
+    if(!/^\d+(\.\d{0,2})?$/.test(value))return;
+    const dollars=Number(value);
+    if(!Number.isFinite(dollars)||dollars>1000000)return;
+    const cents=Math.round(dollars*100);
+    setInvoiceDrafts(prev=>prev.map(d=>d.id===id&&d.status==='draft'?{...d,lines:d.lines.map((line,i)=>i===0?{...line,unitPriceCents:cents}:line)}:d));
+  }
   const [timerRestored,setTimerRestored]=useState(false);
   const submitting=useRef(false);
   useEffect(()=>{
@@ -183,7 +209,7 @@ function GreenCollarDashboard() {
         <Text style={styles.logo}>greencollar.</Text>
         <Text style={styles.subtitle}>Your business. On autopilot.</Text>
         <View style={styles.tabs}>
-          {(['today', 'customers', 'planner'] as const).map(t => (
+          {(['today', 'customers', 'planner', 'invoices'] as const).map(t => (
             <Pressable key={t} style={[styles.tab, tab === t && styles.activeTab]} onPress={() => setTab(t)}>
               <Text style={[styles.tabText, tab === t && styles.activeTabText]}>{t.toUpperCase()}</Text>
             </Pressable>
@@ -250,6 +276,22 @@ function GreenCollarDashboard() {
           <Text style={styles.muted}>Example cards above are in memory only. Use the saved-customer section for database records.</Text>
         </>}
 
+        {tab === 'invoices' && <>
+          <Text style={styles.heading}>Invoices · Draft review</Text>
+          <Text style={styles.muted}>These are local previews. No invoice has been saved, sent, charged, or marked paid.</Text>
+          <Pressable style={styles.primary} disabled={!savedDay||!connectedBusiness} onPress={prepareInvoiceDrafts}><Text style={styles.primaryText}>Prepare drafts from completed visits</Text></Pressable>
+          {!!invoiceError && <Text style={styles.muted}>{invoiceError}</Text>}
+          {invoiceDrafts.map(d=><View key={d.id} style={styles.card}>
+            <Text style={styles.cardHeading}>{d.lines[0]?.description||'Invoice'} · {d.status}</Text>
+            <Text style={styles.muted}>Customer: {savedDay?.customers.find(c=>c.id===d.customerId)?.name??d.customerId}</Text>
+            <Text style={styles.muted}>Service date: {d.issuedOn} · Due: {d.dueOn}</Text>
+            <Text style={styles.label}>Service price (USD)</Text>
+            <TextInput style={styles.input} keyboardType="decimal-pad" value={(d.lines[0].unitPriceCents/100).toFixed(2)} onChangeText={v=>editDraftPrice(d.id,v)}/>
+            <Text style={styles.body}>Draft total: ${(invoiceTotals(d.lines,d.taxBasisPoints).totalCents/100).toFixed(2)}</Text>
+            <Text style={styles.muted}>Tax defaults to $0. Review tax treatment before issuing. Save, send, and payment tracking are not connected yet.</Text>
+          </View>)}
+          {!invoiceDrafts.length && <Text style={styles.muted}>No drafts prepared. Load a workday with completed visits on Today first.</Text>}
+        </>}
         {tab === 'planner' && <>
           <Text style={styles.heading}>Plan your day</Text>
           <Text style={styles.label}>Hours available</Text>
