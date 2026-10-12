@@ -7,13 +7,18 @@
     "orientation": "portrait",
     "userInterfaceStyle": "automatic",
     "ios": {
-      "supportsTablet": true
+      "supportsTablet": true,
+      "bundleIdentifier": "com.nsbtechnology.greencollar"
     },
     "android": {
       "package": "com.nsbtechnology.greencollar"
     },
     "web": {
       "name": "GreenCollar"
-    }
+    },
+    "plugins": [
+      "expo-secure-store",
+      "@clerk/expo"
+    ]
   }
 }
