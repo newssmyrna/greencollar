@@ -75,3 +75,10 @@ Background/inactive transitions, leaving Today, pausing/completing, and unmounti
 Eight synthetic tests cover timestamp-based running display, paused/completed stability, pause exclusion, invalid clocks without mutation, empty state, foreground/background behavior, interval cleanup, and return after a long gap. Full app/Worker CI evidence is recorded on the PR. Native device acceptance remains pending for app state transitions, outdoor readability, clock changes, and rapid tab changes.
 
 Next owner/action: reviewer verifies UI-only refresh and cleanup; device tester runs those scenarios; release coordinator handles the stacked chain. The existing PR #47 was preserved; this branch adds display behavior only.
+
+
+## Review completed service duration
+
+A completed saved visit shows its scheduled estimate when the saved workday contains the matching agreement, beside the actual whole minutes recorded by the timer. The operator must explicitly confirm that exact session and workday before the completion write is enabled. Changing operator, timer session, completion timestamp, actual duration or workday invalidates the confirmation. Demo timers need no server confirmation.
+
+This phase does not edit or overwrite timer duration, alter the completion payload, change agreement pricing, or infer billable amounts. A correction workflow requires a separately persisted audit trail and remains future work. The review acknowledgment is in-memory and must be repeated after reopening the app. Device acceptance remains pending.
