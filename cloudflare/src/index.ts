@@ -1,5 +1,6 @@
 import { customerApi } from './customer-api';
 import { serviceLocationApi } from './service-location-api';
+import { serviceAgreementApi } from './service-agreement-api';
 import { dayDataApi } from './day-data-api';
 import { businessApi } from './business-api';
 import { completeVisitApi } from './visit-completion-api';
@@ -26,6 +27,7 @@ export default {
     if(url.pathname==='/v1/business')return businessApi(request,env);
     if(url.pathname==='/v1/customers')return customerApi(request,env,url);
     if(url.pathname==='/v1/locations')return serviceLocationApi(request,env,url);
+    if(url.pathname==='/v1/agreements')return serviceAgreementApi(request,env,url);
     if(url.pathname==='/v1/day')return dayDataApi(request,env,url);
     if(url.pathname==='/v1/visits/complete')return completeVisitApi(request,env);
     return json({error:'not_found'},404);
