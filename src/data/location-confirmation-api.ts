@@ -56,3 +56,58 @@ export async function syncLocationConfirmation(
   if(result.eventId!==input.eventId||typeof result.duplicate!=='boolean')throw new Error('Invalid location confirmation response');
   return {eventId:result.eventId,duplicate:result.duplicate};
 }
+
+export type ServerLocationConfirmation={
+  id:string;
+  agreement_id:string;
+  service_date:string;
+  kind:'arrival'|'departure';
+  operator_subject:string;
+  confirmed_at:number;
+  source:'gps_suggestion'|'manual';
+  proximity:'within_radius'|'outside_radius'|'uncertain'|'unavailable'|'manual';
+  manual_reason:string|null;
+  created_at:string;
+};
+export type ServerLocationConfirmationList={events:ServerLocationConfirmation[];hasMore:boolean};
+
+function isServerConfirmation(value:unknown,date:string):value is ServerLocationConfirmation{
+  if(!value||typeof value!=='object')return false;
+  const event=value as Partial<ServerLocationConfirmation>;
+  return typeof event.id==='string'&&/^[a-zA-Z0-9_-]{1,80}$/.test(event.id)
+    &&typeof event.agreement_id==='string'&&/^[a-zA-Z0-9_-]{1,100}$/.test(event.agreement_id)
+    &&event.service_date===date
+    &&(event.kind==='arrival'||event.kind==='departure')
+    &&typeof event.operator_subject==='string'
+    &&Number.isSafeInteger(event.confirmed_at)&&Number(event.confirmed_at)>=0
+    &&(event.source==='gps_suggestion'||event.source==='manual')
+    &&['within_radius','outside_radius','uncertain','unavailable','manual'].includes(String(event.proximity))
+    &&(event.manual_reason===null||typeof event.manual_reason==='string')
+    &&typeof event.created_at==='string';
+}
+
+export async function listLocationConfirmations(
+  apiUrl:string,
+  token:string,
+  businessId:string,
+  date:string
+):Promise<ServerLocationConfirmationList>{
+  if(!token)throw new Error('Sign in first');
+  if(!validDate(date))throw new Error('A valid service date is required');
+  const url=new URL(endpoint(apiUrl,businessId));
+  url.searchParams.set('date',date);
+  const response=await fetch(url.toString(),{
+    headers:{Authorization:'Bearer '+token}
+  });
+  if(!response.ok){
+    let reason='';
+    try{reason=String((await response.json() as {error?:unknown}).error??'');}catch{}
+    throw new Error(reason==='forbidden'?'You do not have access to this business history'
+      :'Unable to load location history ('+response.status+')');
+  }
+  const result=await response.json() as {events?:unknown;hasMore?:unknown};
+  if(!Array.isArray(result.events)||typeof result.hasMore!=='boolean'
+    ||!result.events.every(event=>isServerConfirmation(event,date)))
+    throw new Error('Invalid location history response');
+  return {events:result.events,hasMore:result.hasMore};
+}
