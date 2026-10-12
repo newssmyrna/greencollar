@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect, useRef } from 'react';
 import { ClerkProvider, useAuth, useClerk } from '@clerk/expo';
 import { useHostedAuth } from '@clerk/expo/hosted-auth';
 import { tokenCache } from '@clerk/expo/token-cache';
@@ -8,6 +8,7 @@ import { getBusinesses, createBusiness } from './src/data/business-api';
 import { listSavedCustomers, createSavedCustomer, type SavedCustomer } from './src/data/customer-api';
 import { startWork, pauseWork, resumeWork, completeWork, getElapsedMinutes, completionRecord, type WorkSession } from './src/domain/work-session';
 import {saveVisitCompletion} from './src/data/visit-completion';
+import {loadWorkSession,saveWorkSession} from './src/data/local-work-session';
 import {
   SafeAreaView, ScrollView, View, Text, TextInput,
   Pressable, StyleSheet, StatusBar
@@ -32,7 +33,7 @@ const green = '#183d2b';
 const pale = '#d5f48b';
 
 function GreenCollarDashboard() {
-  const {getToken} = useAuth();
+  const {getToken,userId} = useAuth();
   const [savedDay,setSavedDay] = useState<DayData|null>(null);
   const [savedCustomers,setSavedCustomers] = useState<SavedCustomer[]>([]);
   const [savedCustomerName,setSavedCustomerName] = useState('');
@@ -45,7 +46,8 @@ function GreenCollarDashboard() {
       return;
     const api=process.env.EXPO_PUBLIC_GREENCOLLAR_API_URL;
     if(!api){setTimerError('API URL not configured');return;}
-    setLoadingSaved(true);setTimerError('');
+    if(submitting.current||timerSaved)return;
+    submitting.current=true;setLoadingSaved(true);setTimerError('');
     try {
       const token=await getToken({template:'greencollar-api'});
       if(!token)throw new Error('Sign in first');
@@ -56,7 +58,7 @@ function GreenCollarDashboard() {
       setTimerSaved(true);
       setSavedDay(await fetchDayData(api,connectedBusiness.id,savedDay.date,token));
     } catch(e) {setTimerError(e instanceof Error?e.message:'Unable to save completed service');}
-    finally {setLoadingSaved(false);}
+    finally {submitting.current=false;setLoadingSaved(false);}
   }
   async function findMyBusiness() {
     const api=process.env.EXPO_PUBLIC_GREENCOLLAR_API_URL;
@@ -98,8 +100,25 @@ function GreenCollarDashboard() {
   const [timerNow,setTimerNow]=useState(Date.now());
   const [timerError,setTimerError]=useState('');
   const [timerSaved,setTimerSaved]=useState(false);
+  const [timerRestored,setTimerRestored]=useState(false);
+  const submitting=useRef(false);
+  useEffect(()=>{
+    let active=true;
+    setTimerRestored(false);
+    setWorkSession(null);
+    if(!userId){return ()=>{active=false;};}
+    void loadWorkSession(userId).then(saved=>{
+      if(active){setWorkSession(saved);setTimerRestored(true);}
+    }).catch(()=>{if(active){setTimerError('Could not restore job timer');setTimerRestored(true);}});
+    return ()=>{active=false;};
+  },[userId]);
+  useEffect(()=>{
+    if(!userId||!timerRestored)return;
+    void saveWorkSession(userId,workSession).catch(()=>setTimerError('Could not preserve job timer'));
+  },[userId,timerRestored,workSession]);
   function timerAction(action:'start'|'pause'|'resume'|'complete', jobId='demo-job') {
     try {
+      if(!timerRestored)throw new Error('Timer is restoring');
       const now=Date.now();setTimerNow(now);setTimerError('');
       if(action==='start'){setTimerSaved(false);setWorkSession(startWork(jobId,now));return;}
       if(!workSession)throw new Error('Start a job first');
@@ -175,7 +194,7 @@ function GreenCollarDashboard() {
           <Text style={styles.heading}>Today's overview</Text>
           <View style={styles.card}>
             <Text style={styles.cardHeading}>Job timer</Text>
-            <Text style={styles.muted}>Use a saved scheduled service below to record its completion. The timer itself is in memory and will reset when the app closes.</Text>
+            <Text style={styles.muted}>Use a saved scheduled service below to record its completion. The timer is saved on this device and restored after reopening.</Text>
             <Text style={styles.big}>{workSession?getElapsedMinutes(workSession,timerNow):0} min</Text>
             <Text style={styles.body}>Status: {workSession?.status??'not started'} {workSession?.jobId!=='demo-job'&&workSession?.jobId?'· Saved visit':''}</Text>
             {!workSession && <Pressable style={styles.primary} onPress={()=>timerAction('start')}><Text style={styles.primaryText}>Start demo job</Text></Pressable>}
