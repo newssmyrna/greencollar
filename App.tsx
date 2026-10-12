@@ -38,6 +38,19 @@ function GreenCollarDashboard() {
   const [loadingSaved,setLoadingSaved] = useState(false);
   const [businessName,setBusinessName] = useState('');
   const [connectedBusiness,setConnectedBusiness] = useState<{id:string;name:string}|null>(null);
+  async function findMyBusiness() {
+    const api=process.env.EXPO_PUBLIC_GREENCOLLAR_API_URL;
+    if(!api){setSavedDayError('API URL not configured yet.');return;}
+    setLoadingSaved(true);setSavedDayError('');
+    try {
+      const token=await getToken({template:'greencollar-api'});
+      if(!token)throw new Error('Sign in first');
+      const businesses=await getBusinesses(api,token);
+      if(!businesses.length)throw new Error('No saved business yet. Create one below.');
+      setConnectedBusiness(businesses[0]);
+    }catch(e){setSavedDayError(e instanceof Error?e.message:'Unable to find your business');}
+    finally{setLoadingSaved(false);}
+  }
   async function loadSavedDay() {
     const api=process.env.EXPO_PUBLIC_GREENCOLLAR_API_URL;
     if(!api){setSavedDayError('API URL not configured yet.');return;}
@@ -128,7 +141,7 @@ function GreenCollarDashboard() {
         {tab === 'today' && <>
           <Text style={styles.heading}>Today's overview</Text>
           <Text style={styles.muted}>Prototype customer cards below use synthetic data. Saved Cloudflare records load separately.</Text>
-          {!connectedBusiness && <View style={styles.card}><Text style={styles.cardHeading}>Create or find your business</Text><TextInput style={styles.input} placeholder="Business name" placeholderTextColor="#819b8b" value={businessName} onChangeText={setBusinessName}/><Pressable style={styles.primary} disabled={loadingSaved} onPress={()=>void registerBusiness()}><Text style={styles.primaryText}>Create business</Text></Pressable><Text style={styles.muted}>If you've already created a business, Load saved workday will find it after API authentication is configured.</Text></View>}
+          {!connectedBusiness && <View style={styles.card}><Text style={styles.cardHeading}>Create or find your business</Text><Pressable style={styles.primary} disabled={loadingSaved} onPress={()=>void findMyBusiness()}><Text style={styles.primaryText}>Find my saved business</Text></Pressable><TextInput style={styles.input} placeholder="Business name" placeholderTextColor="#819b8b" value={businessName} onChangeText={setBusinessName}/><Pressable style={styles.primary} disabled={loadingSaved} onPress={()=>void registerBusiness()}><Text style={styles.primaryText}>Create business</Text></Pressable><Text style={styles.muted}>Already registered? Find your saved business above. Otherwise create a new one.</Text></View>}
           {connectedBusiness && <Text style={styles.muted}>Business: {connectedBusiness.name}</Text>}
           <Pressable style={styles.primary} disabled={loadingSaved} onPress={()=>void loadSavedDay()}><Text style={styles.primaryText}>{loadingSaved?'Loading...':'Load saved workday'}</Text></Pressable>
           {!!savedDayError && <Text style={styles.muted}>{savedDayError}</Text>}
