@@ -670,7 +670,7 @@ function GreenCollarDashboard() {
             <Text style={styles.cardHeading}>Job timer</Text>
             <Text style={styles.muted}>Use a saved scheduled service below to record its completion. The timer is saved on this device and restored after reopening. Elapsed time updates automatically while this screen is active.</Text>
             <Text style={styles.big}>{displayedTimer.minutes===null?'—':displayedTimer.minutes} min</Text>
-            {!!displayedTimer.error&&<Text accessibilityLiveRegion="polite" style={styles.muted}>{displayedTimer.error}</Text>
+            {!!displayedTimer.error&&<Text accessibilityLiveRegion="polite" style={styles.muted}>{displayedTimer.error}</Text>}
             <Text style={styles.body}>Status: {workSession?.status??'not started'} {workSession?.jobId!=='demo-job'&&workSession?.jobId?'· Saved visit':''}</Text>
             {timerTransitionBusy&&<Text style={styles.muted}>Saving timer change…</Text>}
             {!workSession && <Pressable style={styles.primary} disabled={!timerCanStart} onPress={()=>timerAction('start')}><Text style={styles.primaryText}>Start demo job</Text></Pressable>}
