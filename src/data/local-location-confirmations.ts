@@ -42,6 +42,7 @@ export async function saveLocationConfirmation(subject:string,event:LocationConf
   if(!subject)throw new Error('Signed-in operator is required');
   if(!isConfirmation(event))throw new Error('Invalid location confirmation');
   const ids=await readIds(subject);
+  if(ids.length>=20)throw new Error('Local confirmation history is full; sync or export it before recording more');
   const history=await loadLocationConfirmations(subject);
   const next=appendLocationConfirmation(history,event,20);
   const id=Date.now().toString(36)+'_'+Math.random().toString(36).slice(2,10);
