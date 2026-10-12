@@ -64,7 +64,7 @@ test('GET paginates with an exclusive timestamp and ID cursor',async()=>{
  const body=await response.json() as {events:unknown[];hasMore:boolean;nextCursor:string|null};
  assert.equal(body.events.length,50);assert.equal(body.hasMore,true);assert.equal(body.nextCursor,'100.evt-49');
  const listing=f.queries.find(q=>q.sql.includes('FROM location_confirmations WHERE business_id=? AND service_date=?'))!;
- assert.match(listing.sql,/confirmed_at<\\? OR \\(confirmed_at=\\? AND id<\\?\\)/);
+ assert.ok(listing.sql.includes('(confirmed_at<? OR (confirmed_at=? AND id<?))'));
  assert.deepEqual(listing.values,['business-a','2026-10-12',200,200,'evt-new']);
  const invalid=new Request('https://api.example.test/v1/location-confirmations?business_id=business-a&date=2026-10-12&before=bad');
  assert.equal((await api(invalid,f.env)).status,400);
