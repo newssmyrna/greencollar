@@ -92,9 +92,10 @@ export function planDay(input: PlannerInput): PlanResult {
       if (bFixed !== undefined && aFixed === undefined) return 1;
       if (aFixed !== undefined && bFixed !== undefined && aFixed !== bFixed) return aFixed - bFixed;
 
-      const aSlack = (a.job.latestFinishMinute ?? endMinute) - a.finish;
-      const bSlack = (b.job.latestFinishMinute ?? endMinute) - b.finish;
-      return aSlack - bSlack
+      const aSlack = a.job.latestFinishMinute === undefined ? Infinity : a.job.latestFinishMinute - a.finish;
+      const bSlack = b.job.latestFinishMinute === undefined ? Infinity : b.job.latestFinishMinute - b.finish;
+      const slackOrder = aSlack === bSlack ? 0 : aSlack < bSlack ? -1 : 1;
+      return slackOrder
         || Number(Boolean(b.job.due)) - Number(Boolean(a.job.due))
         || (b.job.priority ?? 0) - (a.job.priority ?? 0)
         || a.drive - b.drive
