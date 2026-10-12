@@ -31,7 +31,7 @@ export async function dayDataApi(request:Request,env:Env,url:URL):Promise<Respon
       WHERE a.business_id=? AND a.active=1 AND a.starts_on<=?
         AND (a.ends_on IS NULL OR a.ends_on>=?)
       ORDER BY a.id LIMIT 2000`).bind(businessId,date,date),
-    env.DB.prepare(`SELECT agreement_id,scheduled_date,status,actual_minutes
+    env.DB.prepare(`SELECT agreement_id,scheduled_date,status,actual_minutes,completed_customer_id,completed_customer_name,completed_service_name,completed_rate_cents
       FROM service_visits WHERE business_id=? AND scheduled_date=?`).bind(businessId,date),
     env.DB.prepare('SELECT id,name,phone,notes FROM customers WHERE business_id=? ORDER BY name LIMIT 2000').bind(businessId),
     env.DB.prepare("SELECT agreement_id,actual_minutes FROM service_visits WHERE business_id=? AND status='completed' AND actual_minutes BETWEEN 1 AND 1439 AND scheduled_date<? ORDER BY scheduled_date DESC LIMIT 2000").bind(businessId,date)

@@ -8,7 +8,7 @@ import { getBusinesses, createBusiness } from './src/data/business-api';
 import { listSavedCustomers, createSavedCustomer, type SavedCustomer } from './src/data/customer-api';
 import { startWork, pauseWork, resumeWork, completeWork, getElapsedMinutes, completionRecord, type WorkSession } from './src/domain/work-session';
 import {saveVisitCompletion} from './src/data/visit-completion';
-import {billableCompletedServices,invoiceFromCompletedService} from './src/domain/completed-invoice';
+import {billableCompletedServices,invoiceFromCompletedService,unbillableCompletedServiceCount} from './src/domain/completed-invoice';
 import {invoiceTotals,type InvoiceDraft} from './src/domain/invoice';
 import {loadWorkSession,saveWorkSession} from './src/data/local-work-session';
 import {listServiceLocations,createServiceLocation,type SavedServiceLocation} from './src/data/service-location-api';
@@ -427,10 +427,11 @@ function GreenCollarDashboard() {
           <Text style={styles.heading}>Invoices · Draft review</Text>
           <Text style={styles.muted}>These are local previews. No invoice has been saved, sent, charged, or marked paid.</Text>
           <Pressable style={styles.primary} disabled={!savedDay||!connectedBusiness} onPress={prepareInvoiceDrafts}><Text style={styles.primaryText}>Prepare drafts from completed visits</Text></Pressable>
+          {!!savedDay && unbillableCompletedServiceCount(savedDay)>0 && <Text style={styles.muted}>{unbillableCompletedServiceCount(savedDay)} older completed visit(s) need manual billing review because no historical price snapshot exists.</Text>}
           {!!invoiceError && <Text style={styles.muted}>{invoiceError}</Text>}
           {invoiceDrafts.map(d=><View key={d.id} style={styles.card}>
             <Text style={styles.cardHeading}>{d.lines[0]?.description||'Invoice'} · {d.status}</Text>
-            <Text style={styles.muted}>Customer: {savedDay?.customers.find(c=>c.id===d.customerId)?.name??d.customerId}</Text>
+            <Text style={styles.muted}>Customer: {d.customerName??d.customerId}</Text>
             <Text style={styles.muted}>Service date: {d.issuedOn} · Due: {d.dueOn}</Text>
             <Text style={styles.label}>Service price (USD)</Text>
             <TextInput style={styles.input} keyboardType="decimal-pad" value={(d.lines[0].unitPriceCents/100).toFixed(2)} onChangeText={v=>editDraftPrice(d.id,v)}/>
