@@ -210,13 +210,18 @@ function GreenCollarDashboard() {
   function requestSavedQueueApproval(){
     if(!savedQueueReview)return;
     const review=savedQueueReview;
-    Alert.alert('Review today’s work queue',review.visitCount+' scheduled visits · '+review.estimatedServiceMinutes+' estimated service minutes · 
+    const details=review.visitCount+' scheduled visits · '+review.estimatedServiceMinutes+' estimated service minutes · $'+(review.expectedRevenueCents/100).toFixed(2)+' expected revenue. This is the saved work order; travel is not optimized.';
+    Alert.alert("Review today's work queue",details,[
+      {text:'Keep reviewing',style:'cancel'},
+      {text:'Approve work queue',onPress:()=>setApprovedSavedQueueKey(review.approvalKey)}
+    ]);
+  }
+  function confirmSkipSavedVisit(agreementId:string,date:string){
     Alert.alert('Skip this scheduled service?','This records the visit as skipped for '+date+'. You can’t skip a completed or active visit.',[
       {text:'Cancel',style:'cancel'},
       {text:'Mark skipped',style:'destructive',onPress:()=>void skipSavedVisit(agreementId,date)}
     ]);
   }
-
   async function findMyBusiness() {
     const api=process.env.EXPO_PUBLIC_GREENCOLLAR_API_URL;
     if(!api){setSavedDayError('API URL not configured yet.');return;}
