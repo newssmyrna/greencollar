@@ -17,11 +17,35 @@ export async function customerApi(request:Request,env:Env,url:URL):Promise<Respo
   const role=await businessAccess(env,sub,businessId);
   if(!role)return response({error:'forbidden'},403);
 
+  const customerId=url.searchParams.get('id');
   if(request.method==='GET'){
     const data=await env.DB.prepare(
       'SELECT id,name,phone,email,notes,created_at FROM customers WHERE business_id=? ORDER BY name LIMIT 200'
     ).bind(businessId).all();
     return response({customers:data.results});
+  }
+  if(request.method==='PATCH' || request.method==='DELETE'){
+    if(role==='worker')return response({error:'forbidden'},403);
+    if(!customerId || !/^[0-9a-f-]{36}$/i.test(customerId))return response({error:'invalid_customer_id'},400);
+    if(request.method==='DELETE'){
+      // Do not cascade-delete historical service records. Require explicit archival workflow.
+      return response({error:'archival_workflow_not_implemented'},409);
+    }
+    let input:CustomerInput;
+    try{input=await request.json() as CustomerInput;}catch{return response({error:'invalid_json'},400);}
+    const current=await env.DB.prepare(
+      'SELECT id,name,phone,email,notes FROM customers WHERE business_id=? AND id=?'
+    ).bind(businessId,customerId).first<{id:string;name:string;phone:string|null;email:string|null;notes:string|null}>();
+    if(!current)return response({error:'not_found'},404);
+    const name=input.name===undefined?current.name:safeString(input.name,160);
+    if(!name)return response({error:'customer_name_required'},400);
+    const phone=input.phone===undefined?current.phone:safeString(input.phone,50);
+    const email=input.email===undefined?current.email:safeString(input.email,254);
+    const notes=input.notes===undefined?current.notes:safeString(input.notes,2000);
+    await env.DB.prepare(
+      'UPDATE customers SET name=?,phone=?,email=?,notes=? WHERE business_id=? AND id=?'
+    ).bind(name,phone,email,notes,businessId,customerId).run();
+    return response({id:customerId,name,phone,email,notes});
   }
   if(request.method==='POST'){
     if(role==='worker')return response({error:'forbidden'},403);
