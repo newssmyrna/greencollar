@@ -21,9 +21,21 @@ export async function listSavedCustomers(apiUrl:string,businessId:string,token:s
 }
 export async function createSavedCustomer(apiUrl:string,businessId:string,token:string,customer:CustomerDetails):Promise<{id:string;name:string}>{
   if(!customer.name?.trim())throw new Error('Customer name is required');
+  const limits:{[K in keyof CustomerDetails]:number}={name:160,phone:50,email:254,notes:2000};
+  for(const field of Object.keys(limits) as (keyof CustomerDetails)[]){
+    const value=customer[field];
+    if(value!==undefined&&(typeof value!=='string'||value.length>limits[field]))
+      throw new Error('Customer '+field+' is too long');
+  }
+  const details:CustomerDetails={
+    name:customer.name.trim(),
+    ...(customer.phone?.trim()?{phone:customer.phone.trim()}:{}),
+    ...(customer.email?.trim()?{email:customer.email.trim()}:{}),
+    ...(customer.notes?.trim()?{notes:customer.notes.trim()}:{}),
+  };
   const response=await fetch(endpoint(apiUrl,businessId),{
     method:'POST',headers:{...auth(token),'content-type':'application/json'},
-    body:JSON.stringify(customer)
+    body:JSON.stringify(details)
   });
   if(!response.ok)throw new Error('Customer creation failed ('+response.status+')');
   return await response.json() as {id:string;name:string};
