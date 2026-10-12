@@ -85,10 +85,21 @@ export function planDay(input: PlannerInput): PlanResult {
   while (remaining.length > 0 && stops.length < cap) {
     const choices = remaining.map(job => evaluate(job, node, clock)).filter(x => x.feasible);
     if (!choices.length) break;
-    choices.sort((a,b) =>
-      (a.job.fixedStartMinute !== undefined ? 0 : 1) - (b.job.fixedStartMinute !== undefined ? 0 : 1)
-      || a.drive - b.drive || (b.job.priority ?? 0) - (a.job.priority ?? 0)
-      || a.job.id.localeCompare(b.job.id));
+    choices.sort((a,b) => {
+      const aFixed = a.job.fixedStartMinute;
+      const bFixed = b.job.fixedStartMinute;
+      if (aFixed !== undefined && bFixed === undefined) return -1;
+      if (bFixed !== undefined && aFixed === undefined) return 1;
+      if (aFixed !== undefined && bFixed !== undefined && aFixed !== bFixed) return aFixed - bFixed;
+
+      const aSlack = (a.job.latestFinishMinute ?? endMinute) - a.finish;
+      const bSlack = (b.job.latestFinishMinute ?? endMinute) - b.finish;
+      return aSlack - bSlack
+        || Number(Boolean(b.job.due)) - Number(Boolean(a.job.due))
+        || (b.job.priority ?? 0) - (a.job.priority ?? 0)
+        || a.drive - b.drive
+        || a.job.id.localeCompare(b.job.id);
+    });
     const chosen = choices[0];
     stops.push({
       jobId: chosen.job.id, locationId: chosen.job.locationId,
