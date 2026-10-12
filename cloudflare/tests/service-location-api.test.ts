@@ -44,14 +44,14 @@ test('worker can read but cannot create addresses',async()=>{
  assert.equal(f.queries.length,1);
 });
 test('owner creates an address with ownership rechecked in the insert',async()=>{
- const f=fixture();const r=request('POST',JSON.stringify({address:' Test street ',preferences:' Side gate '}));
+ const f=fixture();const r=request('POST',JSON.stringify({address:' Test street ',preferences:' Side gate ',lat:29.1,lon:-80.9}));
  const response=await api(r.request,f.env,r.url);
  assert.equal(response.status,201);
  const body=await response.json() as {location:{id:string;address:string;preferences:string}};
- assert.equal(body.location.address,'Test street');assert.equal(body.location.preferences,'Side gate');
+ assert.equal(body.location.address,'Test street');assert.equal(body.location.preferences,'Side gate');assert.equal(body.location.lat,29.1);assert.equal(body.location.lon,-80.9);
  const insertion=f.queries.find(q=>q.sql.startsWith('INSERT'))!;
  assert.match(insertion.sql,/WHERE EXISTS.*business_id=\? AND id=\?/);
- assert.deepEqual(insertion.values.slice(1),['business-a','customer-a','Test street','Side gate','business-a','customer-a']);
+ assert.deepEqual(insertion.values.slice(1),['business-a','customer-a','Test street','Side gate',29.1,-80.9,'business-a','customer-a']);
 });
 test('rejects invalid address and oversized request without insert',async()=>{
  for(const [body,status] of [[JSON.stringify({address:''}),400],['{',400],[JSON.stringify({address:'x',preferences:'x'.repeat(9000)}),413]] as const){

@@ -10,7 +10,7 @@ const fixture:DayData={
   rate_cents:7500,estimated_minutes:55,starts_on:'2026-10-05',ends_on:null,
   frequency:'weekly',interval_days:null,days_of_week:null,preferred_start_minute:null,
   preferred_finish_minute:null,fixed_start_minute:null,active:1,
-  address:'Fictional Address',preferences:null}],
+  address:'Fictional Address',preferences:null,lat:29.1,lon:-80.9}],
  visits:[],durationHistory:[]
 };
 test('summarize actual due recurring work by local date',()=>{
@@ -18,6 +18,7 @@ test('summarize actual due recurring work by local date',()=>{
  assert.equal(out.pendingCount,1);
  assert.equal(out.estimatedRevenueCents,7500);
  assert.equal(out.due[0].customer,'Sample Customer');
+ assert.equal(out.due[0].lat,29.1);assert.equal(out.due[0].lon,-80.9);
 });
 test('completed visit is not shown again',()=>{
  const out=summarizeSavedDay({...fixture,visits:[{agreement_id:'s1',scheduled_date:fixture.date,status:'completed',actual_minutes:52}]});

@@ -18,7 +18,13 @@
     },
     "plugins": [
       "expo-secure-store",
-      "@clerk/expo"
+      ["@clerk/expo"],
+      ["expo-location", {
+        "locationWhenInUsePermission": "GreenCollar uses your location only when you choose to capture or check a service-site location.",
+        "isIosBackgroundLocationEnabled": false,
+        "isAndroidBackgroundLocationEnabled": false,
+        "isAndroidForegroundServiceEnabled": false
+      }]
     ]
   }
 }

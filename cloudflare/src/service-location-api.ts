@@ -37,10 +37,10 @@ export function createServiceLocationApi(authenticate:typeof authenticatedSubjec
       const id=crypto.randomUUID();
       // Recheck the tenant/customer relationship in the write itself.
       const result=await env.DB.prepare(
-        'INSERT INTO service_locations(id,business_id,customer_id,address,preferences) SELECT ?,?,?,?,? WHERE EXISTS (SELECT 1 FROM customers WHERE business_id=? AND id=?)'
-      ).bind(id,businessId,customerId,input.address,input.preferences||null,businessId,customerId).run();
+        'INSERT INTO service_locations(id,business_id,customer_id,address,preferences,lat,lon) SELECT ?,?,?,?,?,?,? WHERE EXISTS (SELECT 1 FROM customers WHERE business_id=? AND id=?)'
+      ).bind(id,businessId,customerId,input.address,input.preferences||null,input.lat??null,input.lon??null,businessId,customerId).run();
       if(result.meta.changes!==1)return json({error:'customer_not_found'},404);
-      return json({location:{id,customer_id:customerId,address:input.address,preferences:input.preferences||null,lat:null,lon:null}},201);
+      return json({location:{id,customer_id:customerId,address:input.address,preferences:input.preferences||null,lat:input.lat??null,lon:input.lon??null}},201);
     }catch{return json({error:'location_storage_unavailable'},503);}
   };
 }

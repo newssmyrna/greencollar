@@ -3,7 +3,7 @@ import {predictDuration} from '../domain/planner';
 import type {DayData} from './greencollar-api';
 
 export type DueSummary = {
-  due: Array<{id:string;service:string;address:string;customer:string;rateCents:number;estimatedMinutes:number}>;
+  due: Array<{id:string;service:string;address:string;customer:string;rateCents:number;estimatedMinutes:number;lat:number|null;lon:number|null}>;
   completedCount:number;
   skippedCount:number;
   pendingCount:number;
@@ -39,7 +39,8 @@ export function summarizeSavedDay(data:DayData):DueSummary {
       id:v.id,service:v.serviceName,
       address:byAgreement.get(v.agreementId)?.address??'Address unavailable',
       customer:customers.get(v.customerId)??'Customer unavailable',
-      rateCents:v.rateCents,estimatedMinutes:predictDuration(history.get(v.agreementId)??[],v.estimatedMinutes).minutes
+      rateCents:v.rateCents,estimatedMinutes:predictDuration(history.get(v.agreementId)??[],v.estimatedMinutes).minutes,
+      lat:byAgreement.get(v.agreementId)?.lat??null,lon:byAgreement.get(v.agreementId)?.lon??null
     })),
     completedCount:dates.filter(v=>status.get(v.agreementId)==='completed').length,
     skippedCount:dates.filter(v=>status.get(v.agreementId)==='skipped').length,

@@ -5,17 +5,18 @@ import {createServiceLocation,listServiceLocations} from '../src/data/service-lo
 const originalFetch=globalThis.fetch;afterEach(()=>{globalThis.fetch=originalFetch;});
 test('address input trims text and rejects missing or excessive values',()=>{
  assert.deepEqual(serviceLocationInput({address:' Sample street ',preferences:' Side gate '}),{address:'Sample street',preferences:'Side gate'});
- for(const value of [null,[],{address:''},{address:'x'.repeat(501)},{address:'x',preferences:123},{address:'x',preferences:'x'.repeat(2001)}])
+ assert.deepEqual(serviceLocationInput({address:'Shop',lat:29.1,lon:-80.9}),{address:'Shop',preferences:undefined,lat:29.1,lon:-80.9});
+ for(const value of [null,[],{address:''},{address:'x'.repeat(501)},{address:'x',preferences:123},{address:'x',preferences:'x'.repeat(2001)},{address:'x',lat:29},{address:'x',lat:91,lon:0},{address:'x',lat:29,lon:181}])
    assert.throws(()=>serviceLocationInput(value));
 });
 test('customer location request carries the exact business and customer context',async()=>{
  let target='';let sent:RequestInit|undefined;
- globalThis.fetch=async(url,init)=>{target=String(url);sent=init;return new Response(JSON.stringify({location:{id:'location-1',customer_id:'customer-a',address:'Sample street',preferences:null,lat:null,lon:null}}),{status:201});};
- const saved=await createServiceLocation('https://api.example.test','business-a','customer-a','token',{address:' Sample street '});
+ globalThis.fetch=async(url,init)=>{target=String(url);sent=init;return new Response(JSON.stringify({location:{id:'location-1',customer_id:'customer-a',address:'Sample street',preferences:null,lat:29.1,lon:-80.9}}),{status:201});};
+ const saved=await createServiceLocation('https://api.example.test','business-a','customer-a','token',{address:' Sample street ',lat:29.1,lon:-80.9});
  assert.equal(saved.id,'location-1');
  assert.equal(target,'https://api.example.test/v1/locations?business_id=business-a&customer_id=customer-a');
  assert.equal((sent?.headers as Record<string,string>).Authorization,'Bearer token');
- assert.deepEqual(JSON.parse(String(sent?.body)),{address:'Sample street'});
+ assert.deepEqual(JSON.parse(String(sent?.body)),{address:'Sample street',lat:29.1,lon:-80.9});
 });
 test('client preserves a failed save and partial list as explicit states',async()=>{
  globalThis.fetch=async()=>new Response('{}',{status:403});
