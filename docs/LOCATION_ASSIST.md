@@ -22,6 +22,7 @@
 
 ## Remaining integration and release checks
 
+- The Today audit view can filter loaded history locally by arrival/departure and GPS/manual method; filters do not change server records and do not search pages that have not been loaded.
 - Client sync/retry and a read-only server audit view are implemented in the review branch. New confirmations are saved locally first, then POSTed to the audit endpoint; failures remain pending and can be retried without changing the event ID. The app retries when a business is loaded and when the app returns to the foreground, with a manual retry control available as well. Today can load the selected business/day audit history, showing the newest 10 returned events.
 - The API and migration are review-branch code only. Apply and reconcile migration 0006 only in a separately verified staging D1; no hosted D1 migration or Worker deployment was performed.
 - Add server retention/export controls and document the audit policy before production.
