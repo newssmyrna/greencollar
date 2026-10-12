@@ -1,0 +1,19 @@
+{
+  "expo": {
+    "name": "GreenCollar",
+    "slug": "greencollar",
+    "scheme": "greencollar",
+    "version": "0.1.0",
+    "orientation": "portrait",
+    "userInterfaceStyle": "automatic",
+    "ios": {
+      "supportsTablet": true
+    },
+    "android": {
+      "package": "com.nsbtechnology.greencollar"
+    },
+    "web": {
+      "name": "GreenCollar"
+    }
+  }
+}
