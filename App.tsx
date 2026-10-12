@@ -40,7 +40,7 @@ function GreenCollarDashboard() {
     if(!api){setSavedDayError('API URL not configured yet.');return;}
     setLoadingSaved(true);setSavedDayError('');
     try{
-      const token=await getToken();
+      const token=await getToken({template:'greencollar-api'});
       if(!token)throw new Error('Sign in first');
       const businesses=await getBusinesses(api,token);
       const business=connectedBusiness?.id??businesses[0]?.id;
@@ -73,7 +73,7 @@ function GreenCollarDashboard() {
     if(!businessName.trim())return;
     setLoadingSaved(true);setSavedDayError('');
     try {
-      const token=await getToken();
+      const token=await getToken({template:'greencollar-api'});
       if(!token)throw new Error('Sign in first');
       const business=await createBusiness(api,token,businessName.trim());
       setConnectedBusiness(business);
