@@ -5,6 +5,7 @@ export type DayData = {
   customers:Array<{id:string;name:string;phone:string|null;notes:string|null}>;
   agreements:Array<{id:string;customer_id:string;location_id:string;service_name:string;rate_cents:number;estimated_minutes:number;starts_on:string;ends_on:string|null;frequency:string;interval_days:number|null;days_of_week:string|null;preferred_start_minute:number|null;preferred_finish_minute:number|null;fixed_start_minute:number|null;active:number;address:string;preferences:string|null}>;
   visits:Array<{agreement_id:string;scheduled_date:string;status:string;actual_minutes:number|null}>;
+  durationHistory:Array<{agreement_id:string;actual_minutes:number}>;
 };
 /** No silent fallback to fake data when the API fails. */
 export async function fetchDayData(apiUrl:string, businessId:string, date:string, token:string):Promise<DayData>{
