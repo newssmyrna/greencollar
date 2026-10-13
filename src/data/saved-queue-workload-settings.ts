@@ -14,8 +14,7 @@ export function workloadSettingsHaveUnsavedChanges(state:WorkloadSettingsState):
   return !state.saved||state.draft.hours!==state.saved.hours||state.draft.maxJobs!==state.saved.maxJobs
     ||(state.draft.workdayStart??'')!==(state.saved.workdayStart??'')
     ||(state.draft.workdayFinish??'')!==(state.saved.workdayFinish??'')
-    ||(state.draft.breakStart??'')!==(state.saved.breakStart??'')
-    ||(state.draft.breakFinish??'')!==(state.saved.breakFinish??'');
+    ||(state.draft.breaks??'')!==(state.saved.breaks??'');
 }
 export function workloadSettingsReadyForApproval(state:WorkloadSettingsState|null):boolean{
   return !!state&&state.status==='ready'&&!workloadSettingsHaveUnsavedChanges(state);

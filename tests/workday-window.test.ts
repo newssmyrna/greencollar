@@ -166,7 +166,7 @@ test('current records round trip the canonical work window in isolated scopes',a
     assert.deepEqual(await f.store.load(context),settings);
   }
   for(const raw of f.records.values()){
-    assert.equal(JSON.parse(raw).version,3);
+    assert.equal(JSON.parse(raw).version,4);
     assert.ok(raw.length<=512);
     for(const identity of [context.subject,context.businessId,context.date])assert.equal(raw.includes(identity),false);
   }
@@ -180,7 +180,7 @@ test('legacy settings load without inventing a window or silently rewriting the 
   assert.equal(f.writes(),writes);
   assert.equal(f.records.get(key),old);
   await f.store.save(context,settings);
-  assert.equal(JSON.parse(f.records.get(key)!).version,3);
+  assert.equal(JSON.parse(f.records.get(key)!).version,4);
   assert.deepEqual(await f.store.load(context),settings);
 });
 
