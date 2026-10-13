@@ -210,7 +210,7 @@ Verification: 137 focused local tests passed, including 22 new tests. Node 24 ra
 | Break-bound approval and edit protection | Complete | Planned Today approval |
 | Native acceptance and deployment | Pending | No live change |
 
-Paths: `App.tsx`, `src/domain/workday-break.ts`, `src/domain/saved-queue-workload.ts`, `src/domain/saved-queue-appointments.ts`, `src/domain/saved-queue-review.ts`, `src/data/local-saved-queue-workload.ts`, `src/data/saved-queue-workload-settings.ts`, `src/data/local-saved-queue-approval.ts`, `tests/workday-break.test.ts`, `tests/workday-window.test.ts`, and this document.
+Paths: `App.tsx`, `src/domain/workday-break.ts`, `src/domain/saved-queue-appointments.ts`, `src/domain/saved-queue-review.ts`, `src/data/local-saved-queue-workload.ts`, `src/data/saved-queue-workload-settings.ts`, `src/data/local-saved-queue-approval.ts`, `tests/workday-break.test.ts`, `tests/workday-window.test.ts`, and this document.
 
 Impact: planned Today settings, appointment warnings and approval dialog; planned device settings compatibility; testing-only synthetic fixtures/regressions; documentation-only behavior and handoff. No live pages/posts, production records, API/schema changes, remote migrations, provider calls, messages or billing changes.
 
