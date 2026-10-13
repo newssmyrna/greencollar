@@ -40,11 +40,11 @@ At the current published Essentials rate, the first paid tier is $5 per 1,000 el
 
 **Enforcement policy:**
 
-1. Maintain a durable, atomic monthly ledger for the dedicated project. Before a provider call, reserve its origin × destination elements against the 19,500 monthly ceiling. Reject new calls at the ceiling or whenever the meter is unavailable.
-2. Count retries, timeouts, and incomplete/ambiguous calls conservatively. Do not refund reserved elements unless billing evidence confirms the request was not metered.
-3. At the limit, fall back to manual travel-time entry. No background retries or new calls after the monthly stop. Reset the ledger at the next calendar month after reconciling provider usage.
+1. Maintain a durable, atomic monthly ledger for the dedicated project. Before a provider call, reserve its origin × destination elements and the no-free-credit estimated list-price exposure. Reject new calls when either 19,500 elements or $120 estimated pre-tax provider usage is reached, whichever comes first, or whenever the meter is unavailable. At the current $5/1,000 rate, $120 is $0.005 per element and the 19,500-element stop is tighter: $97.50 worst-case before tax.
+2. Count retries, timeouts, and incomplete/ambiguous calls conservatively. Do not refund reserved elements or estimated cost unless billing evidence confirms the request was not metered.
+3. At either limit, fall back to manual travel-time entry. No background retries or new calls after the monthly stop. Reset the ledger at the next calendar month after reconciling provider usage.
 4. Add Google Cloud Billing alert-only thresholds at $60 (50%), $96 (80%), and $120 (100%). Alerts are useful signals, not the hard cap: Google's current spend-cap eligibility list does not include the Routes API, and its alerts-only budgets do not automatically block usage.
-5. Keep the Routes API quota as a secondary traffic safeguard. The application ledger remains the spend gate. Reprice and reapprove before changing SKU/features or if published rates change; fail closed rather than silently use Pro or Enterprise.
+5. Keep the Routes API quota as a secondary traffic safeguard. The application ledger remains the spend gate. Check the current price before activation and each monthly reset; update the price version in the meter, reprice and reapprove before changing SKU/features, and fail closed if the configured rate is stale or the provider returns a different SKU. Do not silently use Pro or Enterprise.
 6. The selected meter is scoped to the Essentials SKU at the current $5/1,000 rate. It does not authorize traffic-aware features, truck-specific routing, route optimization, geocoding, map loads, or other billable APIs.
 
 ### Location and provider-data policy
