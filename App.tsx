@@ -7,6 +7,8 @@ import { fetchDayData, type DayData } from './src/data/greencollar-api';
 import { fetchRoutingSettings, acknowledgeRoutingNotice, setBusinessRoutingEnabled, requestRoutingMatrix, type RoutingSettings } from './src/data/routing-api';
 import { reportWeatherInterruption, listWeatherInterruptions, type WeatherInterruption, type WeatherInterruptionReason } from './src/data/weather-interruptions';
 import { getWorkdaySchedule, saveWorkdaySchedule, listWorkdayMembers, type WorkdaySchedule, type ScheduledTask, type BusinessMember } from './src/data/workday-schedules';
+import { listAvailability, type CrewAvailability } from './src/data/availability';
+import { reportedLunchBlocks } from './src/domain/workday-availability';
 import { businessRoleCapabilities } from './src/domain/weather-replan';
 import { prepareTruckPreview, type PreviewTruck, type TruckPreviewRoute } from './src/domain/truck-preview';
 import { summarizeSavedDay } from './src/data/saved-day';
@@ -66,6 +68,7 @@ const green = '#183d2b';
 const pale = '#d5f48b';
 
 function scheduleClockMinute(value:string):number|null{const m=/^(\d{1,2}):(\d{2})$/.exec(value.trim());if(!m)return null;const h=Number(m[1]),minute=Number(m[2]);return h<=23&&minute<=59?h*60+minute:null;}
+function scheduleMinuteClock(value:number):string{return String(Math.floor(value/60)).padStart(2,'0')+':'+String(value%60).padStart(2,'0');}
 function savedQueueTravelKey(fromVisitId:string|null,toVisitId:string):string{
   return JSON.stringify([fromVisitId,toVisitId]);
 }
@@ -247,7 +250,8 @@ function GreenCollarDashboard() {
   const [weatherInbox,setWeatherInbox]=useState<{scope:string;items:WeatherInterruption[]}|null>(null);
   const [weatherInboxBusy,setWeatherInboxBusy]=useState(false);
   const [weatherInboxError,setWeatherInboxError]=useState('');
-  useEffect(()=>{setAgreementEarliest('');setAgreementLatest('');setAgreementFixed('');setScheduleMembers([]);setScheduleWorkerSubjects([]);setScheduleLunchStart({});setScheduleLunchEnd({});setScheduleTaskWorker('');setWorkdaySchedule(null);},[userId,connectedBusiness?.id]);
+  useEffect(()=>{setAgreementEarliest('');setAgreementLatest('');setAgreementFixed('');setScheduleMembers([]);setScheduleWorkerSubjects([]);setScheduleLunchBlocks({});setScheduleAvailability([]);setScheduleTaskWorker('');setWorkdaySchedule(null);},[userId,connectedBusiness?.id]);
+  useEffect(()=>{scheduleRosterRequest.current++;setScheduleRosterBusy(false);setScheduleLunchBlocks({});setScheduleAvailability([]);setWorkdaySchedule(null);},[userId,connectedBusiness?.id,savedDay?.date]);
   useEffect(()=>{
     routingSettingsRequest.current++;
     routingSettingsBusyRef.current=false;
@@ -446,9 +450,10 @@ function GreenCollarDashboard() {
   const [scheduleEnd,setScheduleEnd]=useState('17:00');
   const [scheduleMembers,setScheduleMembers]=useState<BusinessMember[]>([]);
   const [scheduleRosterBusy,setScheduleRosterBusy]=useState(false);
+  const scheduleRosterRequest=useRef(0);
   const [scheduleWorkerSubjects,setScheduleWorkerSubjects]=useState<string[]>([]);
-  const [scheduleLunchStart,setScheduleLunchStart]=useState<Record<string,string>>({});
-  const [scheduleLunchEnd,setScheduleLunchEnd]=useState<Record<string,string>>({});
+  const [scheduleLunchBlocks,setScheduleLunchBlocks]=useState<Record<string,Array<{start:string;end:string}>>>({});
+  const [scheduleAvailability,setScheduleAvailability]=useState<CrewAvailability[]>([]);
   const [scheduleSelectedAgreementIds,setScheduleSelectedAgreementIds]=useState<string[]>([]);
   const [scheduleTaskDrafts,setScheduleTaskDrafts]=useState<Record<string,ScheduledTask[]>>({});
   const [scheduleTaskLabel,setScheduleTaskLabel]=useState('Mowing');
@@ -1073,10 +1078,27 @@ function GreenCollarDashboard() {
             <Text style={styles.label}>Business crew</Text>
             <Pressable accessibilityRole="button" style={styles.primary} disabled={scheduleRosterBusy} onPress={async()=>{
               const api=process.env.EXPO_PUBLIC_GREENCOLLAR_API_URL;if(!api||!connectedBusiness){setScheduleError('Load a business and configure the API URL first.');return;}
-              setScheduleRosterBusy(true);setScheduleError('');
-              try{const token=await getToken({template:'greencollar-api'});if(!token)throw new Error('Sign in first.');const members=await listWorkdayMembers(api,connectedBusiness.id,token);setScheduleMembers(members);setScheduleWorkerSubjects(current=>current.filter(subject=>members.some(member=>member.subject===subject)));setScheduleNotice(members.length+' verified business member(s) loaded.');}
-              catch(error){setScheduleError(error instanceof Error?error.message:'Could not load business crew.');}
-              finally{setScheduleRosterBusy(false);}
+              const request=++scheduleRosterRequest.current;setScheduleRosterBusy(true);setScheduleError('');
+              if(!savedDay){setScheduleError('Load a saved workday first so crew availability uses the correct date.');setScheduleRosterBusy(false);return;}
+              try{
+                const token=await getToken({template:'greencollar-api'});if(!token)throw new Error('Sign in first.');
+                const [members,availability]=await Promise.all([
+                  listWorkdayMembers(api,connectedBusiness.id,token),
+                  listAvailability(api,connectedBusiness.id,savedDay.date,token)
+                ]);
+                if(request!==scheduleRosterRequest.current)return;
+                const reportedLunch=reportedLunchBlocks(availability);
+                setScheduleMembers(members);setScheduleAvailability(availability);
+                setScheduleWorkerSubjects(current=>current.filter(subject=>members.some(member=>member.subject===subject)));
+                setScheduleLunchBlocks(current=>{
+                  const next={...current};
+                  for(const member of members)if(next[member.subject]===undefined)next[member.subject]=reportedLunch[member.subject]??[];
+                  return next;
+                });
+                setScheduleNotice(members.length+' verified business member(s) and '+availability.length+' availability event(s) loaded for '+savedDay.date+'. Reported breaks are prefilled; review each shift before saving.');
+              }
+              catch(error){if(request===scheduleRosterRequest.current)setScheduleError(error instanceof Error?error.message:'Could not load business crew.');}
+              finally{if(request===scheduleRosterRequest.current)setScheduleRosterBusy(false);}
             }}><Text style={styles.primaryText}>{scheduleRosterBusy?'Loading crew…':'Load business crew'}</Text></Pressable>
             {!scheduleMembers.length?<Text style={styles.muted}>Load the verified owner/admin/worker roster, then select everyone assigned to this route.</Text>:scheduleMembers.map(member=>{
               const selected=scheduleWorkerSubjects.includes(member.subject);
@@ -1086,11 +1108,17 @@ function GreenCollarDashboard() {
                   if(selected&&scheduleTaskWorker===member.subject)setScheduleTaskWorker('');
                   else if(!selected&&!scheduleTaskWorker)setScheduleTaskWorker(member.subject);
                 }}><Text style={styles.primaryText}>{selected?'✓ ':''}{member.role} · {member.subject}</Text></Pressable>
+                {scheduleAvailability.filter(event=>event.memberSubject===member.subject).map(event=><Text key={event.eventId+'-'+event.reportedBy} style={styles.muted}>{event.kind} · {scheduleMinuteClock(event.startMinute)}–{scheduleMinuteClock(event.endMinute)}</Text>)}
                 {selected&&<View style={styles.card}>
-                  <Text style={styles.label}>Lunch start (optional, 24 hour time)</Text>
-                  <TextInput accessibilityLabel={'Lunch start for '+member.subject} style={styles.input} value={scheduleLunchStart[member.subject]??''} onChangeText={value=>setScheduleLunchStart(current=>({...current,[member.subject]:value}))} placeholder="12:00" />
-                  <Text style={styles.label}>Lunch end</Text>
-                  <TextInput accessibilityLabel={'Lunch end for '+member.subject} style={styles.input} value={scheduleLunchEnd[member.subject]??''} onChangeText={value=>setScheduleLunchEnd(current=>({...current,[member.subject]:value}))} placeholder="12:30" />
+                  <Text style={styles.label}>Lunch blocks for this worker · reported breaks are prefilled</Text>
+                  {(scheduleLunchBlocks[member.subject]??[]).map((block,index)=><View key={member.subject+'-lunch-'+index} style={styles.card}>
+                    <Text style={styles.label}>Lunch block {index+1}</Text>
+                    <TextInput accessibilityLabel={'Lunch start for '+member.subject+' block '+(index+1)} style={styles.input} value={block.start} onChangeText={value=>setScheduleLunchBlocks(current=>({...current,[member.subject]:(current[member.subject]??[]).map((item,i)=>i===index?{...item,start:value}:item)}))} placeholder="12:00" />
+                    <TextInput accessibilityLabel={'Lunch end for '+member.subject+' block '+(index+1)} style={styles.input} value={block.end} onChangeText={value=>setScheduleLunchBlocks(current=>({...current,[member.subject]:(current[member.subject]??[]).map((item,i)=>i===index?{...item,end:value}:item)}))} placeholder="12:30" />
+                    <Pressable accessibilityRole="button" accessibilityLabel={'Remove lunch block '+(index+1)+' for '+member.subject} style={styles.primary} onPress={()=>setScheduleLunchBlocks(current=>({...current,[member.subject]:(current[member.subject]??[]).filter((_,i)=>i!==index)}))}><Text style={styles.primaryText}>Remove lunch block</Text></Pressable>
+                  </View>)}
+                  <Pressable accessibilityRole="button" style={styles.primary} disabled={(scheduleLunchBlocks[member.subject]??[]).length>=3} onPress={()=>setScheduleLunchBlocks(current=>({...current,[member.subject]:[...(current[member.subject]??[]),{start:'',end:''}]}))}><Text style={styles.primaryText}>Add lunch block</Text></Pressable>
+                  <Text style={styles.muted}>Lunch blocks must fall inside the worker shift and cannot overlap. Sick or unavailable time overlapping the shift will block saving.</Text>
                 </View>}
               </View>;
             })}
@@ -1139,14 +1167,17 @@ function GreenCollarDashboard() {
               const startMinute=scheduleClockMinute(scheduleStart),endMinute=scheduleClockMinute(scheduleEnd);
               if(!scheduleTruckId.trim()||!workers.length||startMinute===null||endMinute===null||startMinute>=endMinute)throw new Error('Enter a truck, load and select at least one verified crew member, and enter valid start/end times.');
               const scheduledWorkers=workers.map(subject=>{
-                const lunchStartText=(scheduleLunchStart[subject]??'').trim(),lunchEndText=(scheduleLunchEnd[subject]??'').trim();
-                if(Boolean(lunchStartText)!==Boolean(lunchEndText))throw new Error('Enter both lunch start and end for each selected worker, or leave both blank.');
-                let breaks:{startMinute:number;endMinute:number}[]=[];
-                if(lunchStartText){
-                  const lunchStartMinute=scheduleClockMinute(lunchStartText),lunchEndMinute=scheduleClockMinute(lunchEndText);
-                  if(lunchStartMinute===null||lunchEndMinute===null||lunchStartMinute>=lunchEndMinute||lunchStartMinute<startMinute||lunchEndMinute>endMinute)
-                    throw new Error('Each lunch block must be valid and fit inside that worker’s shift.');
-                  breaks=[{startMinute:lunchStartMinute,endMinute:lunchEndMinute}];
+                const breaks=(scheduleLunchBlocks[subject]??[]).map(block=>{
+                  const lunchStartMinute=scheduleClockMinute(block.start),lunchEndMinute=scheduleClockMinute(block.end);
+                  if(lunchStartMinute===null||lunchEndMinute===null||lunchStartMinute>=lunchEndMinute)
+                    throw new Error('Enter a valid start and end for every lunch block.');
+                  return {startMinute:lunchStartMinute,endMinute:lunchEndMinute};
+                }).sort((a,b)=>a.startMinute-b.startMinute);
+                let previousBreakEnd=startMinute;
+                for(const lunch of breaks){
+                  if(lunch.startMinute<startMinute||lunch.endMinute>endMinute||lunch.startMinute<previousBreakEnd)
+                    throw new Error('Lunch blocks must fit inside the worker shift and cannot overlap.');
+                  previousBreakEnd=lunch.endMinute;
                 }
                 return {subject,startMinute,endMinute,breaks};
               });
