@@ -97,8 +97,20 @@ test('between-stop travel estimates propagate to fixed appointments and stay tie
   assert.equal(result.issues[0].kind,'fixed_start_conflict');
   assert.match(result.issues[0].message,/80-minute travel estimate from the previous stop.*20 min short/);
   assert.match(describeSavedQueueAppointments(result),/1 potential timing conflict/);
-  assert.match(APPOINTMENT_CHECK_ASSUMPTIONS,/manual travel estimates apply only between adjacent saved stops/);
+  assert.match(APPOINTMENT_CHECK_ASSUMPTIONS,/operator-chosen starting point to the first stop/);
   assert.match(describeAppointmentCheckAssumptions(result),/80 minutes total/);
+});
+
+test('a manually estimated leg from the chosen starting point delays the first fixed appointment',()=>{
+  const result=assessSavedQueueAppointments([
+    visit('a',{fixedStartMinute:600,estimatedMinutes:20,travelMinutesBefore:30})
+  ],{workdayStart:'09:45',workdayFinish:'17:00'});
+  assert.equal(result.status,'conflicts');
+  assert.equal(result.travelEstimateCount,1);
+  assert.equal(result.estimatedTravelMinutes,30);
+  assert.equal(result.issues[0].kind,'fixed_start_conflict');
+  assert.match(result.issues[0].message,/30-minute travel estimate from your chosen starting point.*15 min short/);
+  assert.match(describeAppointmentCheckAssumptions(result),/1 travel leg \(30 minutes total\)/);
 });
 
 test('an entered travel leg is moved intact past a planned break before the next service',()=>{
@@ -109,9 +121,21 @@ test('an entered travel leg is moved intact past a planned break before the next
   assert.match(result.issues[0].message,/15-minute travel estimate.*5 min short/);
 });
 
-test('travel estimates on the first stop or outside integer minute bounds invalidate the full check',()=>{
+test('the first travel leg is also moved intact past a planned break',()=>{
+  const result=assessSavedQueueAppointments([
+    visit('a',{fixedStartMinute:615,estimatedMinutes:20,travelMinutesBefore:20})
+  ],{workdayStart:'09:15',workdayFinish:'17:00',breaks:'09:30-10:00'});
+  assert.equal(result.issues[0].kind,'fixed_start_conflict');
+  assert.match(result.issues[0].message,/20-minute travel estimate from your chosen starting point.*5 min short/);
+});
+
+test('first-stop travel is valid while estimates outside integer minute bounds invalidate the full check',()=>{
+  const firstLeg=assessSavedQueueAppointments([visit('a',{travelMinutesBefore:5})]);
+  assert.equal(firstLeg.status,'no_conflicts_detected');
+  assert.equal(firstLeg.travelEstimateCount,1);
+  assert.equal(firstLeg.estimatedTravelMinutes,5);
   for(const rows of [
-    [visit('a',{travelMinutesBefore:5})],
+    [visit('a',{travelMinutesBefore:-1})],
     [visit('a'),visit('b',{travelMinutesBefore:-1})],
     [visit('a'),visit('b',{travelMinutesBefore:1.5})],
     [visit('a'),visit('b',{travelMinutesBefore:1441})]
@@ -123,12 +147,12 @@ test('travel estimates on the first stop or outside integer minute bounds invali
 });
 
 test('an entered travel estimate changes approval binding and cannot approve invalid estimates',()=>{
-  const rows=[visit('a'),visit('b',{fixedStartMinute:600,travelMinutesBefore:20})];
+  const rows=[visit('a',{travelMinutesBefore:20}),visit('b',{fixedStartMinute:600,travelMinutesBefore:20})];
   const current=review(rows);
-  const changed=review([rows[0],{...rows[1],travelMinutesBefore:25}]);
+  const changed=review([{...rows[0],travelMinutesBefore:25},rows[1]]);
   assert.equal(current.appointments.status,'no_conflicts_detected');
   assert.equal(isSavedQueueApproved(current,changed.approvalKey),false);
-  const invalid=review([{...rows[0],travelMinutesBefore:3},rows[1]]);
+  const invalid=review([{...rows[0],travelMinutesBefore:-1},rows[1]]);
   assert.equal(canApproveSavedQueueReview(invalid),false);
 });
 

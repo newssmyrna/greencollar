@@ -24,6 +24,7 @@ test('adjacent travel estimates survive reload as hashes and a changed order dro
   {fromVisitId:'visit-b',toVisitId:'visit-c',minutes:35}
  ]);
  const raw=[...f.memory.values()].join('');
+ assert.equal(JSON.parse(raw).version,2);
  for(const sensitive of ['visit-a','visit-b','visit-c'])assert.equal(raw.includes(sensitive),false);
  const restored=await createLocalSavedQueueOrderStore(f.storage,digest).loadState(context,['visit-a','visit-b','visit-c']);
  assert.deepEqual(restored,{visitIds:['visit-a','visit-b','visit-c'],travelEstimates:[
@@ -39,6 +40,30 @@ test('adjacent travel estimates survive reload as hashes and a changed order dro
  assert.deepEqual((await f.store.loadState(context,['visit-a','visit-b','visit-c']))?.travelEstimates,[
   {fromVisitId:'visit-a',toVisitId:'visit-c',minutes:40}
  ]);
+});
+test('chosen starting-point estimates persist only for their saved first stop',async()=>{
+ const f=fixture();
+ await f.store.save(context,['visit-a','visit-b','visit-c'],[
+  {fromVisitId:null,toVisitId:'visit-a',minutes:18},
+  {fromVisitId:'visit-a',toVisitId:'visit-b',minutes:20}
+ ]);
+ const raw=[...f.memory.values()].join('');
+ assert.equal(JSON.parse(raw).version,3);
+ for(const sensitive of ['visit-a','visit-b','visit-c'])assert.equal(raw.includes(sensitive),false);
+ assert.deepEqual(await f.store.loadState(context,['visit-a','visit-b','visit-c']),{
+  visitIds:['visit-a','visit-b','visit-c'],travelEstimates:[
+   {fromVisitId:null,toVisitId:'visit-a',minutes:18},
+   {fromVisitId:'visit-a',toVisitId:'visit-b',minutes:20}
+  ]
+ });
+ await assert.rejects(()=>f.store.save(context,['visit-a','visit-b','visit-c'],[
+  {fromVisitId:null,toVisitId:'visit-b',minutes:18}
+ ]),/first stop/);
+ await assert.rejects(()=>f.store.save(context,['visit-b','visit-a','visit-c'],[
+  {fromVisitId:null,toVisitId:'visit-a',minutes:18}
+ ]),/first stop/);
+ await f.store.save(context,['visit-b','visit-a','visit-c']);
+ assert.deepEqual((await f.store.loadState(context,['visit-a','visit-b','visit-c']))?.travelEstimates,[]);
 });
 test('version-1 saved orders restore without travel estimates and are not rewritten on read',async()=>{
  const f=fixture(),key='greencollar_queue_order_'+await digest('operator:'+context.subject);

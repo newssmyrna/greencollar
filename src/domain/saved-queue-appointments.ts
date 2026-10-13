@@ -18,7 +18,7 @@ export type SavedQueueAppointments={
   workdayWindow:WorkdayWindowAssessment;
   plannedBreak:WorkdayBreakAssessment;
 };
-export const APPOINTMENT_CHECK_ASSUMPTIONS='Checks use the current queue order, service estimates and one shared local clock, with a best-case start at 00:00. Optional manual travel estimates apply only between adjacent saved stops; travel to the first stop, unentered travel, and the actual workday start are excluded. Any planned breaks are reserved. These are not route or arrival times.';
+export const APPOINTMENT_CHECK_ASSUMPTIONS='Checks use the current queue order, service estimates and one shared local clock, with a best-case start at 00:00. Optional manual travel estimates may cover the operator-chosen starting point to the first stop and each leg between adjacent saved stops. The chosen starting point is not stored; unentered travel and the actual workday start are excluded. Any planned breaks are reserved. These are not route or arrival times.';
 
 function overlapsBreak(start:number,duration:number,interval:WorkdayBreakInterval):boolean{
   return start<interval.finishMinute&&start+duration>interval.startMinute;
@@ -51,7 +51,6 @@ export function assessSavedQueueAppointments(visits:readonly AppointmentVisit[],
       if(!Number.isSafeInteger(visit.estimatedMinutes)||visit.estimatedMinutes<1||visit.estimatedMinutes>1440)
         throw new Error('Service duration is invalid. Reload and review the saved service.');
       if(visit.travelMinutesBefore!==undefined){
-        if(index===0)throw new Error('Travel before the first stop has no saved origin. Enter estimates only between adjacent saved stops.');
         if(!Number.isSafeInteger(visit.travelMinutesBefore)||visit.travelMinutesBefore<0||visit.travelMinutesBefore>1440)
           throw new Error('Travel estimate must be a whole number from 0 to 1440 minutes.');
         result.travelEstimateCount++;
@@ -88,7 +87,7 @@ export function assessSavedQueueAppointments(visits:readonly AppointmentVisit[],
           message:'Fixed start '+formatServiceClock(times.fixedStartMinute)+' with a '+visit.estimatedMinutes+'-minute service overlaps your planned break'+(overlapping.length>1?'s':'')+' '+range+'. Services are checked without interruption.'});
       }else if(start>times.fixedStartMinute){
         const travelCopy=visit.travelMinutesBefore
-          ?' after the '+visit.travelMinutesBefore+'-minute travel estimate from the previous stop':'';
+          ?' after the '+visit.travelMinutesBefore+'-minute travel estimate '+(index===0?'from your chosen starting point':'from the previous stop'):'';
         result.issues.push({visitId:visit.id,kind:'fixed_start_conflict',
           message:visit.travelMinutesBefore
             ?'Fixed start '+formatServiceClock(times.fixedStartMinute)+' cannot fit this work window and order'+travelCopy+' with the saved timing settings ('+(start-times.fixedStartMinute)+' min short), even without '+excludedTime+'.'
@@ -142,5 +141,5 @@ export function describeAppointmentCheckAssumptions(result:SavedQueueAppointment
 
 function travelSummary(result:SavedQueueAppointments):string{
   if(!result.travelEstimateCount)return '';
-  return 'Your manual estimates cover '+result.travelEstimateCount+' adjacent '+(result.travelEstimateCount===1?'stop pair':'stop pairs')+' ('+result.estimatedTravelMinutes+' minutes total); travel to the first stop is not estimated.';
+  return 'Your manual estimates cover '+result.travelEstimateCount+' travel '+(result.travelEstimateCount===1?'leg':'legs')+' ('+result.estimatedTravelMinutes+' minutes total). If estimated, travel to the first stop starts from a point you choose; that point is not stored.';
 }

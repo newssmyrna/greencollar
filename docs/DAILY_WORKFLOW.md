@@ -269,3 +269,25 @@ Acceptance: minute bounds and malformed values; estimates that change fixed-appo
 Paths: `App.tsx`, `src/domain/saved-queue-appointments.ts`, `src/domain/saved-queue-review.ts`, `src/domain/saved-queue-order.ts`, `src/data/local-saved-queue-order.ts`, `src/data/local-saved-queue-order-native.ts`, `tests/saved-queue-appointments.test.ts`, `tests/local-saved-queue-order.test.ts`, and this document.
 
 Impact: planned Today queue, warning summary and approval dialog; planned device-local work-order settings; testing-only synthetic records; documentation-only workflow handoff. No live pages/posts, customer records, API/schema changes, provider calls, messages, billing or production settings changed. Manual minutes are not a route optimizer or actual ETA.
+
+## Manual travel estimate to the first stop
+
+Task: GC-SAVED-QUEUE-FIRST-LEG-20261013. Source base: phase #65 PR head `ed9c2a2ca223921c9df9ca124ac243cfea9354e6`. Delivery: prepared for review; elapsed time and exact CI evidence are recorded in the phase PR.
+
+Today accepts an optional whole-minute estimate from a starting point the operator chooses to the first saved stop, alongside estimates between adjacent stops. The operator supplies the starting point by choosing the point used for their estimate; the app does not ask for or save its address, use device location, look up a route or contact a routing provider. The estimate itself is saved with the device-local work order and is tied to the first visit ID, so it is dropped if that visit is no longer first. Travel estimates remain separate from service-minute workload totals.
+
+Appointment checks include this first leg before the first service, carry its delay through later visits, and keep a travel segment uninterrupted across configured breaks. The approval snapshot uses a new policy version and includes the first-leg minutes. An unsaved estimate still blocks approval. The interface distinguishes the operator-chosen starting point from the actual workday start and labels the minutes as manual estimates, not road-based times or arrival predictions.
+
+Persistence writes record version 3 only when a first-leg estimate exists. The record stores a hashed visit order and a zero index for the first leg; it does not store a starting-point identity or raw visit IDs. Versions 1 and 2 remain readable, version 2 continues to represent estimates between saved stops, and an origin estimate never transfers to a different first stop after reordering.
+
+| Feature/functionality | Completion | Impact |
+| --- | --- | --- |
+| First-stop manual estimate input and operator-start copy | Complete | Planned Today queue |
+| First-leg scheduling, break handling and timing warnings | Complete | Planned Today timing checks and approval review |
+| Hashed version-3 persistence with version-1/2 readback | Complete | Planned device-local work-order settings |
+| Approval binding and first-stop association after reordering | Complete | Planned Today approval; testing-only synthetic storage and regressions |
+| Native device acceptance, independent QA and release | Pending | No live change |
+
+Paths: `App.tsx`, `src/domain/saved-queue-appointments.ts`, `src/domain/saved-queue-review.ts`, `src/domain/saved-queue-order.ts`, `src/data/local-saved-queue-order.ts`, `tests/saved-queue-appointments.test.ts`, `tests/local-saved-queue-order.test.ts`, and this document.
+
+Impact: planned Today input, warnings and approval; planned device-local work-order settings; testing-only synthetic records and regressions; documentation-only handoff. No live pages/posts, customer records, API/schema changes, production settings, provider calls, messages or billing changed. Phase completion measures this feature only, not overall product readiness.
