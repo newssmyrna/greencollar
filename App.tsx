@@ -6,7 +6,7 @@ import { tokenCache } from '@clerk/expo/token-cache';
 import { fetchDayData, type DayData } from './src/data/greencollar-api';
 import { fetchRoutingSettings, acknowledgeRoutingNotice, setBusinessRoutingEnabled, requestRoutingMatrix, type RoutingSettings } from './src/data/routing-api';
 import { reportWeatherInterruption, listWeatherInterruptions, type WeatherInterruption, type WeatherInterruptionReason } from './src/data/weather-interruptions';
-import { getWorkdaySchedule, saveWorkdaySchedule, type WorkdaySchedule, type ScheduledTask } from './src/data/workday-schedules';
+import { getWorkdaySchedule, saveWorkdaySchedule, listWorkdayMembers, type WorkdaySchedule, type ScheduledTask, type BusinessMember } from './src/data/workday-schedules';
 import { businessRoleCapabilities } from './src/domain/weather-replan';
 import { prepareTruckPreview, type PreviewTruck, type TruckPreviewRoute } from './src/domain/truck-preview';
 import { summarizeSavedDay } from './src/data/saved-day';
@@ -247,7 +247,7 @@ function GreenCollarDashboard() {
   const [weatherInbox,setWeatherInbox]=useState<{scope:string;items:WeatherInterruption[]}|null>(null);
   const [weatherInboxBusy,setWeatherInboxBusy]=useState(false);
   const [weatherInboxError,setWeatherInboxError]=useState('');
-  useEffect(()=>{setAgreementEarliest('');setAgreementLatest('');setAgreementFixed('');},[userId,connectedBusiness?.id]);
+  useEffect(()=>{setAgreementEarliest('');setAgreementLatest('');setAgreementFixed('');setScheduleMembers([]);setScheduleWorkerSubjects([]);setScheduleTaskWorker('');setWorkdaySchedule(null);},[userId,connectedBusiness?.id]);
   useEffect(()=>{
     routingSettingsRequest.current++;
     routingSettingsBusyRef.current=false;
@@ -444,7 +444,9 @@ function GreenCollarDashboard() {
   const [scheduleTruckId,setScheduleTruckId]=useState('truck-1');
   const [scheduleStart,setScheduleStart]=useState('08:00');
   const [scheduleEnd,setScheduleEnd]=useState('17:00');
-  const [scheduleWorkerText,setScheduleWorkerText]=useState(userId??'');
+  const [scheduleMembers,setScheduleMembers]=useState<BusinessMember[]>([]);
+  const [scheduleRosterBusy,setScheduleRosterBusy]=useState(false);
+  const [scheduleWorkerSubjects,setScheduleWorkerSubjects]=useState<string[]>([]);
   const [scheduleSelectedAgreementIds,setScheduleSelectedAgreementIds]=useState<string[]>([]);
   const [scheduleTaskDrafts,setScheduleTaskDrafts]=useState<Record<string,ScheduledTask[]>>({});
   const [scheduleTaskLabel,setScheduleTaskLabel]=useState('Mowing');
@@ -1066,9 +1068,23 @@ function GreenCollarDashboard() {
             <TextInput accessibilityLabel="Route start time" style={styles.input} value={scheduleStart} onChangeText={setScheduleStart} placeholder="08:00" />
             <Text style={styles.label}>Route end (24 hour time)</Text>
             <TextInput accessibilityLabel="Route end time" style={styles.input} value={scheduleEnd} onChangeText={setScheduleEnd} placeholder="17:00" />
-            <Text style={styles.label}>Crew member IDs, one per line</Text>
-            <TextInput accessibilityLabel="Crew member IDs" style={styles.input} value={scheduleWorkerText} onChangeText={setScheduleWorkerText} multiline autoCapitalize="none" />
-            <Text style={styles.muted}>Enter verified business member IDs. The API checks membership on save. Worker roster selection is not connected yet.</Text>
+            <Text style={styles.label}>Business crew</Text>
+            <Pressable accessibilityRole="button" style={styles.primary} disabled={scheduleRosterBusy} onPress={async()=>{
+              const api=process.env.EXPO_PUBLIC_GREENCOLLAR_API_URL;if(!api||!connectedBusiness){setScheduleError('Load a business and configure the API URL first.');return;}
+              setScheduleRosterBusy(true);setScheduleError('');
+              try{const token=await getToken({template:'greencollar-api'});if(!token)throw new Error('Sign in first.');const members=await listWorkdayMembers(api,connectedBusiness.id,token);setScheduleMembers(members);setScheduleWorkerSubjects(current=>current.filter(subject=>members.some(member=>member.subject===subject)));setScheduleNotice(members.length+' verified business member(s) loaded.');}
+              catch(error){setScheduleError(error instanceof Error?error.message:'Could not load business crew.');}
+              finally{setScheduleRosterBusy(false);}
+            }}><Text style={styles.primaryText}>{scheduleRosterBusy?'Loading crew…':'Load business crew'}</Text></Pressable>
+            {!scheduleMembers.length?<Text style={styles.muted}>Load the verified owner/admin/worker roster, then select everyone assigned to this route.</Text>:scheduleMembers.map(member=>{
+              const selected=scheduleWorkerSubjects.includes(member.subject);
+              return <Pressable key={member.subject} accessibilityRole="button" accessibilityState={{selected}} style={styles.primary} onPress={()=>{
+                setScheduleWorkerSubjects(current=>selected?current.filter(subject=>subject!==member.subject):[...current,member.subject]);
+                if(selected&&scheduleTaskWorker===member.subject)setScheduleTaskWorker('');
+                else if(!selected&&!scheduleTaskWorker)setScheduleTaskWorker(member.subject);
+              }}><Text style={styles.primaryText}>{selected?'✓ ':''}{member.role} · {member.subject}</Text></Pressable>;
+            })}
+            <Text style={styles.muted}>Roster access is owner/admin only. Names are not stored in the membership table, so verified account IDs and roles are shown.</Text>
           </View>
           <View style={styles.card}>
             <Text style={styles.cardHeading}>Stops and tasks {savedDay ? '· '+savedDay.date : ''}</Text>
@@ -1085,11 +1101,11 @@ function GreenCollarDashboard() {
                   <Text style={styles.label}>Task name for this stop</Text>
                   <TextInput accessibilityLabel={'Task name '+agreement.service_name} style={styles.input} value={scheduleTaskLabel} onChangeText={setScheduleTaskLabel} />
                   <Text style={styles.label}>Assigned worker</Text>
-                  {scheduleWorkerText.split(/\n|,/).map(v=>v.trim()).filter(Boolean).map(subject=><Pressable key={subject} accessibilityRole="button" accessibilityState={{selected:scheduleTaskWorker===subject}} style={styles.primary} onPress={()=>setScheduleTaskWorker(subject)}><Text style={styles.primaryText}>{scheduleTaskWorker===subject?'✓ ':''}{subject}</Text></Pressable>)}
+                  {scheduleWorkerSubjects.map(subject=><Pressable key={subject} accessibilityRole="button" accessibilityState={{selected:scheduleTaskWorker===subject}} style={styles.primary} onPress={()=>setScheduleTaskWorker(subject)}><Text style={styles.primaryText}>{scheduleTaskWorker===subject?'✓ ':''}{subject}</Text></Pressable>)}
                   <Text style={styles.label}>Estimated task minutes</Text>
                   <TextInput accessibilityLabel="Estimated task minutes" keyboardType="numeric" style={styles.input} value={scheduleTaskMinutes} onChangeText={setScheduleTaskMinutes} />
                   <Pressable accessibilityRole="button" style={styles.primary} onPress={()=>{
-                    const minutes=Number(scheduleTaskMinutes),worker=scheduleTaskWorker||scheduleWorkerText.split(/\n|,/).map(v=>v.trim()).filter(Boolean)[0];
+                    const minutes=Number(scheduleTaskMinutes),worker=scheduleTaskWorker;
                     if(!worker||!Number.isInteger(minutes)||minutes<1||minutes>1440){setScheduleError('Choose a crew member and enter task minutes from 1 to 1440.');return;}
                     setScheduleError('');
                     setScheduleTaskDrafts(current=>({...current,[agreement.id]:[...(current[agreement.id]??[]),{taskId:'task-'+Date.now()+'-'+(current[agreement.id]??[]).length,label:scheduleTaskLabel.trim()||agreement.service_name,assignedSubjects:[worker],estimatedMinutes:minutes}]}));
@@ -1109,9 +1125,9 @@ function GreenCollarDashboard() {
             try{const token=await getToken({template:'greencollar-api'});if(!token)throw new Error('Sign in first.');
               const loaded=await getWorkdaySchedule(api,connectedBusiness.id,savedDay.date,token).catch(error=>{if(error instanceof Error&&error.message.includes('404'))return null;throw error;});
               if(loaded){setWorkdaySchedule(loaded);setScheduleNotice('A saved draft exists. This first editor can inspect it but cannot safely overwrite it yet; no changes were made.');return;}
-              const workers=[...new Set(scheduleWorkerText.split(/\n|,/).map(v=>v.trim()).filter(Boolean))];
+              const workers=[...new Set(scheduleWorkerSubjects)];
               const startMinute=scheduleClockMinute(scheduleStart),endMinute=scheduleClockMinute(scheduleEnd);
-              if(!scheduleTruckId.trim()||!workers.length||startMinute===null||endMinute===null||startMinute>=endMinute)throw new Error('Enter a truck, at least one crew member, and a valid start/end time.');
+              if(!scheduleTruckId.trim()||!workers.length||startMinute===null||endMinute===null||startMinute>=endMinute)throw new Error('Enter a truck, load and select at least one verified crew member, and enter valid start/end times.');
               const selected=scheduleSelectedAgreementIds;
               if(!selected.length)throw new Error('Select at least one stop.');
               const routes=[{routeId:'route-1',truckId:scheduleTruckId.trim(),startMinute,endMinute,workers:workers.map(subject=>({subject,startMinute,endMinute})),stops:selected.map((id,index)=>({visitId:id+':'+savedDay.date,order:index+1,tasks:scheduleTaskDrafts[id]??[]}))}];
