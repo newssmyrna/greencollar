@@ -104,3 +104,9 @@ Keep every change narrowly scoped and tested; never silently remove agreed featu
 - Remove tasks from the draft with clear feedback when crew changes leave an assignment invalid.
 - Validate every selected stop's task names, whole-minute estimates, and assignments against the selected route crew before saving.
 - Keep schedule changes draft-only and covered by focused domain tests.
+
+## Phase 84 — Edit saved multi-route drafts one route at a time
+- Validate every saved route, route membership, unique visit and route identifiers, and cross-route truck and worker conflicts before enabling edits.
+- Let managers select a saved route and edit its crew, shift, lunch, stops, and tasks with the existing editor.
+- Save only the selected route while preserving every other route and the schedule version check.
+- Keep malformed schedules read-only and retain draft-only behavior; do not publish routes or contact customers.
