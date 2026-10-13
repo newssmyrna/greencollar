@@ -1,4 +1,5 @@
-export type SavedQueueOrder={scopeKey:string;visitIds:string[]};
+export type SavedQueueTravelEstimate={fromVisitId:string;toVisitId:string;minutes:number};
+export type SavedQueueOrder={scopeKey:string;visitIds:string[];travelEstimates?:SavedQueueTravelEstimate[]};
 
 function validateVisitIds<T extends {id:string}>(visits:readonly T[]):void{
   const ids=new Set<string>();

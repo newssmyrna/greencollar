@@ -9,7 +9,7 @@ import {createSavedQueueReview,canApproveSavedQueueReview,isSavedQueueApproved,s
 import {describeSavedQueueAppointments,describeAppointmentCheckAssumptions} from './src/domain/saved-queue-appointments';
 import {assessServiceWorkload} from './src/domain/service-workload';
 import {describeSavedQueueWorkload,type SavedQueueWorkloadLimits} from './src/domain/saved-queue-workload';
-import {orderSavedQueue,moveSavedQueueVisit,type SavedQueueOrder} from './src/domain/saved-queue-order';
+import {orderSavedQueue,moveSavedQueueVisit,type SavedQueueOrder,type SavedQueueTravelEstimate} from './src/domain/saved-queue-order';
 import {localSavedQueueOrder} from './src/data/local-saved-queue-order-native';
 import {localSavedQueueWorkload} from './src/data/local-saved-queue-workload-native';
 import {createSavedQueueWorkloadSettings,workloadSettingsHaveUnsavedChanges,workloadSettingsReadyForApproval} from './src/data/saved-queue-workload-settings';
@@ -59,6 +59,36 @@ const seed: Customer[] = [
 ];
 const green = '#183d2b';
 const pale = '#d5f48b';
+
+function savedQueueTravelKey(fromVisitId:string,toVisitId:string):string{
+  return JSON.stringify([fromVisitId,toVisitId]);
+}
+function parseTravelMinutesDraft(value:string):number|undefined{
+  const normalized=value.trim();
+  if(!normalized)return undefined;
+  if(!/^\d{1,4}$/.test(normalized))return NaN;
+  const minutes=Number(normalized);
+  return Number.isSafeInteger(minutes)&&minutes<=1440?minutes:NaN;
+}
+function travelDraftsFromEstimates(estimates:readonly SavedQueueTravelEstimate[]):Record<string,string>{
+  return Object.fromEntries(estimates.map(estimate=>[savedQueueTravelKey(estimate.fromVisitId,estimate.toVisitId),String(estimate.minutes)]));
+}
+function travelEstimatesForOrder(visitIds:readonly string[],estimates:readonly SavedQueueTravelEstimate[]):SavedQueueTravelEstimate[]{
+  const adjacent=new Set(visitIds.slice(1).map((id,index)=>savedQueueTravelKey(visitIds[index],id)));
+  return estimates.filter(estimate=>adjacent.has(savedQueueTravelKey(estimate.fromVisitId,estimate.toVisitId)));
+}
+function travelEstimatesFromDrafts(visitIds:readonly string[],drafts:Record<string,string>):SavedQueueTravelEstimate[]{
+  const estimates:SavedQueueTravelEstimate[]=[];
+  for(let index=1;index<visitIds.length;index++){
+    const fromVisitId=visitIds[index-1],toVisitId=visitIds[index],value=drafts[savedQueueTravelKey(fromVisitId,toVisitId)];
+    if(value===undefined||!value.trim())continue;
+    estimates.push({fromVisitId,toVisitId,minutes:parseTravelMinutesDraft(value)!});
+  }
+  return estimates;
+}
+function travelDraftsValid(visitIds:readonly string[],drafts:Record<string,string>):boolean{
+  return travelEstimatesFromDrafts(visitIds,drafts).every(estimate=>Number.isSafeInteger(estimate.minutes)&&estimate.minutes>=0&&estimate.minutes<=1440);
+}
 
 function GreenCollarDashboard() {
   const {getToken,userId} = useAuth();
@@ -360,6 +390,8 @@ function GreenCollarDashboard() {
   const [savedQueueOrderSaveBusy,setSavedQueueOrderSaveBusy]=useState(false);
   const [savedQueueOrderError,setSavedQueueOrderError]=useState('');
   const [savedQueueOrderReload,setSavedQueueOrderReload]=useState(0);
+  const [savedQueueTravelDrafts,setSavedQueueTravelDrafts]=useState<Record<string,string>>({});
+  const [savedQueueTravelError,setSavedQueueTravelError]=useState('');
   const savedQueueOrderWriteLock=useRef(false);
   const savedQueueScopeRef=useRef('');
   const currentSavedQueueContext=useRef<{userId:string|null|undefined;approvalKey:string|null;canApprove:boolean}>({userId:null,approvalKey:null,canApprove:false});
@@ -695,7 +727,17 @@ function GreenCollarDashboard() {
   const savedQueueScope=JSON.stringify([userId,connectedBusiness?.id,savedDay?.date]);
   savedQueueScopeRef.current=savedQueueScope;
   const savedQueueOrderReady=savedQueueOrderReadyScope===savedQueueScope;
-  const savedQueueVisits=orderSavedQueue(savedDueSummary?.due??[],savedQueueScope,savedQueueOrder);
+  const savedQueueOrderedVisits=orderSavedQueue(savedDueSummary?.due??[],savedQueueScope,savedQueueOrder);
+  const savedQueueVisitIds=savedQueueOrderedVisits.map(visit=>visit.id);
+  const savedQueueTravelEstimates=travelEstimatesFromDrafts(savedQueueVisitIds,savedQueueTravelDrafts);
+  const savedQueuePersistedTravel=travelEstimatesForOrder(savedQueueVisitIds,savedQueueOrder?.travelEstimates??[]);
+  const savedQueueTravelValid=travelDraftsValid(savedQueueVisitIds,savedQueueTravelDrafts);
+  const savedQueueTravelDirty=JSON.stringify(savedQueueTravelEstimates)!==JSON.stringify(savedQueuePersistedTravel);
+  const savedQueueVisits=savedQueueOrderedVisits.map((visit,index)=>{
+    if(index===0)return visit;
+    const travelMinutesBefore=parseTravelMinutesDraft(savedQueueTravelDrafts[savedQueueTravelKey(savedQueueVisitIds[index-1],visit.id)]??'');
+    return travelMinutesBefore===undefined?visit:{...visit,travelMinutesBefore};
+  });
   const currentWorkloadState=savedQueueWorkloadState.scopeKey===savedQueueScope?savedQueueWorkloadState:null;
   const currentWorkloadLimits=currentWorkloadState?.draft??{hours:'',maxJobs:''};
   const savedWorkloadReadyForApproval=workloadSettingsReadyForApproval(currentWorkloadState);
@@ -710,7 +752,7 @@ function GreenCollarDashboard() {
   for(const issue of savedQueueAppointments?.issues??[]){
     savedQueueAppointmentIssues.set(issue.visitId,[...(savedQueueAppointmentIssues.get(issue.visitId)??[]),issue.message]);
   }
-  const savedQueueCanApprove=savedWorkloadReadyForApproval&&canApproveSavedQueueReview(savedQueueReview)&&savedQueueOrderReady&&!savedQueueOrderLoadBusy&&!savedQueueOrderSaveBusy&&!loadingSaved&&!visitSkipBusy;
+  const savedQueueCanApprove=savedWorkloadReadyForApproval&&savedQueueTravelValid&&!savedQueueTravelDirty&&canApproveSavedQueueReview(savedQueueReview)&&savedQueueOrderReady&&!savedQueueOrderLoadBusy&&!savedQueueOrderSaveBusy&&!loadingSaved&&!visitSkipBusy;
   currentSavedQueueContext.current={userId,approvalKey:savedQueueReview?.approvalKey??null,canApprove:savedQueueCanApprove};
   const savedQueueEditingLocked=timerTransitionBusy||!savedQueueOrderReady||savedQueueOrderLoadBusy||savedQueueOrderSaveBusy||loadingSaved||savedQueueApprovalChecking||savedQueueApprovalBusy||!!visitSkipBusy||!!workSession&&workSession.status!=='completed';
   const savedQueueWorkloadOperationLocked=timerTransitionBusy||!savedQueueOrderReady||savedQueueOrderLoadBusy||savedQueueOrderSaveBusy||loadingSaved||savedQueueApprovalBusy||!!visitSkipBusy||!!workSession&&workSession.status!=='completed';
@@ -750,30 +792,34 @@ function GreenCollarDashboard() {
   const savedQueueReordered=savedQueueVisits.some((visit,index)=>visit.id!==savedDueSummary?.due[index]?.id);
   useEffect(()=>{
     let active=true;
-    setSavedQueueOrder(null);setSavedQueueOrderReadyScope(null);setSavedQueueOrderError('');
+    setSavedQueueOrder(null);setSavedQueueTravelDrafts({});setSavedQueueTravelError('');setSavedQueueOrderReadyScope(null);setSavedQueueOrderError('');
     if(!userId||!connectedBusiness||!savedDay){
       setSavedQueueOrderLoadBusy(false);setSavedQueueOrderReadyScope(savedQueueScope);
       return ()=>{active=false;};
     }
     setSavedQueueOrderLoadBusy(true);
-    void localSavedQueueOrder.load({subject:userId,businessId:connectedBusiness.id,date:savedDay.date},savedDueSummary?.due.map(visit=>visit.id)??[])
-      .then(visitIds=>{
+    void localSavedQueueOrder.loadState({subject:userId,businessId:connectedBusiness.id,date:savedDay.date},savedDueSummary?.due.map(visit=>visit.id)??[])
+      .then(restored=>{
         if(!active)return;
-        setSavedQueueOrder(visitIds?{scopeKey:savedQueueScope,visitIds}:null);
+        setSavedQueueOrder(restored?{scopeKey:savedQueueScope,visitIds:restored.visitIds,travelEstimates:restored.travelEstimates}:null);
+        setSavedQueueTravelDrafts(travelDraftsFromEstimates(restored?.travelEstimates??[]));
         setSavedQueueOrderReadyScope(savedQueueScope);
       }).catch(()=>{
         if(active)setSavedQueueOrderError('Could not restore this device’s work order. Retry before approving or starting saved work.');
       }).finally(()=>{if(active)setSavedQueueOrderLoadBusy(false);});
     return ()=>{active=false;};
   },[savedQueueScope,savedQueueOrderReload]);
-  async function persistSavedQueueOrder(visitIds:string[]){
+  async function persistSavedQueueOrder(visitIds:string[],travelEstimates=travelEstimatesForOrder(visitIds,savedQueueOrder?.travelEstimates??[]),resetTravelDraft=false){
     if(savedQueueEditingLocked||savedQueueOrderWriteLock.current||!userId||!connectedBusiness||!savedDay)return;
     savedQueueOrderWriteLock.current=true;setSavedQueueOrderSaveBusy(true);setSavedQueueOrderError('');
     const scope=savedQueueScope;
+    const compatibleTravelEstimates=travelEstimatesForOrder(visitIds,travelEstimates);
     try{
-      await localSavedQueueOrder.save({subject:userId,businessId:connectedBusiness.id,date:savedDay.date},visitIds);
+      await localSavedQueueOrder.save({subject:userId,businessId:connectedBusiness.id,date:savedDay.date},visitIds,compatibleTravelEstimates);
       if(savedQueueScopeRef.current!==scope)return;
-      setSavedQueueOrder({scopeKey:scope,visitIds});
+      setSavedQueueOrder({scopeKey:scope,visitIds,travelEstimates:compatibleTravelEstimates});
+      if(resetTravelDraft)setSavedQueueTravelDrafts(travelDraftsFromEstimates(compatibleTravelEstimates));
+      setSavedQueueTravelError('');
       setApprovedSavedQueueKey(null);setSavedQueueApprovalError('');
     }catch(error){
       if(savedQueueScopeRef.current===scope)setSavedQueueOrderError(error instanceof Error?error.message:'Could not save the order. The previous order is unchanged.');
@@ -786,6 +832,20 @@ function GreenCollarDashboard() {
   function resetSavedQueueOrder(){
     if(savedQueueEditingLocked)return;
     void persistSavedQueueOrder(savedDueSummary?.due.map(visit=>visit.id)??[]);
+  }
+  function changeSavedQueueTravelEstimate(fromVisitId:string,toVisitId:string,value:string){
+    if(savedQueueEditingLocked)return;
+    invalidateSavedWorkloadApproval();setSavedQueueTravelError('');
+    const key=savedQueueTravelKey(fromVisitId,toVisitId);
+    setSavedQueueTravelDrafts(current=>({...current,[key]:value}));
+  }
+  function saveSavedQueueTravelEstimates(){
+    if(savedQueueEditingLocked||!savedQueueOrderReady)return;
+    if(!travelDraftsValid(savedQueueVisitIds,savedQueueTravelDrafts)){
+      setSavedQueueTravelError('Enter a whole number from 0 to 1440 minutes for each estimate, or clear the field.');return;
+    }
+    setSavedQueueTravelError('');
+    void persistSavedQueueOrder(savedQueueVisitIds,savedQueueTravelEstimates,true);
   }
   const savedQueueApproved=savedWorkloadReadyForApproval&&isSavedQueueApproved(savedQueueReview,approvedSavedQueueKey);
   useEffect(()=>{
@@ -935,16 +995,24 @@ function GreenCollarDashboard() {
             </View>}
             {savedQueueAppointments&&savedDueSummary.pendingCount>0&&<View style={styles.card}>
               <Text style={styles.cardHeading}>Appointment checks</Text>
+              <Text style={styles.muted}>Optional: enter a manual travel estimate in minutes between adjacent stops below. The first stop has no inbound estimate because no starting location is set. Estimates affect these timing checks only; they are not road-based route times or arrival predictions.</Text>
+              {savedQueueTravelValid&&savedQueueTravelEstimates.length>0&&<Text style={styles.body}>Current order: {savedQueueTravelEstimates.length} estimated {savedQueueTravelEstimates.length===1?'leg':'legs'} · {savedQueueTravelEstimates.reduce((total,estimate)=>total+estimate.minutes,0)} travel minutes</Text>}
+              {!savedQueueTravelValid&&<Text accessibilityLiveRegion="polite" style={styles.muted}>Enter a whole number from 0 to 1440 minutes for each estimate, or clear the field.</Text>}
+              {!!savedQueueTravelError&&<Text accessibilityLiveRegion="polite" style={styles.muted}>{savedQueueTravelError}</Text>}
+              {savedQueueTravelDirty
+                ?<Pressable accessibilityRole="button" accessibilityState={{disabled:savedQueueEditingLocked||!savedQueueOrderReady||!savedQueueTravelValid}} style={styles.primary} disabled={savedQueueEditingLocked||!savedQueueOrderReady||!savedQueueTravelValid} onPress={saveSavedQueueTravelEstimates}><Text style={styles.primaryText}>{savedQueueOrderSaveBusy?'Saving travel estimates…':'Save travel estimates on this device'}</Text></Pressable>
+                :savedQueueTravelEstimates.length>0&&<Text style={styles.muted}>Travel estimates are saved on this device for this work order.</Text>}
               <Text accessibilityLiveRegion="polite" style={styles.body}>{!savedQueueOrderReady?'Restore the work order before checking appointment timing.':!savedAppointmentCheckReady?'Restore work settings before checking appointment timing.':describeSavedQueueAppointments(savedQueueAppointments)}</Text>
               {savedAppointmentCheckReady&&<Text style={styles.muted}>{describeAppointmentCheckAssumptions(savedQueueAppointments)}</Text>}
               {savedAppointmentCheckReady&&savedWorkloadDirty&&<Text style={styles.muted}>This preview uses your unsaved work settings. Save them before approving.</Text>}
+              {savedAppointmentCheckReady&&savedQueueTravelDirty&&<Text style={styles.muted}>This preview uses unsaved travel estimates. Save them on this device before approving.</Text>}
               {savedAppointmentCheckReady&&savedQueueAppointments.status==='conflicts'&&<Text style={styles.muted}>Review each timing warning below. You can change the order and check again. Approving with warnings records your review; it does not resolve the conflicts or change an appointment.</Text>}
             </View>}
             <Pressable accessibilityRole="button" accessibilityState={{disabled:!savedQueueCanApprove||savedQueueApprovalChecking||savedQueueApprovalBusy}} style={styles.primary} disabled={!savedQueueCanApprove||savedQueueApprovalChecking||savedQueueApprovalBusy} onPress={requestSavedQueueApproval}><Text style={styles.primaryText}>{!savedQueueOrderReady?'Restore work order before approval':savedQueueOrderSaveBusy?'Saving work order…':savedQueueApprovalChecking?'Checking saved approval…':savedQueueApprovalBusy?'Saving approval…':savedQueueApproved?'Work queue approved on this device':'Review and approve work queue'}</Text></Pressable>
-            {!!savedQueueApprovalError&&<Text accessibilityLiveRegion="polite" style={styles.muted}>{savedQueueApprovalError}</Text>}{!savedQueueApproved&&savedDueSummary.pendingCount>0&&<Text style={styles.muted}>Review the current work order before starting a saved visit. Approval is saved securely on this device and tied to this business, date, visit order, estimates, appointment times, work window, planned breaks and workload limits; changes require review again.</Text>}
+            {!!savedQueueApprovalError&&<Text accessibilityLiveRegion="polite" style={styles.muted}>{savedQueueApprovalError}</Text>}{!savedQueueApproved&&savedDueSummary.pendingCount>0&&<Text style={styles.muted}>Review the current work order before starting a saved visit. Approval is saved securely on this device and tied to this business, date, visit order, service and travel estimates, appointment times, work window, planned breaks and workload limits; changes require review again.</Text>}
             {!!visitSkipNotice&&<Text accessibilityLiveRegion="polite" style={styles.body}>{visitSkipNotice}</Text>}
             {!!visitSkipError&&<Text accessibilityLiveRegion="polite" style={styles.muted}>{visitSkipError}</Text>}
-            <Text style={styles.muted}>Use Move earlier or Move later to choose your work order. Changes save securely on this device and restore for this operator, business, and date. Appointment times are unchanged and arrival times are not calculated.</Text>
+            <Text style={styles.muted}>Use Move earlier or Move later to choose your work order. Changes save securely on this device and restore for this operator, business, and date. Estimates are linked to a specific adjacent stop pair; review them after reordering. Appointment times are unchanged and arrival times are not calculated.</Text>
             {savedQueueOrderLoadBusy&&<Text accessibilityLiveRegion="polite" style={styles.muted}>Restoring this device’s saved work order…</Text>}
             {!!savedQueueOrderError&&<Text accessibilityLiveRegion="polite" style={styles.muted}>{savedQueueOrderError}</Text>}
             {!savedQueueOrderReady&&!savedQueueOrderLoadBusy&&<Pressable accessibilityRole="button" style={styles.primary} disabled={savedQueueOrderSaveBusy} onPress={()=>setSavedQueueOrderReload(value=>value+1)}><Text style={styles.primaryText}>Retry restoring work order</Text></Pressable>}
@@ -953,6 +1021,10 @@ function GreenCollarDashboard() {
             {savedQueueVisits.map((j,index)=><View key={j.id}>
               <Text style={styles.body}>{index+1}. {j.customer} · {j.service} · {j.address}</Text>
               <Text style={styles.muted}>{describeServiceTimeConstraints(j)}</Text>
+              {index>0&&<>
+                <Text style={styles.label}>Estimated travel from {savedQueueVisits[index-1].customer} to this stop (minutes, optional)</Text>
+                <TextInput accessibilityLabel={'Optional travel estimate from '+savedQueueVisits[index-1].customer+' to '+j.customer+' in minutes'} style={styles.input} keyboardType="number-pad" placeholder="Minutes, for example 25" placeholderTextColor="#819b8b" value={savedQueueTravelDrafts[savedQueueTravelKey(savedQueueVisits[index-1].id,j.id)]??''} maxLength={4} editable={!savedQueueEditingLocked} onChangeText={value=>changeSavedQueueTravelEstimate(savedQueueVisits[index-1].id,j.id,value)}/>
+              </>}
               {savedAppointmentCheckReady&&(savedQueueAppointmentIssues.get(j.id)??[]).map((message,issueIndex)=><Text key={issueIndex} style={[styles.body,{color:'#a4481d'}]}>Timing warning: {message}</Text>)}
               <View style={{flexDirection:'row',flexWrap:'wrap',gap:8}}>
                 <Pressable accessibilityRole="button" accessibilityLabel={'Move '+j.customer+' '+j.service+' earlier'} accessibilityState={{disabled:savedQueueEditingLocked||index===0}} style={[styles.primary,{backgroundColor:'#f0f5ef'}]} disabled={savedQueueEditingLocked||index===0} onPress={()=>changeSavedQueueOrder(j.id,'earlier')}><Text style={styles.primaryText}>Move earlier</Text></Pressable>

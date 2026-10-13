@@ -8,6 +8,7 @@ export type QueueReviewVisit=ServiceTimeConstraints&{
   service:string;
   rateCents:number;
   estimatedMinutes:number;
+  travelMinutesBefore?:number;
 };
 export type SavedQueueReview={
   businessId:string;
@@ -35,8 +36,8 @@ export function createSavedQueueReview(businessId:string,date:string,visits:Queu
   }
   const workload=limits?assessSavedQueueWorkload(visits,limits):null;
   const appointments=assessSavedQueueAppointments(visits,limits??{});
-  const snapshot=[businessId,date,visits.map(v=>[v.id,v.rateCents,v.estimatedMinutes,v.preferredStartMinute??null,v.preferredFinishMinute??null,v.fixedStartMinute??null])];
-  const approvalKey=JSON.stringify(['saved-queue-appointments-v4',...snapshot,
+  const snapshot=[businessId,date,visits.map(v=>[v.id,v.rateCents,v.estimatedMinutes,v.preferredStartMinute??null,v.preferredFinishMinute??null,v.fixedStartMinute??null,v.travelMinutesBefore??null])];
+  const approvalKey=JSON.stringify(['saved-queue-appointments-v5',...snapshot,
     limits?[workload?.status,workload?.availableMinutes,workload?.maxJobs]:null,
     [appointments.workdayWindow.status,appointments.workdayWindow.startMinute,appointments.workdayWindow.finishMinute],
     [appointments.plannedBreak.status,appointments.plannedBreak.intervals.map(interval=>[interval.startMinute,interval.finishMinute])]]);
