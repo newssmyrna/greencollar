@@ -1107,11 +1107,17 @@ function GreenCollarDashboard() {
                   if(selected&&scheduleTaskWorker===member.subject)setScheduleTaskWorker('');
                   else if(!selected&&!scheduleTaskWorker)setScheduleTaskWorker(member.subject);
                 }}><Text style={styles.primaryText}>{selected?'✓ ':''}{member.role} · {member.subject}</Text></Pressable>
+                {scheduleAvailability.filter(event=>event.memberSubject===member.subject).map(event=><Text key={event.eventId+'-'+event.reportedBy} style={styles.muted}>{event.kind} · {scheduleMinuteClock(event.startMinute)}–{scheduleMinuteClock(event.endMinute)}</Text>)}
                 {selected&&<View style={styles.card}>
-                  <Text style={styles.label}>Lunch start (optional, 24 hour time)</Text>
-                  <TextInput accessibilityLabel={'Lunch start for '+member.subject} style={styles.input} value={scheduleLunchStart[member.subject]??''} onChangeText={value=>setScheduleLunchStart(current=>({...current,[member.subject]:value}))} placeholder="12:00" />
-                  <Text style={styles.label}>Lunch end</Text>
-                  <TextInput accessibilityLabel={'Lunch end for '+member.subject} style={styles.input} value={scheduleLunchEnd[member.subject]??''} onChangeText={value=>setScheduleLunchEnd(current=>({...current,[member.subject]:value}))} placeholder="12:30" />
+                  <Text style={styles.label}>Lunch blocks for this worker · reported breaks are prefilled</Text>
+                  {(scheduleLunchBlocks[member.subject]??[]).map((block,index)=><View key={member.subject+'-lunch-'+index} style={styles.card}>
+                    <Text style={styles.label}>Lunch block {index+1}</Text>
+                    <TextInput accessibilityLabel={'Lunch start for '+member.subject+' block '+(index+1)} style={styles.input} value={block.start} onChangeText={value=>setScheduleLunchBlocks(current=>({...current,[member.subject]:(current[member.subject]??[]).map((item,i)=>i===index?{...item,start:value}:item)}))} placeholder="12:00" />
+                    <TextInput accessibilityLabel={'Lunch end for '+member.subject+' block '+(index+1)} style={styles.input} value={block.end} onChangeText={value=>setScheduleLunchBlocks(current=>({...current,[member.subject]??[]).map((item,i)=>i===index?{...item,end:value}:item)}))} placeholder="12:30" />
+                    <Pressable accessibilityRole="button" accessibilityLabel={'Remove lunch block '+(index+1)+' for '+member.subject} style={styles.primary} onPress={()=>setScheduleLunchBlocks(current=>({...current,[member.subject]:(current[member.subject]??[]).filter((_,i)=>i!==index)}))}><Text style={styles.primaryText}>Remove lunch block</Text></Pressable>
+                  </View>)}
+                  <Pressable accessibilityRole="button" style={styles.primary} disabled={(scheduleLunchBlocks[member.subject]??[]).length>=3} onPress={()=>setScheduleLunchBlocks(current=>({...current,[member.subject]:[...(current[member.subject]??[]),{start:'',end:''}]}))}><Text style={styles.primaryText}>Add lunch block</Text></Pressable>
+                  <Text style={styles.muted}>Lunch blocks must fall inside the worker shift and cannot overlap. Sick or unavailable time overlapping the shift will block saving.</Text>
                 </View>}
               </View>;
             })}
