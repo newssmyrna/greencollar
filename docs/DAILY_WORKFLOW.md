@@ -313,7 +313,7 @@ Date: 2026-10-13. Delivery: review branch, documentation-only. Time: approximate
 
 - Owner inputs: Edgewater, Florida; 5 operating days/week; 6 people; 3 trucks.
 - Stated expected volume: 10 stops per operating day. To size the cap conservatively, the meter allows up to 10 stops **per truck** (30 total) per day, two endpoints per truck, and one full rerun. That's 144 matrix elements per truck/pass, 864 per workday including the rerun, and 19,008 per average 22-day work month.
-- Recommended provider limit: **$120/month before tax**, enforced in the eventual server-side meter at **19,500 matrix elements/month**. At the current Google Essentials first paid tier ($5/1,000 elements), the no-free-usage estimate at the stop is $97.50/month. Billing alerts are supplemental only; the application meter is the hard gate.
+- Recommended provider limit: **$120/month before tax**, enforced in the eventual server-side meter at the earlier of **19,500 matrix elements** or **$120 estimated no-free-credit list-price exposure**. At the current Google Essentials first paid tier ($5/1,000 elements), the 19,500-element stop is tighter and estimates to $97.50/month. Billing alerts are supplemental only; the application meter is the hard gate.
 - Provider selected: Google Routes API Compute Route Matrix Essentials for standard, traffic-unaware driving-time estimates. Mapbox was not selected because its vehicle-use license includes a separate annual commercial license and may include seat pricing.
 
 ### Policy decision
