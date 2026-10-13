@@ -77,3 +77,10 @@ Keep every change narrowly scoped and tested; never silently remove agreed featu
 - Keep availability checks tenant-scoped and run them on the server before any schedule write.
 - Preserve lunch/break events as intervals; do not treat a meal break as a full-shift absence.
 - Conflict returns an actionable response without changing the saved draft; lunch-aware route timing remains a follow-on because stops do not yet have time windows.
+
+## Phase 80 — Per-worker lunch blocks in schedule drafts
+- Allow an optional lunch interval on each worker assignment, separate from route and truck hours.
+- Validate each interval is ordered, within the worker shift, non-overlapping, and limited to three blocks per worker.
+- Show separate lunch start/end inputs for each selected worker in the owner/admin draft editor.
+- Preserve lunch blocks in saved and loaded drafts for later capacity and route timing calculations.
+- Stop arrival times and route feasibility remain unmodeled until travel and stop time windows are available.

@@ -1,7 +1,8 @@
 import {authenticatedSubject,businessAccess,type Env} from './auth';
 type Task={taskId:string;label:string;assignedSubjects:string[];estimatedMinutes:number};
 type Stop={visitId:string;order:number;tasks:Task[]};
-type Worker={subject:string;startMinute:number;endMinute:number};
+type BreakBlock={startMinute:number;endMinute:number};
+type Worker={subject:string;startMinute:number;endMinute:number;breaks:BreakBlock[]};
 type Route={routeId:string;truckId:string;startMinute:number;endMinute:number;workers:Worker[];stops:Stop[]};
 type Draft={businessId:string;workDate:string;version:number;updatedBy:string;updatedAt:string;routes:Route[]};
 const json=(v:unknown,status=200)=>new Response(JSON.stringify(v),{status,headers:{'content-type':'application/json','cache-control':'no-store','x-content-type-options':'nosniff'}});
@@ -28,14 +29,22 @@ function parseRoutes(value:unknown,workDate:string):Route[]|null{
   truckList.push(interval);truckIntervals.set(r.truckId as string,truckList);
   const workerIds=new Set<string>(),workers:Worker[]=[];
   for(const rawWorker of r.workers){
-   const w=obj(rawWorker);if(!w||!exact(w,['subject','startMinute','endMinute'])||!safeSubject(w.subject)||
+   const w=obj(rawWorker);if(!w||(!exact(w,['subject','startMinute','endMinute'])&&!exact(w,['subject','startMinute','endMinute','breaks']))||!safeSubject(w.subject)||
     !int(w.startMinute,0,1439)||!int(w.endMinute,1,1440)||(w.startMinute as number)>=(w.endMinute as number)||workerIds.has(w.subject))return null;
    workerIds.add(w.subject);
    const wi={start:w.startMinute as number,end:w.endMinute as number};
    const list=workerIntervals.get(w.subject as string)??[];
    if(list.some(x=>wi.start<x.end&&x.start<wi.end))return null;
    list.push(wi);workerIntervals.set(w.subject as string,list);
-   workers.push({subject:w.subject as string,startMinute:wi.start,endMinute:wi.end});
+   const rawBreaks=w.breaks===undefined?[]:w.breaks;
+   if(!Array.isArray(rawBreaks)||rawBreaks.length>3)return null;
+   const breaks:BreakBlock[]=[];let previousBreakEnd=wi.start;
+   for(const rawBreak of rawBreaks){
+    const b=obj(rawBreak);if(!b||!exact(b,['startMinute','endMinute'])||!int(b.startMinute,wi.start,wi.end)||!int(b.endMinute,wi.start,wi.end)||
+     (b.startMinute as number)>=(b.endMinute as number)||(b.startMinute as number)<previousBreakEnd)return null;
+    breaks.push({startMinute:b.startMinute as number,endMinute:b.endMinute as number});previousBreakEnd=b.endMinute as number;
+   }
+   workers.push({subject:w.subject as string,startMinute:wi.start,endMinute:wi.end,breaks});
   }
   const orders=new Set<number>(),stops:Stop[]=[];
   for(const rawStop of r.stops){

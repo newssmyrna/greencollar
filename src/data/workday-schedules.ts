@@ -1,6 +1,7 @@
 export type ScheduledTask={taskId:string;label:string;assignedSubjects:string[];estimatedMinutes:number};
 export type ScheduledStop={visitId:string;order:number;tasks:ScheduledTask[]};
-export type ScheduledWorker={subject:string;startMinute:number;endMinute:number};
+export type ScheduledBreak={startMinute:number;endMinute:number};
+export type ScheduledWorker={subject:string;startMinute:number;endMinute:number;breaks?:ScheduledBreak[]};
 export type ScheduledRoute={routeId:string;truckId:string;startMinute:number;endMinute:number;workers:ScheduledWorker[];stops:ScheduledStop[]};
 export type WorkdaySchedule={businessId:string;workDate:string;version:number;updatedBy:string;updatedAt:string;routes:ScheduledRoute[]};
 export type BusinessMember={subject:string;role:'owner'|'admin'|'worker'};

@@ -247,7 +247,7 @@ function GreenCollarDashboard() {
   const [weatherInbox,setWeatherInbox]=useState<{scope:string;items:WeatherInterruption[]}|null>(null);
   const [weatherInboxBusy,setWeatherInboxBusy]=useState(false);
   const [weatherInboxError,setWeatherInboxError]=useState('');
-  useEffect(()=>{setAgreementEarliest('');setAgreementLatest('');setAgreementFixed('');setScheduleMembers([]);setScheduleWorkerSubjects([]);setScheduleTaskWorker('');setWorkdaySchedule(null);},[userId,connectedBusiness?.id]);
+  useEffect(()=>{setAgreementEarliest('');setAgreementLatest('');setAgreementFixed('');setScheduleMembers([]);setScheduleWorkerSubjects([]);setScheduleLunchStart({});setScheduleLunchEnd({});setScheduleTaskWorker('');setWorkdaySchedule(null);},[userId,connectedBusiness?.id]);
   useEffect(()=>{
     routingSettingsRequest.current++;
     routingSettingsBusyRef.current=false;
@@ -447,6 +447,8 @@ function GreenCollarDashboard() {
   const [scheduleMembers,setScheduleMembers]=useState<BusinessMember[]>([]);
   const [scheduleRosterBusy,setScheduleRosterBusy]=useState(false);
   const [scheduleWorkerSubjects,setScheduleWorkerSubjects]=useState<string[]>([]);
+  const [scheduleLunchStart,setScheduleLunchStart]=useState<Record<string,string>>({});
+  const [scheduleLunchEnd,setScheduleLunchEnd]=useState<Record<string,string>>({});
   const [scheduleSelectedAgreementIds,setScheduleSelectedAgreementIds]=useState<string[]>([]);
   const [scheduleTaskDrafts,setScheduleTaskDrafts]=useState<Record<string,ScheduledTask[]>>({});
   const [scheduleTaskLabel,setScheduleTaskLabel]=useState('Mowing');
@@ -1078,11 +1080,19 @@ function GreenCollarDashboard() {
             }}><Text style={styles.primaryText}>{scheduleRosterBusy?'Loading crew…':'Load business crew'}</Text></Pressable>
             {!scheduleMembers.length?<Text style={styles.muted}>Load the verified owner/admin/worker roster, then select everyone assigned to this route.</Text>:scheduleMembers.map(member=>{
               const selected=scheduleWorkerSubjects.includes(member.subject);
-              return <Pressable key={member.subject} accessibilityRole="button" accessibilityState={{selected}} style={styles.primary} onPress={()=>{
-                setScheduleWorkerSubjects(current=>selected?current.filter(subject=>subject!==member.subject):[...current,member.subject]);
-                if(selected&&scheduleTaskWorker===member.subject)setScheduleTaskWorker('');
-                else if(!selected&&!scheduleTaskWorker)setScheduleTaskWorker(member.subject);
-              }}><Text style={styles.primaryText}>{selected?'✓ ':''}{member.role} · {member.subject}</Text></Pressable>;
+              return <View key={member.subject} style={styles.card}>
+                <Pressable accessibilityRole="button" accessibilityState={{selected}} style={styles.primary} onPress={()=>{
+                  setScheduleWorkerSubjects(current=>selected?current.filter(subject=>subject!==member.subject):[...current,member.subject]);
+                  if(selected&&scheduleTaskWorker===member.subject)setScheduleTaskWorker('');
+                  else if(!selected&&!scheduleTaskWorker)setScheduleTaskWorker(member.subject);
+                }}><Text style={styles.primaryText}>{selected?'✓ ':''}{member.role} · {member.subject}</Text></Pressable>
+                {selected&&<View style={styles.card}>
+                  <Text style={styles.label}>Lunch start (optional, 24 hour time)</Text>
+                  <TextInput accessibilityLabel={'Lunch start for '+member.subject} style={styles.input} value={scheduleLunchStart[member.subject]??''} onChangeText={value=>setScheduleLunchStart(current=>({...current,[member.subject]:value}))} placeholder="12:00" />
+                  <Text style={styles.label}>Lunch end</Text>
+                  <TextInput accessibilityLabel={'Lunch end for '+member.subject} style={styles.input} value={scheduleLunchEnd[member.subject]??''} onChangeText={value=>setScheduleLunchEnd(current=>({...current,[member.subject]:value}))} placeholder="12:30" />
+                </View>}
+              </View>;
             })}
             <Text style={styles.muted}>Roster access is owner/admin only. Names are not stored in the membership table, so verified account IDs and roles are shown.</Text>
           </View>
@@ -1128,9 +1138,21 @@ function GreenCollarDashboard() {
               const workers=[...new Set(scheduleWorkerSubjects)];
               const startMinute=scheduleClockMinute(scheduleStart),endMinute=scheduleClockMinute(scheduleEnd);
               if(!scheduleTruckId.trim()||!workers.length||startMinute===null||endMinute===null||startMinute>=endMinute)throw new Error('Enter a truck, load and select at least one verified crew member, and enter valid start/end times.');
+              const scheduledWorkers=workers.map(subject=>{
+                const lunchStartText=(scheduleLunchStart[subject]??'').trim(),lunchEndText=(scheduleLunchEnd[subject]??'').trim();
+                if(Boolean(lunchStartText)!==Boolean(lunchEndText))throw new Error('Enter both lunch start and end for each selected worker, or leave both blank.');
+                let breaks:{startMinute:number;endMinute:number}[]=[];
+                if(lunchStartText){
+                  const lunchStartMinute=scheduleClockMinute(lunchStartText),lunchEndMinute=scheduleClockMinute(lunchEndText);
+                  if(lunchStartMinute===null||lunchEndMinute===null||lunchStartMinute>=lunchEndMinute||lunchStartMinute<startMinute||lunchEndMinute>endMinute)
+                    throw new Error('Each lunch block must be valid and fit inside that worker’s shift.');
+                  breaks=[{startMinute:lunchStartMinute,endMinute:lunchEndMinute}];
+                }
+                return {subject,startMinute,endMinute,breaks};
+              });
               const selected=scheduleSelectedAgreementIds;
               if(!selected.length)throw new Error('Select at least one stop.');
-              const routes=[{routeId:'route-1',truckId:scheduleTruckId.trim(),startMinute,endMinute,workers:workers.map(subject=>({subject,startMinute,endMinute})),stops:selected.map((id,index)=>({visitId:id+':'+savedDay.date,order:index+1,tasks:scheduleTaskDrafts[id]??[]}))}];
+              const routes=[{routeId:'route-1',truckId:scheduleTruckId.trim(),startMinute,endMinute,workers:scheduledWorkers,stops:selected.map((id,index)=>({visitId:id+':'+savedDay.date,order:index+1,tasks:scheduleTaskDrafts[id]??[]}))}];
               if(routes[0].stops.some(stop=>!stop.tasks.length))throw new Error('Add at least one task to every selected stop.');
               const saved=await saveWorkdaySchedule(api,token,{businessId:connectedBusiness.id,workDate:savedDay.date,expectedVersion:0,routes});
               setWorkdaySchedule(saved);setScheduleNotice('Draft saved. It is not published to a live route or GPS device.');
