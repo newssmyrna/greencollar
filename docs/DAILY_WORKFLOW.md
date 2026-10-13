@@ -103,3 +103,21 @@ Today supports an optional note up to 1,000 characters on a saved service visit.
 The tenant-scoped completion endpoint stores the note on the visit and returns it in the acknowledgment. Today displays saved notes on the loaded workday. Existing records migrate with an empty note; no note is invented or backfilled. Notes remain local until the completion write succeeds and then become part of the business's server-side visit record. Retention, deletion, access review and real-device interruption testing remain release gates.
 
 After a completion response is lost or malformed, local timer recovery accepts server readback only when visit identity, scheduled date, completed state, actual minutes, and work note match the durable local record. Missing or different note evidence does not release the completed timer for the next job. This is reconciliation after an explicit write, not an automatic retry or offline queue.
+
+## Saved queue service-workload review
+
+Task: GC-SAVED-QUEUE-WORKLOAD-20261013. Primary scope: RIVET implementation, PROOF self-review and LEDGER handoff. Source base: PR #57 at `0dc0cd5f981366aa76933a088bdd662424e85db5`. Prepared branch: `codex/phase-saved-queue-workload`. Work: REVIEW; delivery: PREPARED; no deployment.
+
+Today now assesses every remaining saved visit using the queue's current predicted service durations. Operators enter service hours available for the remaining queue, a remaining-visit limit, or both. Blank limits and invalid values prevent approval. Hours accept 0.25–24 with up to two decimal places and count only whole minutes within that budget; the visit limit accepts 1–200.
+
+The assessment reports service minutes and visits above the limits without selecting a subset, removing visits, changing their order, or writing visit status. Completed/skipped visits disappear through the existing authorized day refresh. Travel, breaks, fixed appointments, customer time windows, fuel and clock-based finish times remain unassessed. Meeting these limits is not a route-feasibility result.
+
+The approval dialog repeats any overrun and keeps the entire numbered queue visible. An over-limit queue requires the explicit **Approve with workload warnings** choice. There is no automatic skip, deferral or schedule write. Approval binds the normalized workload limits alongside the existing business, date, visit order, prices and estimates. A changed limit or remaining queue requires a matching review; an invalid assessment cannot restore or save an approval. Saved-service starts check current approval eligibility in the handler as well as the button.
+
+Limits are in-memory for the loaded operator/business/date and reset on context changes or reopening. They are separate from Planner's sample fields. Re-entering identical limits can restore an exact device-saved approval; a legacy approval without workload review cannot approve a limits-bound queue. After completing work, the operator updates the available budget for the remaining visits; the app does not infer wall-clock availability or subtract elapsed work automatically.
+
+Acceptance: all remaining visits are counted; either limit can stand alone; thresholds and malformed inputs are explicit; limit changes invalidate approval; rejected approval writes preserve the prior record; authorized saved-day data and manual order feed the assessment without mutation. Automated evidence and exact commit/PR are recorded in the phase PR.
+
+Paths: `App.tsx`, `src/domain/saved-queue-workload.ts`, `src/domain/saved-queue-review.ts`, `src/data/local-saved-queue-approval.ts`, `tests/saved-queue-workload.test.ts`, and this document. Existing sample Planner behavior is unchanged.
+
+Next owner/action: reviewer verifies the overrun dialog and approval binding. Device tester checks keyboard input, screen-reader labels, changing limits with an open dialog, restart/context reset and completion-refresh behavior on iOS/Android. Release coordination must resolve the stacked PR chain and existing deployment gates. Device testing and independent review remain pending.
