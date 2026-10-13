@@ -1166,14 +1166,17 @@ function GreenCollarDashboard() {
               const startMinute=scheduleClockMinute(scheduleStart),endMinute=scheduleClockMinute(scheduleEnd);
               if(!scheduleTruckId.trim()||!workers.length||startMinute===null||endMinute===null||startMinute>=endMinute)throw new Error('Enter a truck, load and select at least one verified crew member, and enter valid start/end times.');
               const scheduledWorkers=workers.map(subject=>{
-                const lunchStartText=(scheduleLunchStart[subject]??'').trim(),lunchEndText=(scheduleLunchEnd[subject]??'').trim();
-                if(Boolean(lunchStartText)!==Boolean(lunchEndText))throw new Error('Enter both lunch start and end for each selected worker, or leave both blank.');
-                let breaks:{startMinute:number;endMinute:number}[]=[];
-                if(lunchStartText){
-                  const lunchStartMinute=scheduleClockMinute(lunchStartText),lunchEndMinute=scheduleClockMinute(lunchEndText);
-                  if(lunchStartMinute===null||lunchEndMinute===null||lunchStartMinute>=lunchEndMinute||lunchStartMinute<startMinute||lunchEndMinute>endMinute)
-                    throw new Error('Each lunch block must be valid and fit inside that worker’s shift.');
-                  breaks=[{startMinute:lunchStartMinute,endMinute:lunchEndMinute}];
+                const breaks=(scheduleLunchBlocks[subject]??[]).map(block=>{
+                  const lunchStartMinute=scheduleClockMinute(block.start),lunchEndMinute=scheduleClockMinute(block.end);
+                  if(lunchStartMinute===null||lunchEndMinute===null||lunchStartMinute>=lunchEndMinute)
+                    throw new Error('Enter a valid start and end for every lunch block.');
+                  return {startMinute:lunchStartMinute,endMinute:lunchEndMinute};
+                }).sort((a,b)=>a.startMinute-b.startMinute);
+                let previousBreakEnd=startMinute;
+                for(const lunch of breaks){
+                  if(lunch.startMinute<startMinute||lunch.endMinute>endMinute||lunch.startMinute<previousBreakEnd)
+                    throw new Error('Lunch blocks must fit inside the worker shift and cannot overlap.');
+                  previousBreakEnd=lunch.endMinute;
                 }
                 return {subject,startMinute,endMinute,breaks};
               });
