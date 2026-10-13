@@ -1,4 +1,5 @@
 import {assessSavedQueueWorkload,describeSavedQueueWorkload,type SavedQueueWorkloadLimits} from '../domain/saved-queue-workload';
+import {normalizeWorkdayWindow} from '../domain/workday-window';
 import type {Digest,KeyValueSecureStore} from './local-saved-queue-approval';
 
 export type WorkloadSettingsContext={subject:string;businessId:string;date:string};
@@ -25,7 +26,8 @@ export function normalizeWorkloadLimits(limits:SavedQueueWorkloadLimits):SavedQu
   if(assessment.status!=='within_limits')throw new Error(describeSavedQueueWorkload(assessment));
   return {
     hours:limits.hours.trim()?String(Number(limits.hours)):'',
-    maxJobs:limits.maxJobs.trim()?String(Number(limits.maxJobs)):''
+    maxJobs:limits.maxJobs.trim()?String(Number(limits.maxJobs)):'',
+    ...normalizeWorkdayWindow(limits)
   };
 }
 
@@ -53,7 +55,7 @@ export function createLocalSavedQueueWorkloadStore(storage:KeyValueSecureStore,d
       const captured={...context},normalized=normalizeWorkloadLimits(limits);
       return ordered(workloadSettingsScope(captured),async()=>{
         const {contextDigest,key}=await identity(captured);
-        const record=JSON.stringify({version:1,contextDigest,...normalized});
+        const record=JSON.stringify({version:2,contextDigest,...normalized});
         if(record.length>MAX_RECORD_LENGTH)throw new Error('Workload settings are too large to save');
         await storage.setItemAsync(key,record);
         return {...normalized};
@@ -69,11 +71,13 @@ export function createLocalSavedQueueWorkloadStore(storage:KeyValueSecureStore,d
         try{
           if(value.length>MAX_RECORD_LENGTH)throw new Error('Oversized record');
           const record=JSON.parse(value);
-          if(!record||typeof record!=='object'||record.version!==1||record.contextDigest!==contextDigest)
+          if(!record||typeof record!=='object'||![1,2].includes(record.version)||record.contextDigest!==contextDigest)
             throw new Error('Mismatched record');
+          if(record.version===1&&('workdayStart' in record||'workdayFinish' in record))
+            throw new Error('Unexpected workday fields in a legacy record');
           return normalizeWorkloadLimits(record);
         }catch{
-          throw new Error('Saved workload limits could not be read. Retry or explicitly enter replacement limits.');
+          throw new Error('Saved work settings could not be read. Retry or explicitly enter replacement settings.');
         }
       });
     }
