@@ -4,7 +4,8 @@ import { ClerkProvider, useAuth, useClerk } from '@clerk/expo';
 import { useHostedAuth } from '@clerk/expo/hosted-auth';
 import { tokenCache } from '@clerk/expo/token-cache';
 import { fetchDayData, type DayData } from './src/data/greencollar-api';
-import { fetchRoutingSettings, acknowledgeRoutingNotice, setBusinessRoutingEnabled, type RoutingSettings } from './src/data/routing-api';
+import { fetchRoutingSettings, acknowledgeRoutingNotice, setBusinessRoutingEnabled, requestRoutingMatrix, type RoutingSettings } from './src/data/routing-api';
+import { prepareTruckPreview, type PreviewTruck, type TruckPreviewRoute } from './src/domain/truck-preview';
 import { summarizeSavedDay } from './src/data/saved-day';
 import {createSavedQueueReview,canApproveSavedQueueReview,isSavedQueueApproved,savedQueueApprovalAction} from './src/domain/saved-queue-review';
 import {describeSavedQueueAppointments,describeAppointmentCheckAssumptions} from './src/domain/saved-queue-appointments';
@@ -464,6 +465,10 @@ function GreenCollarDashboard() {
   const [routingSettings,setRoutingSettings]=useState<RoutingSettings|null>(null);
   const [routingSettingsBusy,setRoutingSettingsBusy]=useState(false);
   const [routingSettingsError,setRoutingSettingsError]=useState('');
+  const [roadTruckAssignments,setRoadTruckAssignments]=useState<Record<string,PreviewTruck>>({});
+  const [roadPreview,setRoadPreview]=useState<{scope:string;truck:PreviewTruck;legs:{from:number;to:number;minutes:number|null}[];attribution:string}|null>(null);
+  const [roadPreviewBusy,setRoadPreviewBusy]=useState(false);
+  const roadPreviewRequest=useRef(0);
   const routingSettingsRequest=useRef(0);
   const routingSettingsBusyRef=useRef(false);
   const savedQueueOrderWriteLock=useRef(false);
@@ -812,6 +817,9 @@ function GreenCollarDashboard() {
     const travelMinutesBefore=parseTravelMinutesDraft(savedQueueTravelDrafts[savedQueueTravelKey(fromVisitId,visit.id)]??'');
     return travelMinutesBefore===undefined?visit:{...visit,travelMinutesBefore};
   });
+  const truckPreviewPlan=prepareTruckPreview(savedQueueVisits,roadTruckAssignments);
+  const truckPreviewScope=JSON.stringify([savedQueueScope,savedQueueVisitIds]);
+  useEffect(()=>{roadPreviewRequest.current++;setRoadTruckAssignments({});setRoadPreview(null);},[truckPreviewScope]);
   const currentWorkloadState=savedQueueWorkloadState.scopeKey===savedQueueScope?savedQueueWorkloadState:null;
   const currentWorkloadLimits=currentWorkloadState?.draft??{hours:'',maxJobs:''};
   const savedWorkloadReadyForApproval=workloadSettingsReadyForApproval(currentWorkloadState);
@@ -1084,7 +1092,7 @@ function GreenCollarDashboard() {
             </View>}
             {savedDueSummary.pendingCount>0&&<View style={styles.card}>
               <Text style={styles.cardHeading}>Road routing readiness</Text>
-              <Text style={styles.muted}>This panel checks policy, provider, and business settings only. It does not send stop coordinates or request a route matrix. Manual travel estimates below remain available.</Text>
+              <Text style={styles.muted}>This panel checks routing readiness. Manual estimates remain available; coordinates are sent only after a separate, explicit preview confirmation.</Text>
               {!routingSettings&&<Text style={styles.body}>Routing remains unavailable until public policy pages, current provider pricing, provider credentials, and business controls are ready.</Text>}
               {!!routingSettings&&<Text accessibilityLiveRegion="polite" style={styles.body}>
                 {routingSettings.enabled?'Business routing is enabled.':routingSettings.businessEnabled?'Business routing is saved, but provider or policy checks are not ready.':routingSettings.available?'Provider and policy checks are ready; business routing is off.':'Provider or policy checks are not ready. Manual travel estimates remain active.'}
@@ -1103,7 +1111,28 @@ function GreenCollarDashboard() {
               {!!routingSettings&&routingSettings.businessEnabled&&<Pressable accessibilityRole="button" style={[styles.primary,{backgroundColor:'#f0f5ef'}]} disabled={routingSettingsBusy} onPress={()=>void updateRoutingSettings('disable')}><Text style={styles.primaryText}>Disable routing for this business · owner/admin</Text></Pressable>}
               <Pressable accessibilityRole="button" style={[styles.primary,{backgroundColor:'#f0f5ef'}]} disabled={routingSettingsBusy||!connectedBusiness} onPress={()=>void loadRoutingSettings()}><Text style={styles.primaryText}>{routingSettingsBusy?'Checking routing settings…':routingSettings?'Refresh routing readiness':'Check routing readiness'}</Text></Pressable>
               {!!routingSettingsError&&<Text accessibilityLiveRegion="polite" style={styles.muted}>{routingSettingsError}</Text>}
-              <Text style={styles.muted}>Only an explicit route request in a later phase will send saved stop coordinates. Every operator needs their own current notice acknowledgment; enabling or disabling the business setting makes no provider request.</Text>
+              <Text style={styles.muted}>Business routing controls and this operator’s current notice acknowledgment are checked again before each request. A separate, explicit confirmation sends only saved stop coordinates to Google. Enabling or disabling the business setting makes no provider request.</Text>
+              <Text style={styles.cardHeading}>Temporary truck assignment</Text>
+              <Text style={styles.muted}>Assign every due stop to one of three trucks. Assignments follow the visible queue order and stay in memory only for this session. Each preview uses an explicit request and the monthly server budget gate.</Text>
+              {savedQueueVisits.map((visit,index)=><View key={'truck-'+visit.id} style={{paddingVertical:8,borderBottomWidth:1,borderBottomColor:'#e3e9e1'}}>
+                <Text style={styles.body}>{index+1}. {visit.customer} · {visit.service}</Text>
+                <View style={{flexDirection:'row',gap:8,flexWrap:'wrap',marginTop:6}}>
+                  {(['truck-1','truck-2','truck-3'] as PreviewTruck[]).map((truck,truckIndex)=><Pressable key={truck} accessibilityRole="button" accessibilityState={{selected:roadTruckAssignments[visit.id]===truck}} style={[styles.primary,{padding:9,backgroundColor:roadTruckAssignments[visit.id]===truck?'#d5f48b':'#f0f5ef'}]} onPress={()=>{roadPreviewRequest.current++;setRoadTruckAssignments(previous=>({...previous,[visit.id]:truck}));setRoadPreview(null);}}><Text style={styles.primaryText}>Truck {truckIndex+1}</Text></Pressable>)}
+                </View>
+              </View>)}
+              {truckPreviewPlan.status==='missing_assignment'&&<Text style={styles.muted}>Assign all {savedQueueVisits.length} due stops before requesting a preview.</Text>}
+              {truckPreviewPlan.status==='missing_coordinates'&&<Text style={styles.muted}>Saved coordinates are missing or invalid for {truckPreviewPlan.visitIds.length} stop(s); previews are blocked.</Text>}
+              {truckPreviewPlan.status==='too_many_points'&&<Text style={styles.muted}>Truck {truckPreviewPlan.truck==='truck-1'?1:truckPreviewPlan.truck==='truck-2'?2:3} has {truckPreviewPlan.count} stops; the maximum is 25.</Text>}
+              {truckPreviewPlan.status==='ready'&&truckPreviewPlan.routes.map(route=><View key={route.truck} style={{paddingTop:8}}>
+                <Text style={styles.body}>Truck {route.truck==='truck-1'?1:route.truck==='truck-2'?2:3}: {route.stops.length} stop(s) · {route.elementCount} matrix elements</Text>
+                {route.stops.length===1&&<Text style={styles.muted}>One stop assigned; there are no between-stop legs to calculate.</Text>}
+                {route.stops.length>=2&&<Pressable accessibilityRole="button" style={styles.primary} disabled={roadPreviewBusy||!routingSettings?.enabled||!routingSettings.noticeAcknowledged} onPress={()=>requestRoadPreview(route)}><Text style={styles.primaryText}>{roadPreviewBusy?'Requesting preview…':`Review and request Truck ${route.truck==='truck-1'?1:route.truck==='truck-2'?2:3} drive times`}</Text></Pressable>}
+              </View>)}
+              {roadPreview&&roadPreview.scope===truckPreviewScope&&<View style={{padding:10,marginTop:8,backgroundColor:'#f0f5ef',borderRadius:8}}>
+                <Text style={styles.body}>Truck {roadPreview.truck==='truck-1'?1:roadPreview.truck==='truck-2'?2:3} · current chosen order</Text>
+                {roadPreview.legs.map((leg,index)=><Text key={index} style={styles.muted}>Stop {leg.from+1} → Stop {leg.to+1}: {leg.minutes===null?'unavailable':`${leg.minutes} min`}</Text>)}
+                <Text style={styles.muted}>Drive-time estimates only; no depot legs, route optimization, or arrival times. Not saved. {roadPreview.attribution}</Text>
+              </View>}
             </View>}
             <Pressable accessibilityRole="button" accessibilityState={{disabled:!savedQueueCanApprove||savedQueueApprovalChecking||savedQueueApprovalBusy}} style={styles.primary} disabled={!savedQueueCanApprove||savedQueueApprovalChecking||savedQueueApprovalBusy} onPress={requestSavedQueueApproval}><Text style={styles.primaryText}>{!savedQueueOrderReady?'Restore work order before approval':savedQueueOrderSaveBusy?'Saving work order…':savedQueueApprovalChecking?'Checking saved approval…':savedQueueApprovalBusy?'Saving approval…':savedQueueApproved?'Work queue approved on this device':'Review and approve work queue'}</Text></Pressable>
             {!!savedQueueApprovalError&&<Text accessibilityLiveRegion="polite" style={styles.muted}>{savedQueueApprovalError}</Text>}{!savedQueueApproved&&savedDueSummary.pendingCount>0&&<Text style={styles.muted}>Review the current work order before starting a saved visit. Approval is saved securely on this device and tied to this business, date, visit order, service and travel estimates, appointment times, work window, planned breaks and workload limits; changes require review again. Your chosen starting point itself is not saved.</Text>}
@@ -1296,7 +1325,33 @@ function AuthGate() {
   const { startHostedAuth } = useHostedAuth();
   const { signOut } = useClerk();
   const [authError, setAuthError] = useState('');
-  if (!isLoaded) return <SafeAreaView style={styles.page}><Text style={styles.logo}>greencollar.</Text><Text style={styles.muted}>Loading secure sign-in...</Text></SafeAreaView>;
+  if (!isLoaded)   function requestRoadPreview(route:TruckPreviewRoute){
+    if(!connectedBusiness||roadPreviewBusy)return;
+    const plan=prepareTruckPreview(savedQueueVisits,roadTruckAssignments);
+    if(plan.status!=='ready'){Alert.alert('Truck assignment incomplete','Assign every due stop and confirm each saved coordinate before requesting a preview.');return;}
+    const scope=truckPreviewScope;
+    Alert.alert('Send stop coordinates to Google?',
+      `Truck has ${route.stops.length} stops; the matrix contains ${route.elementCount} elements. Only saved coordinates are sent. Usage is billed if routing is enabled; the server monthly budget can reject the request. No names, notes, contacts, employee data, or device GPS are sent.`,
+      [{text:'Cancel',style:'cancel'},{text:'Send and calculate',onPress:()=>{void (async()=>{
+        const request=++roadPreviewRequest.current;setRoadPreviewBusy(true);
+        try{
+          const api=process.env.EXPO_PUBLIC_GREENCOLLAR_API_URL;
+          if(!api)throw new Error('Configure the API URL first.');
+          const token=await getToken({template:'greencollar-api'});
+          if(!token)throw new Error('Sign in first.');
+          const settings=await fetchRoutingSettings(api,connectedBusiness.id,token);
+          if(!settings.available||!settings.enabled||!settings.businessEnabled||!settings.noticeAcknowledged)
+            throw new Error('Routing is not currently enabled for this business and operator. Manual estimates remain available.');
+          const points=route.stops.map((stop,index)=>({id:'p'+(index+1),lat:stop.lat,lon:stop.lon}));
+          const result=await requestRoutingMatrix(api,connectedBusiness.id,token,points);
+          if(request!==roadPreviewRequest.current||scope!==JSON.stringify([savedQueueScope, savedQueueVisitIds]))return;
+          const legs=route.stops.slice(0,-1).map((_,index)=>({from:index,to:index+1,minutes:result.durations[index][index+1]===null?null:Math.ceil((result.durations[index][index+1] as number)/60)}));
+          setRoadPreview({scope,truck:route.truck,legs,attribution:result.attribution});
+        }catch(error){if(request===roadPreviewRequest.current)Alert.alert('Drive-time preview unavailable',error instanceof Error?error.message:'Manual estimates remain available.');}
+        finally{if(request===roadPreviewRequest.current)setRoadPreviewBusy(false);}
+      })();}}]);
+  }
+return <SafeAreaView style={styles.page}><Text style={styles.logo}>greencollar.</Text><Text style={styles.muted}>Loading secure sign-in...</Text></SafeAreaView>;
   if (isSignedIn) return <><GreenCollarDashboard/><Pressable accessibilityRole="button" style={{backgroundColor:'#183d2b',padding:10,alignItems:'center'}} onPress={() => void signOut()}><Text style={{color:'#d5f48b'}}>Sign out</Text></Pressable></>;
   return (
     <SafeAreaView style={[styles.page,{justifyContent:'center',padding:24,gap:16}]}>
