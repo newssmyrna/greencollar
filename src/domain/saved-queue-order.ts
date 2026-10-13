@@ -1,4 +1,5 @@
-export type SavedQueueTravelEstimate={fromVisitId:string;toVisitId:string;minutes:number};
+/** A null source means the operator's chosen, unsaved starting point for the first stop. */
+export type SavedQueueTravelEstimate={fromVisitId:string|null;toVisitId:string;minutes:number};
 export type SavedQueueOrder={scopeKey:string;visitIds:string[];travelEstimates?:SavedQueueTravelEstimate[]};
 
 function validateVisitIds<T extends {id:string}>(visits:readonly T[]):void{
