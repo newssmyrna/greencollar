@@ -83,3 +83,32 @@ test('admin activation requires a persisted notice acknowledgment, while disable
  const disable=await adminApi(post('/v1/routing/settings',{businessId:'business-a',enabled:false,noticeAcknowledged:false,noticeVersion:'notice-1'}),env);
  assert.equal(disable.status,200);assert.equal((await disable.json() as {enabled:boolean}).enabled,false);assert.equal(f.writes(),1);
 });
+
+
+test('settings distinguish provider readiness, business activation, and this operator acknowledgment',async()=>{
+ const f=fixture({enabled:1,acknowledged:0});
+ const api=createRoutingApi({authenticate:async()=> 'worker-1',membership:async()=> 'worker',now:()=>now});
+ const disabledEnv={...f.env,ROAD_ROUTING_PROVIDER_ENABLED:undefined,GOOGLE_ROUTES_API_KEY:undefined} as Env;
+ const response=await api(new Request('https://api.example.test/v1/routing/settings?business_id=business-a'),disabledEnv);
+ assert.equal(response.status,200);
+ const state=await response.json() as {available:boolean;enabled:boolean;businessEnabled:boolean;noticeAcknowledged:boolean;termsUrl:string|null;manualFallback:boolean};
+ assert.equal(state.available,false);
+ assert.equal(state.enabled,false);
+ assert.equal(state.businessEnabled,true);
+ assert.equal(state.noticeAcknowledged,false);
+ assert.equal(state.termsUrl,'https://greencollar.example/terms');
+ assert.equal(state.manualFallback,true);
+});
+
+
+test('a stale stored business toggle remains visible so an admin can turn it off',async()=>{
+ const f=fixture({enabled:1,noticeVersion:'old-notice',acknowledged:0});
+ const api=createRoutingApi({authenticate:async()=> 'admin-1',membership:async()=> 'admin',now:()=>now});
+ const env={...f.env,ROAD_ROUTING_NOTICE_VERSION:''} as Env;
+ const response=await api(new Request('https://api.example.test/v1/routing/settings?business_id=business-a'),env);
+ const state=await response.json() as {available:boolean;enabled:boolean;businessEnabled:boolean;noticeVersion:string|null};
+ assert.equal(state.available,false);
+ assert.equal(state.enabled,false);
+ assert.equal(state.businessEnabled,true);
+ assert.equal(state.noticeVersion,null);
+});

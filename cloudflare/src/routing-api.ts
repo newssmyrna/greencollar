@@ -102,13 +102,16 @@ export function createRoutingApi(dependencies:RoutingDependencies={}){
    const version=env.ROAD_ROUTING_NOTICE_VERSION??'';
    if(path==='/v1/routing/settings'&&request.method==='GET'){
     const setting=await env.DB.prepare('SELECT enabled,notice_version FROM business_routing_settings WHERE business_id=?').bind(businessId).first<{enabled:number;notice_version:string}>();
-    const available=providerReady(env,now);
-    return json({available,enabled:Boolean(setting?.enabled===1&&setting.notice_version===version&&available),noticeVersion:noticeVersionOk(version)?version:null,
+    const available=providerReady(env,now),businessEnabled=setting?.enabled===1;
+    const currentBusinessNotice=setting?.notice_version===version;
+    const noticeAcknowledged=policyReady(env)&&Boolean(await env.DB.prepare('SELECT 1 AS acknowledged FROM routing_notice_acknowledgements WHERE business_id=? AND subject=? AND notice_version=?').bind(businessId,subject,version).first<{acknowledged:number}>());
+    const enabled=Boolean(businessEnabled&&currentBusinessNotice&&available);
+    return json({available,enabled,businessEnabled,noticeAcknowledged,noticeVersion:noticeVersionOk(version)?version:null,
      notice:'Selected job coordinates will be sent to Google to calculate driving durations. GreenCollar does not send names, contact details, service notes, employee identifiers, or device GPS.',
      termsUrl:policyReady(env)?publicHttpsUrl(env.ROAD_ROUTING_TERMS_URL):null,
      privacyUrl:policyReady(env)?publicHttpsUrl(env.ROAD_ROUTING_PRIVACY_URL):null,
-     attribution:`Powered by Google, © ${pacificDate(now).slice(0,4)}`,
-     manualFallback:!Boolean(setting?.enabled===1&&setting.notice_version===version&&available)});
+     attribution:'Powered by Google, © '+pacificDate(now).slice(0,4),
+     manualFallback:!Boolean(enabled&&noticeAcknowledged)});
    }
    if(path==='/v1/routing/settings'){
     if(role!=='owner'&&role!=='admin')return json({error:'admin_required'},403);

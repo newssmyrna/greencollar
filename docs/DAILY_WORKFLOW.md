@@ -348,3 +348,20 @@ Delivery: server-side implementation staged for review; live routing remains dis
 Paths: Worker auth/router/provider/meter/API, `cloudflare/migrations/0010_routing_provider_controls.sql`, provider/meter/API/schema tests, `docs/ROAD_PROVIDER.md`, and this handoff.
 
 Impact: live pages/posts **none**; planned **future public legal pages and app routing notice/manual fallback**; documentation-only **provider implementation/policy handoff**; testing-only **mocked Google responses and synthetic coordinates**. No real provider calls or location data were used. Manual travel estimates remain the active workflow; provider durations are not persisted.
+
+
+### Phase #69 handoff — mobile routing readiness and notice controls
+
+| Feature / functionality | Phase completion | Impact |
+|---|---:|---|
+| Typed mobile read of routing readiness and policy URLs | 100% | Testing only; staged app code |
+| Current operator acknowledgment and owner/admin business toggle | 100% | Testing only; settings actions only, no route request |
+| Manual travel estimates and approval snapshot remain separate | 100% | Planned path retained; no estimated values copied or saved |
+| Public policy pages and ready provider configuration | 0% | Planned; domain and provider signup still pending |
+| Mobile road-matrix request and route-duration display | 0% | Planned for a later phase after pilot fleet/stop flow is defined |
+
+**Phase completion: 100% of the readiness, notice, and business-control UI scope; 0% live routing.** Active implementation and review time: approximately 25 minutes; CI wait excluded.
+
+Today now has an explicit readiness check, displays Terms/Privacy links and the current notice when supplied by the Worker, stores per-operator acknowledgment through the authorized endpoint, and exposes owner/admin enable/disable controls. This path never sends coordinates or calls a map provider. The existing manual travel inputs continue to save only operator-entered values on the device. No provider durations are added to the estimate or approval records.
+
+Page/post impact: live pages/posts **none**; planned **future public Terms/Privacy pages and later route-matrix UI**; documentation-only **this handoff and provider notes**; testing-only **mocked settings/acknowledgment requests**. No signup, billing, migration, provider request, deployment, or spend occurred.
