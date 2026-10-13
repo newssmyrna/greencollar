@@ -372,3 +372,8 @@ Page/post impact: live pages/posts **none**; planned **future public Terms/Priva
 Today can group the visible saved due queue across Truck 1, Truck 2, and Truck 3 for a temporary preview. The operator must assign every due stop. Assignments follow the current manually chosen queue order and remain in React memory only; they are not persisted or included in the saved work-order approval. Each truck request is separate and requires an explicit confirmation after showing stop count and matrix elements. The app refreshes server routing settings immediately before request, and the Worker rechecks provider readiness, business enablement, operator notice, and the monthly spend meter.
 
 A preview sends only the selected truck's saved coordinates and ephemeral point IDs. It reports adjacent legs in the current chosen order. It does not add depot legs, optimize stops, calculate arrival times, alter manual travel estimates, or change work approvals. One-stop trucks require no provider request. Results and assignments disappear on restart. No routing provider calls were made in development or tests. The pilot's 10-stops-per-day interpretation and allocation assumptions remain open; this temporary three-truck split does not settle the fleet operating plan.
+
+
+### Weather interruption and schedule recalibration
+
+The rain-out carryover case and manager/worker decision rights are specified in [WEATHER_INTERRUPTION_REPLAN.md](WEATHER_INTERRUPTION_REPLAN.md). The feature is planned and documentation-only; it does not change live scheduling. The owner/operator should retain both management and field-worker capabilities. Workers can report interrupted work but cannot publish business-wide schedule changes.
