@@ -1,7 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import {createHash} from 'node:crypto';
-import {assessSavedQueueAppointments,describeSavedQueueAppointments,APPOINTMENT_CHECK_ASSUMPTIONS,type AppointmentVisit} from '../src/domain/saved-queue-appointments';
+import {assessSavedQueueAppointments,describeSavedQueueAppointments,describeAppointmentCheckAssumptions,APPOINTMENT_CHECK_ASSUMPTIONS,type AppointmentVisit} from '../src/domain/saved-queue-appointments';
 import {createSavedQueueReview,canApproveSavedQueueReview,isSavedQueueApproved,savedQueueApprovalAction,type QueueReviewVisit} from '../src/domain/saved-queue-review';
 import {createLocalSavedQueueApprovalStore} from '../src/data/local-saved-queue-approval';
 import {summarizeSavedDay} from '../src/data/saved-day';
@@ -85,6 +85,51 @@ test('earliest-start waiting propagates to later fixed visits',()=>{
   assert.equal(result.issues[0].visitId,'b');
   assert.equal(result.issues[0].kind,'fixed_start_conflict');
   assert.match(result.issues[0].message,/30 min short/);
+});
+
+test('between-stop travel estimates propagate to fixed appointments and stay tied to their queue leg',()=>{
+  const rows=[visit('a',{estimatedMinutes:60}),visit('b',{fixedStartMinute:600,estimatedMinutes:20,travelMinutesBefore:80})];
+  const result=assessSavedQueueAppointments(rows,{workdayStart:'08:00',workdayFinish:'17:00'});
+  assert.equal(result.status,'conflicts');
+  assert.equal(result.travelEstimateCount,1);
+  assert.equal(result.estimatedTravelMinutes,80);
+  assert.equal(result.issues[0].visitId,'b');
+  assert.equal(result.issues[0].kind,'fixed_start_conflict');
+  assert.match(result.issues[0].message,/80-minute travel estimate from the previous stop.*20 min short/);
+  assert.match(describeSavedQueueAppointments(result),/1 potential timing conflict/);
+  assert.match(APPOINTMENT_CHECK_ASSUMPTIONS,/manual travel estimates apply only between adjacent saved stops/);
+  assert.match(describeAppointmentCheckAssumptions(result),/80 minutes total/);
+});
+
+test('an entered travel leg is moved intact past a planned break before the next service',()=>{
+  const result=assessSavedQueueAppointments([
+    visit('a',{estimatedMinutes:30}),visit('b',{fixedStartMinute:610,estimatedMinutes:20,travelMinutesBefore:15})
+  ],{workdayStart:'09:00',workdayFinish:'17:00',breaks:'09:30-10:00'});
+  assert.equal(result.issues[0].kind,'fixed_start_conflict');
+  assert.match(result.issues[0].message,/15-minute travel estimate.*5 min short/);
+});
+
+test('travel estimates on the first stop or outside integer minute bounds invalidate the full check',()=>{
+  for(const rows of [
+    [visit('a',{travelMinutesBefore:5})],
+    [visit('a'),visit('b',{travelMinutesBefore:-1})],
+    [visit('a'),visit('b',{travelMinutesBefore:1.5})],
+    [visit('a'),visit('b',{travelMinutesBefore:1441})]
+  ]){
+    const result=assessSavedQueueAppointments(rows);
+    assert.equal(result.status,'invalid_visits');
+    assert.equal(result.issues[0].kind,'invalid_data');
+  }
+});
+
+test('an entered travel estimate changes approval binding and cannot approve invalid estimates',()=>{
+  const rows=[visit('a'),visit('b',{fixedStartMinute:600,travelMinutesBefore:20})];
+  const current=review(rows);
+  const changed=review([rows[0],{...rows[1],travelMinutesBefore:25}]);
+  assert.equal(current.appointments.status,'no_conflicts_detected');
+  assert.equal(isSavedQueueApproved(current,changed.approvalKey),false);
+  const invalid=review([{...rows[0],travelMinutesBefore:3},rows[1]]);
+  assert.equal(canApproveSavedQueueReview(invalid),false);
 });
 
 test('latest-finish-only windows account for earlier flexible service and respond to reordering',()=>{
