@@ -1076,7 +1076,7 @@ function GreenCollarDashboard() {
             <Pressable accessibilityRole="button" style={styles.primary} disabled={scheduleRosterBusy} onPress={async()=>{
               const api=process.env.EXPO_PUBLIC_GREENCOLLAR_API_URL;if(!api||!connectedBusiness){setScheduleError('Load a business and configure the API URL first.');return;}
               setScheduleRosterBusy(true);setScheduleError('');
-              if(!savedDay){setScheduleError('Load a saved workday first so crew availability uses the correct date.');return;}
+              if(!savedDay){setScheduleError('Load a saved workday first so crew availability uses the correct date.');setScheduleRosterBusy(false);return;}
               try{
                 const token=await getToken({template:'greencollar-api'});if(!token)throw new Error('Sign in first.');
                 const [members,availability]=await Promise.all([
