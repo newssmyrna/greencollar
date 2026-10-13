@@ -34,8 +34,16 @@ Keep every change narrowly scoped and tested; never silently remove agreed featu
 - Manager review UI, interruption capture, persistent audit trail, version-safe schedule commit, and separate notification approval remain future work.
 
 
-## Phase 72 — Weather interruption reporting
-- Field worker/owner can record rain, lightning, or unsafe-conditions interruptions with completed and remaining visit IDs.
-- Owner/admin can review the date-scoped report inbox; worker cannot access management inbox.
-- Events are idempotent and audited; report writes do not change visit, agreement, schedule, or customer-notification state.
+## Phase 72 — Shortened-workday reporting
+- Field worker/owner can record an early ending for rain or another reason, with completed and remaining visit IDs.
+- Owner/admin can review the date-scoped report inbox; worker cannot access the management inbox.
+- Events are idempotent and audited; report writes do not change visits, agreements, schedule, or customer-notification state.
 - Schedule option comparison and manager-approved publishing remain planned.
+
+
+## Phase 73 — Crew availability, incidents, and customer rescheduling
+- Define lunch/break and sick/unavailable time blocks without collecting medical diagnoses.
+- Define private, tenant-scoped job-site incident reports with photo upload and manager follow-up.
+- Define manager-controlled SMS proposals; a customer must affirmatively accept before a manager commits a visit change.
+- Specify offline upload, authorization, audit history, schedule-version checks, failure paths, and acceptance tests.
+- Documentation only; no provider setup, purchase, text, schedule write, or live change.
