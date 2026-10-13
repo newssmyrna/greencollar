@@ -156,7 +156,7 @@ test('the previous appointment approval policy requires a fresh review',async()=
   assert.equal(await approvals.isApproved(context.subject,current),false);
 });
 
-test('version-two records round trip the canonical work window in isolated scopes',async()=>{
+test('current records round trip the canonical work window in isolated scopes',async()=>{
   const f=fixture();
   await f.store.save(context,{...limits,workdayStart:' 8:00 ',workdayFinish:'17:00'});
   assert.deepEqual(await createLocalSavedQueueWorkloadStore(f.storage,digest).load(context),settings);
@@ -166,7 +166,7 @@ test('version-two records round trip the canonical work window in isolated scope
     assert.deepEqual(await f.store.load(context),settings);
   }
   for(const raw of f.records.values()){
-    assert.equal(JSON.parse(raw).version,2);
+    assert.equal(JSON.parse(raw).version,3);
     assert.ok(raw.length<=512);
     for(const identity of [context.subject,context.businessId,context.date])assert.equal(raw.includes(identity),false);
   }
@@ -180,7 +180,7 @@ test('legacy settings load without inventing a window or silently rewriting the 
   assert.equal(f.writes(),writes);
   assert.equal(f.records.get(key),old);
   await f.store.save(context,settings);
-  assert.equal(JSON.parse(f.records.get(key)!).version,2);
+  assert.equal(JSON.parse(f.records.get(key)!).version,3);
   assert.deepEqual(await f.store.load(context),settings);
 });
 
