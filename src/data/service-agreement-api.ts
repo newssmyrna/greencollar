@@ -20,5 +20,11 @@ export async function createServiceAgreement(apiUrl:string,businessId:string,cus
  const response=await fetch(endpoint(apiUrl,businessId,customerId),{method:'POST',headers:headers(token),body:JSON.stringify(details)});
  if(!response.ok)throw new Error('Unable to save recurring service ('+response.status+')');
  const data=await response.json() as {agreement:SavedServiceAgreement};
- if(!data.agreement||typeof data.agreement.id!=='string')throw new Error('Invalid saved service response');return data.agreement;
+ if(!data.agreement||typeof data.agreement.id!=='string')throw new Error('Invalid saved service response');
+ const saved=data.agreement;
+ if((saved.preferred_start_minute??null)!==(details.preferredStartMinute??null)
+   ||(saved.preferred_finish_minute??null)!==(details.preferredFinishMinute??null)
+   ||(saved.fixed_start_minute??null)!==(details.fixedStartMinute??null))
+   throw new Error('Service may have been saved, but its appointment times were not confirmed. Reload recurring services before retrying.');
+ return saved;
 }
