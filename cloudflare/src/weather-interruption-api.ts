@@ -24,8 +24,9 @@ function parseReport(v:unknown):Omit<Report,'reporterSubject'|'createdAt'>|null{
   new Set(completed).size!==completed.length||new Set(remaining).size!==remaining.length||
   completed.some(id=>remaining.includes(id)))return null;
  const ids=[...completed,...remaining] as string[];
- if(ids.some(id=>!validVisitId(id,row.workDate)))return null;
- return {businessId:row.businessId,eventId:row.eventId,workDate:row.workDate,reportedAt:row.reportedAt,
+ const workDate=row.workDate as string;
+ if(ids.some(id=>!validVisitId(id,workDate)))return null;
+ return {businessId:row.businessId,eventId:row.eventId,workDate,reportedAt:row.reportedAt,
   reason:row.reason as Reason,completedVisitIds:completed as string[],remainingVisitIds:remaining as string[]};
 }
 function parseStored(row:Record<string,unknown>):Report|null{
