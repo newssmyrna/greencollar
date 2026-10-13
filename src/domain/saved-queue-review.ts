@@ -34,10 +34,11 @@ export function createSavedQueueReview(businessId:string,date:string,visits:Queu
     if(!Number.isFinite(visit.estimatedMinutes)||visit.estimatedMinutes<0)throw new Error('Visit durations must be valid');
   }
   const workload=limits?assessSavedQueueWorkload(visits,limits):null;
-  const appointments=assessSavedQueueAppointments(visits);
+  const appointments=assessSavedQueueAppointments(visits,limits??{});
   const snapshot=[businessId,date,visits.map(v=>[v.id,v.rateCents,v.estimatedMinutes,v.preferredStartMinute??null,v.preferredFinishMinute??null,v.fixedStartMinute??null])];
-  const approvalKey=JSON.stringify(['saved-queue-appointments-v1',...snapshot,
-    limits?[workload?.status,workload?.availableMinutes,workload?.maxJobs]:null]);
+  const approvalKey=JSON.stringify(['saved-queue-appointments-v2',...snapshot,
+    limits?[workload?.status,workload?.availableMinutes,workload?.maxJobs]:null,
+    [appointments.workdayWindow.status,appointments.workdayWindow.startMinute,appointments.workdayWindow.finishMinute]]);
   return {
     businessId,date,visitIds:visits.map(v=>v.id),visitCount:visits.length,
     estimatedServiceMinutes:visits.reduce((total,v)=>total+v.estimatedMinutes,0),
@@ -46,7 +47,7 @@ export function createSavedQueueReview(businessId:string,date:string,visits:Queu
   };
 }
 export function canApproveSavedQueueReview(review:SavedQueueReview|null):boolean{
-  return !!review&&review.visitCount>0&&!!review.appointments&&review.appointments.status!=='invalid_visits'&&(!review.workload
+  return !!review&&review.visitCount>0&&!!review.appointments&&review.appointments.status!=='invalid_visits'&&review.appointments.status!=='invalid_window'&&(!review.workload
     ||review.workload.status==='within_limits'||review.workload.status==='over_limits');
 }
 export function isSavedQueueApproved(review:SavedQueueReview|null,approvedKey:string|null):boolean{
