@@ -9,7 +9,7 @@ function fixture(role:'owner'|'admin'|'worker'|null='owner',conflict=false){
  const saved={business_id:'business-a',work_date:'2026-10-13',version:1,schedule_json:JSON.stringify(base.routes),updated_by:'owner-a',updated_at:'2026-10-13T12:00:00Z'};
  const DB={prepare(sql:string){return {bind(...values:unknown[]){queries.push({sql,values});return {
  async first(){if(sql.includes('business_memberships'))return role?{role:values[1]==='worker-a'||values[1]==='worker-b'?'worker':role}:null;if(sql.includes('workday_schedule_drafts'))return saved;return null;},
- async all(){if(sql.includes('service_agreements'))return {results:[{id:'agreement-a'}]};return {results:[]};},
+ async all(){if(sql.includes('service_agreements'))return {results:[{id:'agreement-a'}]};if(sql.includes('business_memberships'))return {results:[{subject:'owner-a',role:'owner'},{subject:'worker-a',role:'worker'},{subject:'worker-b',role:'worker'}]};return {results:[]};},
  async run(){writes.push(sql);return {meta:{changes:conflict?0:1}};}
  };}};}};
  return {env:{...meta,DB} as unknown as Env,queries,writes};
@@ -38,4 +38,17 @@ test('stale draft version and foreign stops do not write',async()=>{
  const f=fixture('owner',true),url=new URL('https://api.test/v1/workday-schedules');
  assert.equal((await api(req('POST',{...base,expectedVersion:1}),f.env,url)).status,409);
  assert.equal((await api(req('POST',{...base,routes:[{...base.routes[0],stops:[{...base.routes[0].stops[0],visitId:'missing:2026-10-13'}]}]}),f.env,url)).status,409);
+});
+
+test('owner and admin can load verified business members; workers cannot',async()=>{
+ const owner=fixture('owner'),membersUrl=new URL('https://api.test/v1/workday-schedules?business_id=business-a&members=1');
+ const ownerResponse=await api(new Request(membersUrl),owner.env,membersUrl);
+ assert.equal(ownerResponse.status,200);
+ const ownerBody=await ownerResponse.json() as {members:Array<{subject:string;role:string}>};
+ assert.deepEqual(ownerBody.members.map(member=>member.subject),['owner-a','worker-a','worker-b']);
+ const admin=fixture('admin'),adminResponse=await api(new Request(membersUrl),admin.env,membersUrl);
+ assert.equal(adminResponse.status,200);
+ const worker=fixture('worker'),workerResponse=await api(new Request(membersUrl),worker.env,membersUrl);
+ assert.equal(workerResponse.status,403);
+ assert.equal((await workerResponse.json() as {error:string}).error,'manager_required');
 });
