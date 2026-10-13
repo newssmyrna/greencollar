@@ -1,10 +1,10 @@
-# Weather interruption and schedule recalibration
+# Early-ending workday and schedule recalibration
 
-**Status:** Phase 71 foundation is implemented as a pure, non-persistent draft calculator and role-capability map. Interruption capture, manager review UI, persistence, and schedule publishing remain planned; nothing is live.
+**Status:** Phase 71 adds the pure draft calculator and role-capability map. Phase 72 stages authenticated, persistent interruption capture and an owner/admin-only report inbox. Draft option UI, schedule publishing, and customer notifications remain planned; nothing is live.
 
 ## Scenario
 
-A workday is cut short by rain. For example, a ten-stop route completes two visits before crews must stop. GreenCollar must preserve those completions, make the eight unfinished visits visible, and show how moving them affects tomorrow and the following schedule days. It must never silently rewrite a route or notify customers without a manager's decision.
+A workday can end early for any reason. Rain is a common Florida example: for example, a ten-stop route completes two visits before crews must stop. GreenCollar must preserve those completions, make the eight unfinished visits visible, and show how moving them affects tomorrow and the following schedule days. It must never silently rewrite a route or notify customers without a manager's decision.
 
 ## Roles and decision rights
 
@@ -19,7 +19,7 @@ This maps to the existing `owner` / `admin` / `worker` membership roles. Phase 7
 ## Proposed flow
 
 1. A worker or owner records a weather interruption for the active workday. Keep completed visits intact; identify unfinished visits from the saved work order.
-2. Save an interruption event with business, local work date, actor, stop time, reason, completed visit IDs, and remaining visit IDs. Do not use device GPS or a weather API as a prerequisite.
+2. Save an interruption event with business, local work date, actor, stop time, reason category, completed visit IDs, and remaining visit IDs. Do not use device GPS or a weather API as a prerequisite.
 3. Generate a **draft only** recalibration across a manager-selected horizon (initial default: next five operating days). Show alternatives such as moving all remaining visits to tomorrow, spreading them across available crews/days, or keeping them on their original due dates for a manager to handle manually. The engine must respect working hours, staff/truck capacity, service windows, existing commitments, and the operator's chosen stop order wherever possible.
 4. Compare each alternative against the currently approved plan. Explain every moved visit and any unscheduled visit. Include:
    - visits completed, carried over, moved, and still unplaced;
@@ -58,9 +58,17 @@ Confirm the replan horizon, which schedule constraints are hard versus warning-o
 
 `src/domain/weather-replan.ts` now creates two review-only alternatives from explicitly supplied due visits and per-truck/day service-minute and stop capacity: put as many visits as possible on the next day, or spread them across the supplied horizon. The report includes completed visits preserved, moved and unplaced counts, projected revenue, delay days, and daily service-minute utilization. The calculator does not mutate the schedule, persist a proposal, or assign travel time. It warns that drive time, windows, breaks, and route feasibility are not evaluated. Capacity is an explicit input; the code does not infer whether 10 daily stops means total or per truck.
 
+## Phase 72 — interruption capture and manager inbox
+
+A worker or owner can record a weather interruption with the current work date, completed visit IDs, and remaining due visit IDs. The API verifies business membership, requires owner/worker for reporting and owner/admin for inbox reads, checks submitted visits against the business's active agreements, and stores an idempotent event. The report endpoint does not update service visits or agreements. The Today screen exposes field reporting to owner/worker and a date-scoped report inbox to owner/admin. Manager-facing alternatives and schedule changes are still absent.
+
 ## Phase report classification
 
-- **Documentation only:** this specification and acceptance criteria.
-- **Planned:** interruption capture, manager-only proposal review and commit, metrics, audit history, and dual-capability owner/operator workflow.
-- **Live:** none. No schedule or page is changed by this document.
-- **Testing only:** pure scenario tests cover the 10-stop / 2-complete example, next-day versus spread options, explicit capacity, and role capabilities. The app workflow and persistent schedule effects are not yet tested.
+- **Testing only:** pure calculator scenarios and authenticated interruption API tests cover reporting, manager-only inbox access, visit validation, and role capabilities.
+- **Planned:** manager review of schedule alternatives, metrics UI, schedule publishing, audit of manager decision, and separately approved customer notifications.
+- **Live:** none. The staged app/API behavior is not deployed and never mutates work schedules.
+
+
+### Reason capture
+
+The report records either rain or other. Other covers any non-rain reason for ending the day early, including lightning, unsafe conditions, equipment trouble, staffing, customer changes, or an owner/operator decision. No reason is required to fit a weather-only category.

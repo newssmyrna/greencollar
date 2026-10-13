@@ -5,6 +5,8 @@ import { useHostedAuth } from '@clerk/expo/hosted-auth';
 import { tokenCache } from '@clerk/expo/token-cache';
 import { fetchDayData, type DayData } from './src/data/greencollar-api';
 import { fetchRoutingSettings, acknowledgeRoutingNotice, setBusinessRoutingEnabled, requestRoutingMatrix, type RoutingSettings } from './src/data/routing-api';
+import { reportWeatherInterruption, listWeatherInterruptions, type WeatherInterruption, type WeatherInterruptionReason } from './src/data/weather-interruptions';
+import { businessRoleCapabilities } from './src/domain/weather-replan';
 import { prepareTruckPreview, type PreviewTruck, type TruckPreviewRoute } from './src/domain/truck-preview';
 import { summarizeSavedDay } from './src/data/saved-day';
 import {createSavedQueueReview,canApproveSavedQueueReview,isSavedQueueApproved,savedQueueApprovalAction} from './src/domain/saved-queue-review';
@@ -16,7 +18,7 @@ import {localSavedQueueOrder} from './src/data/local-saved-queue-order-native';
 import {localSavedQueueWorkload} from './src/data/local-saved-queue-workload-native';
 import {createSavedQueueWorkloadSettings,workloadSettingsHaveUnsavedChanges,workloadSettingsReadyForApproval} from './src/data/saved-queue-workload-settings';
 import {localSavedQueueApproval} from './src/data/local-saved-queue-approval-native';
-import { getBusinesses, createBusiness } from './src/data/business-api';
+import { getBusinesses, createBusiness, type OwnedBusiness } from './src/data/business-api';
 import { listSavedCustomers, createSavedCustomer, type SavedCustomer } from './src/data/customer-api';
 import { pauseWork, resumeWork, completeWork, completionRecord, type WorkSession } from './src/domain/work-session';
 import {canStartNextWork,startNextWork,hasSavedWorkCompletion,workSessionDate} from './src/domain/work-handoff';
@@ -235,7 +237,14 @@ function GreenCollarDashboard() {
   const [savedDayError,setSavedDayError] = useState('');
   const [loadingSaved,setLoadingSaved] = useState(false);
   const [businessName,setBusinessName] = useState('');
-  const [connectedBusiness,setConnectedBusiness] = useState<{id:string;name:string}|null>(null);
+  const [connectedBusiness,setConnectedBusiness] = useState<OwnedBusiness|null>(null);
+  const [weatherReportBusy,setWeatherReportBusy]=useState(false);
+  const [weatherReportError,setWeatherReportError]=useState('');
+  const [weatherReportSent,setWeatherReportSent]=useState(false);
+  const weatherReportEventId=useRef('');
+  const [weatherInbox,setWeatherInbox]=useState<{scope:string;items:WeatherInterruption[]}|null>(null);
+  const [weatherInboxBusy,setWeatherInboxBusy]=useState(false);
+  const [weatherInboxError,setWeatherInboxError]=useState('');
   useEffect(()=>{setAgreementEarliest('');setAgreementLatest('');setAgreementFixed('');},[userId,connectedBusiness?.id]);
   useEffect(()=>{
     routingSettingsRequest.current++;
@@ -804,6 +813,8 @@ function GreenCollarDashboard() {
   useEffect(()=>{setCompletionReviewConfirmedKey('');},[completedReviewKey]);
   const timerCanStart=timerReady&&!timerTransitionBusy&&!loadingSaved&&canStartNextWork(workSession,completedTimerSaved);
   const savedQueueScope=JSON.stringify([userId,connectedBusiness?.id,savedDay?.date]);
+  const weatherScope=JSON.stringify([userId,connectedBusiness?.id,savedDay?.date]);
+  useEffect(()=>{setWeatherReportError('');setWeatherReportSent(false);weatherReportEventId.current='';setWeatherInbox(null);setWeatherInboxError('');},[weatherScope]);
   savedQueueScopeRef.current=savedQueueScope;
   const savedQueueOrderReady=savedQueueOrderReadyScope===savedQueueScope;
   const savedQueueOrderedVisits=orderSavedQueue(savedDueSummary?.due??[],savedQueueScope,savedQueueOrder);
@@ -974,6 +985,46 @@ function GreenCollarDashboard() {
         finally{if(request===roadPreviewRequest.current)setRoadPreviewBusy(false);}
       })();}}]);
   }
+  async function submitWeatherInterruption(reason:WeatherInterruptionReason){
+    if(!connectedBusiness||!savedDay||!savedDueSummary||weatherReportBusy)return;
+    const api=process.env.EXPO_PUBLIC_GREENCOLLAR_API_URL;
+    if(!api){setWeatherReportError('API URL is not configured.');return;}
+    const remainingVisitIds=savedQueueVisitIds;
+    const completedVisitIds=savedDay.visits.filter(v=>v.scheduled_date===savedDay.date&&v.status==='completed')
+      .map(v=>v.agreement_id+':'+v.scheduled_date);
+    if(!remainingVisitIds.length){setWeatherReportError('There are no unfinished due visits to carry forward.');return;}
+    setWeatherReportBusy(true);setWeatherReportError('');
+    try{
+      const token=await getToken({template:'greencollar-api'});
+      if(!token)throw new Error('Sign in first.');
+      if(!weatherReportEventId.current)weatherReportEventId.current='wx-'+Date.now().toString(36)+'-'+Math.random().toString(36).slice(2,10);
+      await reportWeatherInterruption(api,token,{businessId:connectedBusiness.id,eventId:weatherReportEventId.current,workDate:savedDay.date,
+        reportedAt:new Date().toISOString(),reason,completedVisitIds,remainingVisitIds});
+      setWeatherReportSent(true);
+    }catch(error){setWeatherReportError(error instanceof Error?error.message:'Unable to save the interruption report.');}
+    finally{setWeatherReportBusy(false);}
+  }
+  function promptWeatherInterruption(){
+    if(!connectedBusiness||!savedDay||!savedDueSummary||!businessRoleCapabilities(connectedBusiness.role).recordFieldWork)return;
+    Alert.alert('Report a shortened workday',
+      `${savedDueSummary.completedCount} completed · ${savedQueueVisitIds.length} unfinished. This records the interruption for manager review; it does not reschedule visits or notify customers.`,
+      [{text:'Cancel',style:'cancel'},
+       {text:'Rain',onPress:()=>void submitWeatherInterruption('rain')},
+       {text:'Other reason',style:'destructive',onPress:()=>void submitWeatherInterruption('other')}]);
+  }
+  async function refreshWeatherInbox(){
+    if(!connectedBusiness||!savedDay||!businessRoleCapabilities(connectedBusiness.role).manageSchedule)return;
+    const api=process.env.EXPO_PUBLIC_GREENCOLLAR_API_URL;
+    if(!api){setWeatherInboxError('API URL is not configured.');return;}
+    setWeatherInboxBusy(true);setWeatherInboxError('');
+    try{
+      const token=await getToken({template:'greencollar-api'});
+      if(!token)throw new Error('Sign in first.');
+      const items=await listWeatherInterruptions(api,connectedBusiness.id,savedDay.date,token);
+      setWeatherInbox({scope:weatherScope,items});
+    }catch(error){setWeatherInboxError(error instanceof Error?error.message:'Unable to load interruption reports.');}
+    finally{setWeatherInboxBusy(false);}
+  }
   return (
     <SafeAreaView style={styles.page}>
       <StatusBar barStyle="light-content" />
@@ -1074,6 +1125,24 @@ function GreenCollarDashboard() {
             <Text style={styles.body}>{savedDueSummary.pendingCount} jobs due · ${(savedDueSummary.estimatedRevenueCents / 100).toFixed(2)} expected revenue · {savedDueSummary.estimatedServiceMinutes} service minutes</Text>
             <Text style={styles.muted}>{savedDueSummary.completedCount} completed · {savedDueSummary.skippedCount} skipped. This is a saved work queue, not an optimized route; travel and fuel estimates are unavailable.</Text>
             {savedDay.visits.filter(visit=>visit.status==='completed'&&!!visit.work_note?.trim()).map(visit=><Text key={visit.agreement_id+':'+visit.scheduled_date} style={styles.body}>{visit.completed_service_name??visit.agreement_id}: {visit.work_note}</Text>)}
+            {savedQueueVisitIds.length>0&&connectedBusiness&&businessRoleCapabilities(connectedBusiness.role).recordFieldWork&&<View style={{marginTop:10,padding:10,backgroundColor:'#f0f5ef',borderRadius:8}}>
+              <Text style={styles.cardHeading}>Shortened workday</Text>
+              <Text style={styles.muted}>Report a shortened day for rain or another reason, including staffing, equipment, lightning, or customer changes. Completed work stays completed; the report does not change tomorrow's schedule.</Text>
+              <Pressable accessibilityRole="button" style={styles.primary} disabled={weatherReportBusy||weatherReportSent} onPress={promptWeatherInterruption}><Text style={styles.primaryText}>{weatherReportBusy?'Saving report…':weatherReportSent?'Interruption sent for manager review':'Report a shortened workday'}</Text></Pressable>
+              {!!weatherReportError&&<Text accessibilityLiveRegion="polite" style={styles.muted}>{weatherReportError}</Text>}
+            </View>}
+            {!!savedDay&&!!connectedBusiness&&businessRoleCapabilities(connectedBusiness.role).manageSchedule&&<View style={{marginTop:10,padding:10,backgroundColor:'#f0f5ef',borderRadius:8}}>
+              <Text style={styles.cardHeading}>Manager interruption review</Text>
+              <Text style={styles.muted}>Review field reports for {savedDay.date}. Opening the inbox does not update work orders.</Text>
+              <Pressable accessibilityRole="button" style={styles.primary} disabled={weatherInboxBusy} onPress={()=>void refreshWeatherInbox()}><Text style={styles.primaryText}>{weatherInboxBusy?'Loading reports…':'Review interruption reports'}</Text></Pressable>
+              {!!weatherInboxError&&<Text accessibilityLiveRegion="polite" style={styles.muted}>{weatherInboxError}</Text>}
+              {weatherInbox?.scope===weatherScope&&weatherInbox.items.map(item=><View key={item.eventId} style={{paddingVertical:8,borderTopWidth:1,borderTopColor:'#d8e2d6'}}>
+                <Text style={styles.body}>{item.reason==='other'?'Other reason':'Rain'} · {new Date(item.reportedAt).toLocaleTimeString([], {hour:'numeric',minute:'2-digit'})}</Text>
+                <Text style={styles.muted}>{item.completedVisitIds.length} completed · {item.remainingVisitIds.length} unfinished · reporter {item.reporterSubject}</Text>
+                <Text style={styles.muted}>Manager review is required before preparing or approving a schedule change. No schedule change or customer notice has been sent.</Text>
+              </View>)}
+              {weatherInbox?.scope===weatherScope&&weatherInbox.items.length===0&&<Text style={styles.muted}>No weather interruptions reported for this workday.</Text>}
+            </View>}
             {savedQueueWorkload&&savedDueSummary.pendingCount>0&&<View style={styles.card}>
               <Text style={styles.cardHeading}>Remaining work settings</Text>
               <Text style={styles.muted}>Set service hours, a visit limit, or both for this remaining queue. You can reserve planned breaks below.</Text>

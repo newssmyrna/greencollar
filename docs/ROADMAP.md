@@ -32,3 +32,10 @@ Keep every change narrowly scoped and tested; never silently remove agreed featu
 - Completion, remaining visits, moved/unplaced counts, projected revenue, delay, and service-minute utilization are reported.
 - Current `owner` / `admin` / `worker` roles map to manager and field-work capabilities; owner/operator has both.
 - Manager review UI, interruption capture, persistent audit trail, version-safe schedule commit, and separate notification approval remain future work.
+
+
+## Phase 72 — Weather interruption reporting
+- Field worker/owner can record rain, lightning, or unsafe-conditions interruptions with completed and remaining visit IDs.
+- Owner/admin can review the date-scoped report inbox; worker cannot access management inbox.
+- Events are idempotent and audited; report writes do not change visit, agreement, schedule, or customer-notification state.
+- Schedule option comparison and manager-approved publishing remain planned.
