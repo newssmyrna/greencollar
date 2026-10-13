@@ -5,13 +5,20 @@ export type ServiceJob = {
   id: Id; customerId: Id; locationId: Id; serviceName: string;
   rateCents: number; estimatedMinutes: number;
   earliestStartMinute?: number; latestFinishMinute?: number;
-  fixedStartMinute?: number; priority?: number; due?: boolean;
+  fixedStartMinute?: number;
+  /** Higher numeric values win after appointment, time-window, and due-job ordering. */
+  priority?: number;
+  /** Marks a job that is due for the selected service day. */
+  due?: boolean;
 };
 export type TravelMatrix = Record<string, Record<string, number>>; // drive minutes, from nodeId to nodeId
+export type ScheduledBreak = { startMinute: number; durationMinutes: number };
 export type PlannerInput = {
   jobs: ServiceJob[]; locations: ServiceLocation[]; travelMinutes: TravelMatrix;
   startNodeId: Id; endNodeId: Id; startMinute: number; endMinute: number; maxJobs: number;
   minimumBufferMinutes?: number;
+  /** Fixed, non-working intervals in the operator's local workday minute scale. */
+  breaks?: ScheduledBreak[];
 };
 export type PlannedStop = { jobId: Id; locationId: Id; arrivalMinute: number; startMinute: number; finishMinute: number; driveMinutes: number; waitMinutes: number };
 export type PlanResult = { stops: PlannedStop[]; excluded: { jobId: Id; reason: string }[]; plannedFinishMinute: number; totalDriveMinutes: number; totalServiceMinutes: number; revenueCents: number; returnDriveMinutes: number; feasible: boolean };

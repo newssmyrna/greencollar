@@ -1,16 +1,39 @@
-import type { PlannerInput, PlanResult, PlannedStop, ServiceJob, TravelMatrix } from './types';
+import type { PlannerInput, PlanResult, PlannedStop, ServiceJob, TravelMatrix, ScheduledBreak } from './types';
 
 /**
- * Transparent deterministic *baseline* scheduler, NOT a global optimal vehicle routing solver.
- * Adds valid jobs greedily by shortest next drive, using service windows, fixed starts,
- * end-of-day return constraints, job caps and a configurable per-job buffer.
- * Travel matrix must come from a road routing provider in production.
+ * Transparent deterministic baseline scheduler, not a globally optimal route solver.
+ * It selects feasible jobs greedily, honors fixed starts, service windows, scheduled
+ * breaks, return-to-depot time, job caps and a configurable per-job buffer.
+ * Travel matrices must come from a road routing provider in production.
  */
 function travel(matrix: TravelMatrix, from: string, to: string): number {
   if (from === to) return 0;
   const n = matrix[from]?.[to];
   return typeof n === 'number' && Number.isFinite(n) && n >= 0 ? n : Infinity;
 }
+
+function normalizedBreaks(input: ScheduledBreak[] | undefined): ScheduledBreak[] {
+  return (input ?? [])
+    .filter(b => Number.isFinite(b.startMinute) && Number.isFinite(b.durationMinutes) && b.durationMinutes > 0)
+    .map(b => ({ startMinute: b.startMinute, durationMinutes: b.durationMinutes }))
+    .sort((a, b) => a.startMinute - b.startMinute);
+}
+
+/** Shift a contiguous activity past every fixed break it would overlap. */
+function shiftPastBreaks(start: number, duration: number, breaks: ScheduledBreak[]): number {
+  let candidate = start;
+  for (const pause of breaks) {
+    const end = pause.startMinute + pause.durationMinutes;
+    if (candidate < end && candidate + duration > pause.startMinute) candidate = end;
+  }
+  return candidate;
+}
+
+type Candidate = {
+  job: ServiceJob; drive: number; back: number; arrival: number;
+  start: number; finish: number; feasible: boolean; reason?: string;
+};
+
 export function planDay(input: PlannerInput): PlanResult {
   const { jobs, locations, travelMinutes, startNodeId, endNodeId, startMinute, endMinute } = input;
   const byLocation = new Set(locations.map(l => l.id));
@@ -19,33 +42,65 @@ export function planDay(input: PlannerInput): PlanResult {
   const excluded: {jobId:string;reason:string}[] = [];
   const buffer = Math.max(0, input.minimumBufferMinutes ?? 5);
   const cap = Math.max(0, Math.floor(input.maxJobs));
+  const breaks = normalizedBreaks(input.breaks);
   let clock = startMinute;
   let node = startNodeId;
   let driven = 0;
   let service = 0;
   let revenue = 0;
 
-  while (remaining.length > 0 && stops.length < cap) {
-    const choices = remaining.map(job => {
-      const drive = travel(travelMinutes, node, job.locationId);
-      const back = travel(travelMinutes, job.locationId, endNodeId);
-      const arrival = clock + drive;
-      const start = job.fixedStartMinute !== undefined
-        ? Math.max(arrival, job.fixedStartMinute)
-        : Math.max(arrival, job.earliestStartMinute ?? startMinute);
-      const finish = start + Math.max(0, job.estimatedMinutes) + buffer;
-      const meetsFixed = job.fixedStartMinute === undefined || arrival <= job.fixedStartMinute;
-      const meetsWindow = finish <= (job.latestFinishMinute ?? endMinute);
-      const feasible = byLocation.has(job.locationId) && Number.isFinite(drive) && Number.isFinite(back)
-        && meetsFixed && meetsWindow && finish + back <= endMinute;
-      return {job, drive, back, arrival, start, finish, feasible};
-    }).filter(x => x.feasible);
+  const evaluate = (job: ServiceJob, fromNode: string, availableMinute: number): Candidate => {
+    const drive = travel(travelMinutes, fromNode, job.locationId);
+    const back = travel(travelMinutes, job.locationId, endNodeId);
+    const invalid = (reason: string): Candidate => ({
+      job, drive, back, arrival: availableMinute + (Number.isFinite(drive) ? drive : 0),
+      start: availableMinute, finish: availableMinute, feasible: false, reason
+    });
+    if (!byLocation.has(job.locationId)) return invalid('job location is missing from the plan');
+    if (!Number.isFinite(drive)) return invalid('no travel route to this location');
+    if (!Number.isFinite(back)) return invalid('no travel route from this location back to the depot');
 
+    // If a break interrupts the drive, wait until it ends before departing.
+    const depart = shiftPastBreaks(availableMinute, drive, breaks);
+    const arrival = depart + drive;
+    const fixed = job.fixedStartMinute !== undefined;
+    const start = fixed
+      ? job.fixedStartMinute!
+      : shiftPastBreaks(Math.max(arrival, job.earliestStartMinute ?? startMinute),
+          Math.max(0, job.estimatedMinutes) + buffer, breaks);
+    const finish = start + Math.max(0, job.estimatedMinutes) + buffer;
+    if (fixed && arrival > start) return { ...invalid('fixed appointment cannot be reached in time'), arrival, start, finish };
+    if (fixed && start < finish && breaks.some(b => start < b.startMinute + b.durationMinutes && finish > b.startMinute)) {
+      return { ...invalid('fixed appointment overlaps a scheduled break'), arrival, start, finish };
+    }
+    if (finish > (job.latestFinishMinute ?? endMinute)) {
+      return { ...invalid('service window closes before the visit can finish'), arrival, start, finish };
+    }
+    if (finish + back > endMinute) {
+      return { ...invalid('visit and return trip exceed the workday'), arrival, start, finish };
+    }
+    return { job, drive, back, arrival, start, finish, feasible: true };
+  };
+
+  while (remaining.length > 0 && stops.length < cap) {
+    const choices = remaining.map(job => evaluate(job, node, clock)).filter(x => x.feasible);
     if (!choices.length) break;
-    choices.sort((a,b) =>
-      (a.job.fixedStartMinute !== undefined ? 0 : 1) - (b.job.fixedStartMinute !== undefined ? 0 : 1)
-      || a.drive - b.drive || (b.job.priority ?? 0) - (a.job.priority ?? 0)
-      || a.job.id.localeCompare(b.job.id));
+    choices.sort((a,b) => {
+      const aFixed = a.job.fixedStartMinute;
+      const bFixed = b.job.fixedStartMinute;
+      if (aFixed !== undefined && bFixed === undefined) return -1;
+      if (bFixed !== undefined && aFixed === undefined) return 1;
+      if (aFixed !== undefined && bFixed !== undefined && aFixed !== bFixed) return aFixed - bFixed;
+
+      const aSlack = a.job.latestFinishMinute === undefined ? Infinity : a.job.latestFinishMinute - a.finish;
+      const bSlack = b.job.latestFinishMinute === undefined ? Infinity : b.job.latestFinishMinute - b.finish;
+      const slackOrder = aSlack === bSlack ? 0 : aSlack < bSlack ? -1 : 1;
+      return slackOrder
+        || Number(Boolean(b.job.due)) - Number(Boolean(a.job.due))
+        || (b.job.priority ?? 0) - (a.job.priority ?? 0)
+        || a.drive - b.drive
+        || a.job.id.localeCompare(b.job.id);
+    });
     const chosen = choices[0];
     stops.push({
       jobId: chosen.job.id, locationId: chosen.job.locationId,
@@ -61,14 +116,24 @@ export function planDay(input: PlannerInput): PlanResult {
     remaining.splice(remaining.findIndex(j => j.id === chosen.job.id), 1);
   }
 
-  for (const j of remaining) excluded.push({jobId:j.id, reason:stops.length >= cap ? 'job cap reached' : 'cannot fit within route and time constraints'});
+  for (const job of remaining) {
+    const reason = stops.length >= cap
+      ? 'job cap reached'
+      : evaluate(job, node, clock).reason ?? 'cannot fit within route and time constraints';
+    excluded.push({jobId:job.id, reason});
+  }
   const returnDrive = travel(travelMinutes, node, endNodeId);
+  const returnAt = clock + (Number.isFinite(returnDrive) ? returnDrive : 0);
+  const returnBreakAdjusted = shiftPastBreaks(clock, Number.isFinite(returnDrive) ? returnDrive : 0, breaks);
+  const finalReturnAt = returnBreakAdjusted + (Number.isFinite(returnDrive) ? returnDrive : 0);
+  // Include breaks encountered on the return drive in the planned finish time.
+  const returnWait = returnBreakAdjusted - clock;
   return {
     stops, excluded, totalDriveMinutes: driven + (Number.isFinite(returnDrive) ? returnDrive : 0),
     returnDriveMinutes: Number.isFinite(returnDrive) ? returnDrive : 0,
     totalServiceMinutes: service, revenueCents: revenue,
-    plannedFinishMinute: clock + (Number.isFinite(returnDrive) ? returnDrive : 0),
-    feasible: Number.isFinite(returnDrive) && clock + returnDrive <= endMinute
+    plannedFinishMinute: finalReturnAt,
+    feasible: Number.isFinite(returnDrive) && finalReturnAt <= endMinute && returnAt + returnWait <= endMinute
   };
 }
 export function predictDuration(historyMinutes: number[], initialEstimate: number): { minutes: number; samples: number; confidence: 'low'|'medium'|'high' } {

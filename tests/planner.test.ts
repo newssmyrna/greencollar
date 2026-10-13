@@ -12,10 +12,11 @@ test('50-customer test fixture creates a feasible day within configured capacity
   assert.ok(result.revenueCents>0);
 });
 
-test('job cap zero schedules no work',()=>{
+test('job cap zero schedules no work and explains the cap',()=>{
   const result=planDay({...sampleDay,maxJobs:0});
   assert.equal(result.stops.length,0);
   assert.equal(result.excluded.length,50);
+  assert.ok(result.excluded.every(item=>item.reason==='job cap reached'));
 });
 
 test('travel and service time consume a bounded workday',()=>{
@@ -23,10 +24,60 @@ test('travel and service time consume a bounded workday',()=>{
   assert.ok(result.plannedFinishMinute<=9*60);
 });
 
-test('missing travel edges exclude unreachable jobs',()=>{
+test('missing travel edges exclude unreachable jobs with a useful reason',()=>{
   const result=planDay({...sampleDay,travelMinutes:{base:{base:0}}});
   assert.equal(result.stops.length,0);
   assert.equal(result.excluded.length,50);
+  assert.equal(result.excluded[0].reason,'no travel route to this location');
+});
+
+test('scheduled break shifts overlapping service to after the break',()=>{
+  const input={...sampleDay,jobs:[{...sampleDay.jobs[0],estimatedMinutes:25}],
+    locations:[sampleDay.locations[0]],maxJobs:1,startMinute:8*60+30,endMinute:11*60,
+    travelMinutes:{base:{loc1:10},loc1:{base:10}},breaks:[{startMinute:9*60,durationMinutes:30}]};
+  const result=planDay(input);
+  assert.equal(result.stops.length,1);
+  assert.equal(result.stops[0].startMinute,9*60+30);
+  assert.equal(result.stops[0].finishMinute,10*60);
+  assert.ok(result.feasible);
+});
+
+test('fixed appointment that conflicts with a scheduled break is explained',()=>{
+  const input={...sampleDay,jobs:[{...sampleDay.jobs[0],fixedStartMinute:9*60,estimatedMinutes:30}],
+    locations:[sampleDay.locations[0]],maxJobs:1,startMinute:8*60+40,endMinute:11*60,
+    travelMinutes:{base:{loc1:10},loc1:{base:10}},breaks:[{startMinute:9*60,durationMinutes:45}]};
+  const result=planDay(input);
+  assert.equal(result.stops.length,0);
+  assert.equal(result.excluded[0].reason,'fixed appointment overlaps a scheduled break');
+});
+
+test('narrow service windows are selected before less urgent jobs',()=>{
+  const jobs=[
+    {...sampleDay.jobs[0],id:'broad-window',locationId:'loc1',estimatedMinutes:20,earliestStartMinute:undefined,latestFinishMinute:10*60,priority:0},
+    {...sampleDay.jobs[1],id:'closing-window',locationId:'loc2',estimatedMinutes:20,earliestStartMinute:undefined,latestFinishMinute:9*60+30,priority:0}
+  ];
+  const result=planDay({...sampleDay,jobs,locations:sampleDay.locations.slice(0,2),maxJobs:1});
+  assert.equal(result.stops[0].jobId,'closing-window');
+});
+
+test('due work beats a closer optional job when time-window urgency is equal',()=>{
+  const jobs=[
+    {...sampleDay.jobs[0],id:'optional-near',locationId:'loc1',estimatedMinutes:20,earliestStartMinute:undefined,due:false,latestFinishMinute:10*60},
+    {...sampleDay.jobs[1],id:'recurring-due',locationId:'loc2',estimatedMinutes:20,earliestStartMinute:undefined,due:true,latestFinishMinute:10*60+10}
+  ];
+  const travelMinutes={base:{loc1:2,loc2:12},loc1:{base:2},loc2:{base:12}};
+  const result=planDay({...sampleDay,jobs,locations:sampleDay.locations.slice(0,2),travelMinutes,maxJobs:1});
+  assert.equal(result.stops[0].jobId,'recurring-due');
+});
+
+test('higher numeric priority wins after appointment and urgency ties',()=>{
+  const jobs=[
+    {...sampleDay.jobs[0],id:'low-priority',locationId:'loc1',estimatedMinutes:20,earliestStartMinute:undefined,due:false,priority:1,latestFinishMinute:10*60},
+    {...sampleDay.jobs[1],id:'high-priority',locationId:'loc2',estimatedMinutes:20,earliestStartMinute:undefined,due:false,priority:5,latestFinishMinute:10*60}
+  ];
+  const travelMinutes={base:{loc1:5,loc2:5},loc1:{base:5},loc2:{base:5}};
+  const result=planDay({...sampleDay,jobs,locations:sampleDay.locations.slice(0,2),travelMinutes,maxJobs:1});
+  assert.equal(result.stops[0].jobId,'high-priority');
 });
 
 test('duration forecast learns without overreacting to one outlier',()=>{

@@ -22,6 +22,9 @@ test('accepts only valid signed token for matching issuer and audience',async()=
     .setIssuer('https://clerk.example.test').setAudience('greencollar-api')
     .setSubject('user_123').setIssuedAt(0).setExpirationTime(1).sign(privateKey);
   assert.equal(await verifyIdentityToken(expired,keys,'https://clerk.example.test','greencollar-api'),null);
-  const tampered=valid.slice(0,-2)+'xx';
+  const tokenParts=valid.split('.');
+  const signature=tokenParts[2];
+  tokenParts[2]=(signature[0]==='A'?'B':'A')+signature.slice(1);
+  const tampered=tokenParts.join('.');
   assert.equal(await verifyIdentityToken(tampered,keys,'https://clerk.example.test','greencollar-api'),null);
 });
