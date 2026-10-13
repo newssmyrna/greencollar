@@ -16,3 +16,7 @@ Implemented: pure TypeScript recurrence generation for daily, weekly, biweekly, 
 2. Authenticate sign-up and business owner provisioning.
 3. Add customer and agreement CRUD through the API and connect to mobile app.
 4. Materialize due visits idempotently then optimize daily work by actual road travel.
+
+## Service workload preview
+
+The Planner tab now checks the synthetic example jobs against the entered hours and job-count limit. It reports service-minute overage and how many example jobs fall outside the cap. This is a sample workload indicator only: travel, breaks, fixed appointments, customer windows, and fuel are not modeled, and it does not change the saved queue or claim route feasibility.
