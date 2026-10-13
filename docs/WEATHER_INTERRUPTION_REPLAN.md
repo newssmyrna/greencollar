@@ -1,6 +1,6 @@
 # Weather interruption and schedule recalibration
 
-**Status:** Planned feature requirement captured during Phase 70. Documentation only; no scheduling behavior is implemented or live.
+**Status:** Phase 71 foundation is implemented as a pure, non-persistent draft calculator and role-capability map. Interruption capture, manager review UI, persistence, and schedule publishing remain planned; nothing is live.
 
 ## Scenario
 
@@ -14,7 +14,7 @@ Use capabilities rather than mutually exclusive job titles:
 - **Manager/admin:** reviews and approves schedule proposals for the business.
 - **Field worker:** records completed work and a weather interruption, sees their assigned work and manager-approved updates, and may request a replan. A worker cannot publish a schedule change or contact customers through an unapproved proposal.
 
-This should map to existing business membership authorization. Confirm the current owner/admin/member roles against this capability split before implementation. An owner who also mows should not need a second account or lose manager authority to use the worker screen.
+This maps to the existing `owner` / `admin` / `worker` membership roles. Phase 71's capability map gives owners both manager and field-work capabilities, admins manager capability, and workers field-work capability. An owner who also mows should not need a second account or lose manager authority to use the worker screen.
 
 ## Proposed flow
 
@@ -54,9 +54,13 @@ This should map to existing business membership authorization. Confirm the curre
 
 Confirm the replan horizon, which schedule constraints are hard versus warning-only, whether customer notifications are in scope, whether the initial planner can use manual drive-time estimates only, and which managers may approve. The pilot's stated 10 stops/day remains ambiguous as a total across the three trucks or per truck; do not infer capacity from the current three-truck preview.
 
+## Phase 71 calculation foundation
+
+`src/domain/weather-replan.ts` now creates two review-only alternatives from explicitly supplied due visits and per-truck/day service-minute and stop capacity: put as many visits as possible on the next day, or spread them across the supplied horizon. The report includes completed visits preserved, moved and unplaced counts, projected revenue, delay days, and daily service-minute utilization. The calculator does not mutate the schedule, persist a proposal, or assign travel time. It warns that drive time, windows, breaks, and route feasibility are not evaluated. Capacity is an explicit input; the code does not infer whether 10 daily stops means total or per truck.
+
 ## Phase report classification
 
 - **Documentation only:** this specification and acceptance criteria.
 - **Planned:** interruption capture, manager-only proposal review and commit, metrics, audit history, and dual-capability owner/operator workflow.
 - **Live:** none. No schedule or page is changed by this document.
-- **Testing only:** none yet. No rain-out scenario was executed against app code.
+- **Testing only:** pure scenario tests cover the 10-stop / 2-complete example, next-day versus spread options, explicit capacity, and role capabilities. The app workflow and persistent schedule effects are not yet tested.

@@ -377,3 +377,8 @@ A preview sends only the selected truck's saved coordinates and ephemeral point 
 ### Weather interruption and schedule recalibration
 
 The rain-out carryover case and manager/worker decision rights are specified in [WEATHER_INTERRUPTION_REPLAN.md](WEATHER_INTERRUPTION_REPLAN.md). The feature is planned and documentation-only; it does not change live scheduling. The owner/operator should retain both management and field-worker capabilities. Workers can report interrupted work but cannot publish business-wide schedule changes.
+
+
+### Rain-out carryover prototype
+
+Phase 71 adds a pure, non-persistent calculator for next-day and spread-across-horizon options, plus capability rules mapped to the current `owner` / `admin` / `worker` memberships. It preserves completed visits and reports service-minute capacity, moved/unplaced stops, projected revenue, and delay metrics. It explicitly warns when drive time, appointment windows, breaks, and route feasibility are not modeled. This is calculator/test foundation only: no interruption capture, manager UI, schedule write, or customer notification is live.

@@ -25,3 +25,10 @@
 - Launch paid product only after entire journey succeeds.
 
 Keep every change narrowly scoped and tested; never silently remove agreed features.
+
+
+## Phase 71 — Weather interruption replan foundation
+- Pure draft calculator compares next-day carryover with spreading across explicitly supplied future truck/day capacities.
+- Completion, remaining visits, moved/unplaced counts, projected revenue, delay, and service-minute utilization are reported.
+- Current `owner` / `admin` / `worker` roles map to manager and field-work capabilities; owner/operator has both.
+- Manager review UI, interruption capture, persistent audit trail, version-safe schedule commit, and separate notification approval remain future work.
