@@ -32,7 +32,7 @@ test('reads only the authorized business draft list',async()=>{
  const f=fixture();const r=await api(request('GET'),f.env);assert.equal(r.status,200);
  const result=await r.json() as {invoiceDrafts:Array<{serviceVisitId:string}>;hasMore:boolean};
  assert.equal(result.invoiceDrafts[0].serviceVisitId,'visit-1');assert.equal(result.hasMore,false);
- assert.deepEqual(f.queries[0].values,['business-a']);assert.match(f.queries[0].sql,/WHERE business_id=\?/);
+ assert.deepEqual(f.queries[0].values,['business-a','verified-subject']);assert.match(f.queries[0].sql,/WHERE business_id=\?/);
 });
 test('workers cannot create or edit financial drafts and outsiders are denied',async()=>{
  assert.equal((await api(request('POST',undefined,{serviceVisitId:'visit-1',dueOn:'2026-10-12'}),fixture('worker').env)).status,403);
