@@ -70,3 +70,10 @@ Keep every change narrowly scoped and tested; never silently remove agreed featu
 - Validate worker membership, active scheduled agreements, stop uniqueness, same-day crew/truck conflicts, and task-to-crew assignments.
 - Permit owner/admin draft edits; workers can read only routes assigned to them.
 - Draft saves never publish or mutate service agreements; route UI, GPS, availability optimization, and publish remain future work.
+
+
+## Phase 79 — Availability-aware schedule draft validation
+- Reject draft saves when a selected worker's scheduled shift overlaps a recorded sick or unavailable interval for that business date.
+- Keep availability checks tenant-scoped and run them on the server before any schedule write.
+- Preserve lunch/break events as intervals; do not treat a meal break as a full-shift absence.
+- Conflict returns an actionable response without changing the saved draft; lunch-aware route timing remains a follow-on because stops do not yet have time windows.
