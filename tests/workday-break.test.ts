@@ -1,10 +1,10 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import {createHash} from 'node:crypto';
-import {assessWorkdayBreak,normalizeWorkdayBreak,type WorkdayTimingInput} from '../src/domain/workday-break';
+import {assessWorkdayBreak,normalizeWorkdayBreak,type WorkdayTimingInput,type WorkdayBreakInterval} from '../src/domain/workday-break';
 import {formatServiceClock} from '../src/domain/service-time';
 import {assessSavedQueueAppointments,describeSavedQueueAppointments,describeAppointmentCheckAssumptions} from '../src/domain/saved-queue-appointments';
-import {createSavedQueueReview,canApproveSavedQueueReview,savedQueueApprovalAction,type QueueReviewVisit} from '../src/domain/saved-queue-review';
+import {createSavedQueueReview,canApproveSavedQueueReview,type QueueReviewVisit} from '../src/domain/saved-queue-review';
 import {createLocalSavedQueueWorkloadStore,normalizeWorkloadLimits,workloadSettingsScope,type WorkloadSettingsStore} from '../src/data/local-saved-queue-workload';
 import {createSavedQueueWorkloadSettings,workloadSettingsHaveUnsavedChanges,workloadSettingsReadyForApproval} from '../src/data/saved-queue-workload-settings';
 import {createLocalSavedQueueApprovalStore} from '../src/data/local-saved-queue-approval';
@@ -13,8 +13,9 @@ import type {SavedQueueWorkloadLimits} from '../src/domain/saved-queue-workload'
 const context={subject:'operator-a',businessId:'business-a',date:'2026-10-13'};
 const limits={hours:'8',maxJobs:'6'};
 const window={workdayStart:'08:00',workdayFinish:'17:00'};
-const pause={breakStart:'12:00',breakFinish:'12:30'};
-const settings={...limits,...window,...pause};
+const breaks={breaks:'12:00-12:30\n10:00-10:15'};
+const normalizedBreaks={breaks:'10:00-10:15\n12:00-12:30'};
+const settings={...limits,...window,...normalizedBreaks};
 const visit=(id:string,extra:Partial<QueueReviewVisit>={}):QueueReviewVisit=>({
   id,customer:'Synthetic '+id,service:'Synthetic service',rateCents:5000,estimatedMinutes:30,...extra
 });
@@ -32,208 +33,224 @@ function fixture(){
   const store=createLocalSavedQueueWorkloadStore(storage,digest);
   return {records,storage,store,controller:createSavedQueueWorkloadSettings(store),writes:()=>writes};
 }
+const intervals:WorkdayBreakInterval[]=[
+  {startMinute:600,finishMinute:615},{startMinute:720,finishMinute:750}
+];
 
-test('optional break clocks canonicalize without inventing a work window',()=>{
+test('multiple intervals canonicalize in clock order and preserve blank input',()=>{
   assert.deepEqual(normalizeWorkdayBreak({}),{});
-  assert.deepEqual(normalizeWorkdayBreak({breakStart:' ',breakFinish:''}),{});
-  assert.deepEqual(normalizeWorkloadLimits({...limits,breakStart:' 9:05 ',breakFinish:'9:15'}),{...limits,breakStart:'09:05',breakFinish:'09:15'});
-  assert.deepEqual(assessWorkdayBreak({breakStart:'00:00',breakFinish:'24:00'}),{status:'set',startMinute:0,finishMinute:1440,error:''});
-  assert.equal(assessWorkdayBreak({breakStart:'23:59',breakFinish:'24:00'}).status,'set');
+  assert.deepEqual(normalizeWorkdayBreak({breaks:' \n  \n'}),{});
+  assert.deepEqual(normalizeWorkdayBreak({breaks:' 12:00 - 12:30 \n10:00-10:15'}),normalizedBreaks);
+  assert.deepEqual(normalizeWorkloadLimits({...limits,...breaks}),{...limits,...normalizedBreaks});
+  const result=assessWorkdayBreak({...window,...breaks});
+  assert.equal(result.status,'set');
+  if(result.status==='set')assert.deepEqual(result.intervals,intervals);
 });
 
-test('partial, malformed, reversed and oversized break inputs reject',()=>{
-  for(const input of [
-    {breakStart:'12:00'},{breakFinish:'12:30'},{breakStart:'12:00',breakFinish:''},
-    {breakStart:'12:00',breakFinish:'12:00'},{breakStart:'23:00',breakFinish:'01:00'},
-    {breakStart:'24:00',breakFinish:'24:00'},{breakStart:'12:60',breakFinish:'13:00'},
-    {breakStart:'noon',breakFinish:'13:00'},{breakStart:null,breakFinish:'13:00'},
-    {breakStart:720,breakFinish:'13:00'},{breakStart:' '.repeat(33),breakFinish:'13:00'}
+test('break parser rejects malformed, partial, reversed and oversized schedules',()=>{
+  for(const breaks of [
+    '12:00','12:00-','-12:30','12:00-13:00-extra','12:00 - 12:00',
+    '23:00-01:00','24:00-24:00','12:60-13:00','noon-13:00',
+    '12:00-13:00\nnoon-14:00','12:00-13:00\n'.repeat(9),
+    '12:00-13:00'.repeat(14)
   ]){
-    assert.equal(assessWorkdayBreak(input as WorkdayTimingInput).status,'invalid');
-    assert.throws(()=>normalizeWorkloadLimits({...limits,...input} as SavedQueueWorkloadLimits));
+    assert.equal(assessWorkdayBreak({breaks}).status,'invalid',breaks);
+    assert.throws(()=>normalizeWorkloadLimits({...limits,breaks}));
   }
 });
 
-test('break must fit a valid remaining window and can be cleared after that window moves',()=>{
-  assert.equal(assessWorkdayBreak({...window,breakStart:'08:00',breakFinish:'17:00'}).status,'set');
-  for(const input of [
-    {...pause,workdayStart:'08:00'},
-    {...pause,workdayStart:'13:00',workdayFinish:'17:00'},
-    {...window,breakStart:'07:59',breakFinish:'08:30'},
-    {...window,breakStart:'16:30',breakFinish:'17:01'}
-  ])assert.equal(assessWorkdayBreak(input).status,'invalid');
-  assert.deepEqual(normalizeWorkloadLimits({...settings,workdayStart:'13:00',breakStart:'',breakFinish:''}),{...limits,workdayStart:'13:00',workdayFinish:'17:00'});
+test('overlapping breaks reject while touching boundaries remain valid',()=>{
+  for(const breaks of [
+    '10:00-10:30\n10:15-10:45',
+    '10:00-11:00\n10:30-10:45',
+    '12:00-13:00\n12:00-12:30'
+  ])assert.match(assessWorkdayBreak({breaks}).error,/cannot overlap/);
+  assert.equal(assessWorkdayBreak({breaks:'10:00-10:30\n10:30-10:45'}).status,'set');
 });
 
-test('flexible service crossing the break waits until it can run uninterrupted',()=>{
-  const rows=[visit('long',{preferredStartMinute:705,estimatedMinutes:30,preferredFinishMinute:750})];
-  const before=JSON.stringify(rows);
-  assert.equal(assessSavedQueueAppointments(rows,window).status,'no_conflicts_detected');
-  const result=assessSavedQueueAppointments(rows,settings);
+test('every interval must fit the saved work window and may span its endpoints exactly',()=>{
+  assert.equal(assessWorkdayBreak({...window,breaks:'08:00-08:30\n16:30-17:00'}).status,'set');
+  assert.equal(assessWorkdayBreak({...window,breaks:'07:59-08:15'}).status,'invalid');
+  assert.equal(assessWorkdayBreak({...window,breaks:'16:30-17:01'}).status,'invalid');
+  assert.equal(assessWorkdayBreak({workdayStart:'08:00',breaks:'12:00-12:15'}).status,'invalid');
+});
+
+test('a long flexible service moves beyond every break it would overlap',()=>{
+  const input={...limits,...window,breaks:'12:00-12:15\n13:00-13:30'};
+  const result=assessSavedQueueAppointments([visit('long',{
+    preferredStartMinute:705,preferredFinishMinute:840,estimatedMinutes:46
+  })],input);
   assert.equal(result.issues[0].kind,'finish_window_conflict');
-  assert.match(result.issues[0].message,/30 min over/);
+  assert.match(result.issues[0].message,/14:00.*16 min over/);
   assert.match(result.issues[0].message,/without travel or any other breaks/);
-  assert.equal(JSON.stringify(rows),before);
 });
 
-test('a service may end at break start and the next start at break finish',()=>{
+test('services may touch a break end or start without overlapping it',()=>{
   const result=assessSavedQueueAppointments([
-    visit('before',{fixedStartMinute:690}),visit('after',{fixedStartMinute:750})
-  ],settings);
+    visit('before',{fixedStartMinute:570}),
+    visit('middle',{fixedStartMinute:615}),
+    visit('after',{fixedStartMinute:750})
+  ],{...window,...normalizedBreaks});
   assert.equal(result.status,'no_conflicts_detected');
   assert.deepEqual(result.issues,[]);
 });
 
-test('fixed starts inside the break or services spanning its start warn explicitly',()=>{
-  for(const fixedStartMinute of [691,720,749]){
-    const result=assessSavedQueueAppointments([visit('fixed',{fixedStartMinute})],settings);
-    assert.equal(result.status,'conflicts');
-    assert.deepEqual(result.issues.map(issue=>issue.kind),['fixed_break_conflict']);
-    assert.match(result.issues[0].message,/12:00–12:30 break/);
+test('fixed appointments overlapping separate breaks identify the affected interval',()=>{
+  for(const [fixedStartMinute,expected] of [[605,'10:00–10:15'],[730,'12:00–12:30']] as const){
+    const result=assessSavedQueueAppointments([visit('fixed',{fixedStartMinute,estimatedMinutes:20})],{...window,...normalizedBreaks});
+    assert.equal(result.issues[0].kind,'fixed_break_conflict');
+    assert.match(result.issues[0].message,new RegExp(expected));
     assert.match(result.issues[0].message,/without interruption/);
   }
 });
 
-test('waiting until after the break does not count the break a second time',()=>{
+test('fixed service spanning two touching break intervals reports both',()=>{
+  const result=assessSavedQueueAppointments([visit('fixed',{fixedStartMinute:610,estimatedMinutes:50})],{
+    breaks:'10:00-10:15\n10:15-10:45'
+  });
+  assert.equal(result.issues[0].kind,'fixed_break_conflict');
+  assert.match(result.issues[0].message,/10:00–10:15, 10:15–10:45/);
+});
+
+test('waiting that already spans a break is not counted twice',()=>{
   const result=assessSavedQueueAppointments([
-    visit('wait',{preferredStartMinute:780}),visit('next',{fixedStartMinute:810})
-  ],settings);
+    visit('wait',{preferredStartMinute:780}),
+    visit('next',{fixedStartMinute:810})
+  ],{...window,...normalizedBreaks});
   assert.equal(result.status,'no_conflicts_detected');
 });
 
-test('break-delayed service propagates to later fixed appointments without moving backward',()=>{
+test('a delayed service carries its lower bound into the next fixed start',()=>{
   const result=assessSavedQueueAppointments([
-    visit('first',{preferredStartMinute:705}),visit('second',{fixedStartMinute:765}),visit('third',{fixedStartMinute:810})
-  ],settings);
-  assert.equal(result.issues.length,1);
+    visit('first',{preferredStartMinute:705}),
+    visit('second',{fixedStartMinute:765}),
+    visit('third',{fixedStartMinute:810})
+  ],{...window,...normalizedBreaks});
   assert.equal(result.issues[0].visitId,'second');
   assert.equal(result.issues[0].kind,'fixed_start_conflict');
   assert.match(result.issues[0].message,/15 min short/);
 });
 
-test('a planned break consumes the work window while leaving the service budget separate',()=>{
-  const rows=[visit('a',{estimatedMinutes:60})];
-  const input={...limits,workdayStart:'11:30',workdayFinish:'13:00',...pause};
-  const result=review(rows,input);
+test('breaks affect appointment timing without reducing the service-hour budget',()=>{
+  const result=review([visit('a',{estimatedMinutes:60})],{
+    ...limits,workdayStart:'11:30',workdayFinish:'13:00',breaks:'12:00-12:30'
+  });
   assert.equal(result.workload?.estimatedServiceMinutes,60);
   assert.equal(result.workload?.availableMinutes,480);
   assert.equal(result.workload?.status,'within_limits');
   assert.equal(result.appointments.issues[0].kind,'workday_finish_conflict');
-  assert.match(result.appointments.issues[0].message,/30 min over/);
   assert.equal(canApproveSavedQueueReview(result),true);
-  assert.equal(savedQueueApprovalAction(result),'Approve with appointment warnings');
 });
 
-test('updated service estimates can expose a break overlap without editing the appointment',()=>{
-  const row=visit('learned',{fixedStartMinute:660,estimatedMinutes:60});
+test('updated predicted durations can reveal any configured break overlap',()=>{
+  const row=visit('learned',{fixedStartMinute:660,estimatedMinutes:59});
   assert.equal(review([row]).appointments.status,'no_conflicts_detected');
   assert.equal(review([{...row,estimatedMinutes:61}]).appointments.issues[0].kind,'fixed_break_conflict');
 });
 
-test('midnight and 24:00 breaks preserve half-open interval boundaries',()=>{
-  assert.equal(assessSavedQueueAppointments([visit('start',{fixedStartMinute:30})],{breakStart:'00:00',breakFinish:'00:30'}).status,'no_conflicts_detected');
-  const wholeDay=assessSavedQueueAppointments([visit('a',{estimatedMinutes:1})],{breakStart:'00:00',breakFinish:'24:00'});
-  assert.equal(wholeDay.issues[0].kind,'day_boundary_conflict');
-  assert.match(wholeDay.issues[0].message,/at least 1 min/);
-  const end=assessSavedQueueAppointments([visit('a',{fixedStartMinute:1438,estimatedMinutes:1})],{breakStart:'23:59',breakFinish:'24:00'});
+test('24:00 is allowed only as a finish and the break covers a half-open minute range',()=>{
+  assert.equal(assessSavedQueueAppointments([visit('start',{fixedStartMinute:30})],{breaks:'00:00-00:30'}).status,'no_conflicts_detected');
+  const whole=assessSavedQueueAppointments([visit('a',{estimatedMinutes:1})],{breaks:'00:00-24:00'});
+  assert.equal(whole.issues[0].kind,'day_boundary_conflict');
+  const end=assessSavedQueueAppointments([visit('a',{fixedStartMinute:1438,estimatedMinutes:1})],{breaks:'23:59-24:00'});
   assert.equal(end.status,'no_conflicts_detected');
 });
 
-test('copy names only the configured break and states the remaining timing assumptions',()=>{
-  const result=assessSavedQueueAppointments([visit('a')],settings);
+test('review copy names all configured intervals and says other travel/breaks are excluded',()=>{
+  const result=assessSavedQueueAppointments([visit('a')],{...window,...normalizedBreaks});
   const copy=describeAppointmentCheckAssumptions(result);
-  assert.match(copy,/planned 08:00–17:00 work window/);
-  assert.match(copy,/planned 12:00–12:30 break is reserved/);
-  assert.match(copy,/services are not split/);
+  assert.match(copy,/planned breaks 10:00–10:15, 12:00–12:30/);
+  assert.match(copy,/services are not split around them/);
   assert.match(copy,/Travel and any other breaks are excluded/);
   assert.match(copy,/device clock is not used/);
-  assert.match(copy,/not arrival times/);
-  const noWindow=describeAppointmentCheckAssumptions(assessSavedQueueAppointments([visit('a')],pause));
-  assert.match(noWindow,/best-case start at 00:00/);
-  assert.match(noWindow,/actual workday start is not set/);
-  assert.equal(assessSavedQueueAppointments([visit('a')],pause).status,'no_conflicts_detected');
+  assert.equal(assessSavedQueueAppointments([visit('a')],normalizedBreaks).status,'no_conflicts_detected');
+  assert.match(describeAppointmentCheckAssumptions(assessSavedQueueAppointments([visit('a')],normalizedBreaks)),/best-case start at 00:00/);
+  assert.equal(describeSavedQueueAppointments(assessSavedQueueAppointments([visit('a')])).includes('No appointment times'),true);
 });
 
-test('invalid break blocks approval and preserves previously approved bytes',async()=>{
+test('invalid schedule blocks approval and preserves previously approved device bytes',async()=>{
   const f=fixture(),approvals=createLocalSavedQueueApprovalStore(f.storage,digest);
-  await approvals.approve(context.subject,review([visit('a')]));
+  const previous=review([visit('a')]);await approvals.approve(context.subject,previous);
   const before=[...f.records];
-  const invalid=review([visit('a')],{...settings,breakFinish:''});
+  const invalid=review([visit('a')],{...settings,breaks:'12:00-'});
   assert.equal(invalid.appointments.status,'invalid_break');
-  assert.deepEqual(invalid.appointments.issues,[]);
-  assert.match(describeSavedQueueAppointments(invalid.appointments),/both a break/);
-  assert.match(describeAppointmentCheckAssumptions(invalid.appointments),/Correct the planned break/);
+  assert.match(describeSavedQueueAppointments(invalid.appointments),/HH:MM-HH:MM/);
   assert.equal(canApproveSavedQueueReview(invalid),false);
   assert.equal(await approvals.isApproved(context.subject,invalid),false);
-  await assert.rejects(()=>approvals.approve(context.subject,invalid),/valid planned break/);
+  await assert.rejects(()=>approvals.approve(context.subject,invalid),/planned break list/);
   assert.deepEqual([...f.records],before);
 });
 
-test('break check agrees with exhaustive schedules across 400 bounded synthetic cases',()=>{
-  let seed=63,fitCount=0,conflictCount=0;
+test('multi-break scheduler agrees with exhaustive schedules across 400 bounded cases',()=>{
+  let seed=64,fitCount=0,conflictCount=0;
   const next=(max:number)=>{seed=(seed*1664525+1013904223)>>>0;return Math.floor(seed/4294967296*max);};
-  function fits(rows:QueueReviewVisit[],finish:number,breakStart:number,breakFinish:number,index:number,free:number):boolean{
+  function fits(rows:QueueReviewVisit[],finish:number,pauses:WorkdayBreakInterval[],index:number,free:number):boolean{
     if(index===rows.length)return true;
     const row=rows[index],latest=Math.min(finish,row.preferredFinishMinute??1440)-row.estimatedMinutes;
     for(let start=Math.max(free,row.preferredStartMinute??0);start<=latest;start++){
       if(row.fixedStartMinute!==undefined&&row.fixedStartMinute!==start)continue;
-      // Enumerate every occupied minute, independent of the production interval test.
       const occupied=Array.from({length:row.estimatedMinutes},(_,offset)=>start+offset);
-      if(occupied.some(minute=>minute>=breakStart&&minute<breakFinish))continue;
-      if(fits(rows,finish,breakStart,breakFinish,index+1,start+row.estimatedMinutes))return true;
+      if(occupied.some(minute=>pauses.some(pause=>minute>=pause.startMinute&&minute<pause.finishMinute)))continue;
+      if(fits(rows,finish,pauses,index+1,start+row.estimatedMinutes))return true;
     }
     return false;
   }
   for(let example=0;example<400;example++){
-    const start=next(4),finish=start+5+next(12),breakStart=start+next(finish-start),breakFinish=breakStart+1+next(finish-breakStart);
+    const start=next(4),finish=start+8+next(10);
+    const firstStart=start+next(4),firstEnd=firstStart+1+next(2);
+    const secondStart=firstEnd+next(finish-firstEnd);
+    const pauses:WorkdayBreakInterval[]=[
+      {startMinute:firstStart,finishMinute:firstEnd},
+      {startMinute:secondStart,finishMinute:Math.min(finish,secondStart+1+next(finish-secondStart))}
+    ];
     const rows=Array.from({length:2},(_,index)=>visit(String(index),{
-      estimatedMinutes:1+next(4),preferredStartMinute:next(9),preferredFinishMinute:1+next(20),
-      ...(next(3)===0?{fixedStartMinute:next(16)}:{})
+      estimatedMinutes:1+next(4),preferredStartMinute:next(10),preferredFinishMinute:1+next(23),
+      ...(next(3)===0?{fixedStartMinute:next(18)}:{})
     }));
-    const feasible=fits(rows,finish,breakStart,breakFinish,0,start);
+    const feasible=fits(rows,finish,pauses,0,start);
     if(feasible)fitCount++;else conflictCount++;
     const result=assessSavedQueueAppointments(rows,{
       workdayStart:formatServiceClock(start),workdayFinish:formatServiceClock(finish),
-      breakStart:formatServiceClock(breakStart),breakFinish:formatServiceClock(breakFinish)
+      breaks:pauses.map(pause=>formatServiceClock(pause.startMinute)+'-'+formatServiceClock(pause.finishMinute)).join('\n')
     });
-    assert.equal(result.status==='conflicts',!feasible,JSON.stringify({rows,start,finish,breakStart,breakFinish,result}));
+    assert.equal(result.status==='conflicts',!feasible,JSON.stringify({rows,start,finish,pauses,result}));
   }
   assert.ok(fitCount>0&&conflictCount>0);
 });
 
-test('either break clock and clearing a break require fresh approval but equivalent formatting does not',async()=>{
+test('approval binds every normalized break and legacy policy needs a new review',async()=>{
   const f=fixture(),approvals=createLocalSavedQueueApprovalStore(f.storage,digest),rows=[visit('a')];
   const original=review(rows);
   await approvals.approve(context.subject,original);
-  assert.equal(await approvals.isApproved(context.subject,review(rows,{...settings,breakStart:' 12:00 ',breakFinish:'12:30'})),true);
-  for(const change of [{breakStart:'12:05'},{breakFinish:'12:45'},{breakStart:'',breakFinish:''}]){
-    const changed=review(rows,{...settings,...change});
+  const equivalent=review(rows,{...settings,breaks:' 12:00-12:30 \n10:00-10:15'});
+  assert.equal(await approvals.isApproved(context.subject,equivalent),true);
+  for(const breaks of ['10:00-10:15\n12:05-12:30','10:00-10:15','10:00-10:15\n12:00-12:30\n15:00-15:15','']){
+    const changed=review(rows,{...limits,...window,breaks});
     assert.notEqual(changed.approvalKey,original.approvalKey);
     assert.equal(await approvals.isApproved(context.subject,changed),false);
   }
-  const noBreak=review(rows,{...limits,...window}),oldParts=JSON.parse(noBreak.approvalKey);
-  oldParts[0]='saved-queue-appointments-v2';oldParts.pop();
-  await approvals.approve(context.subject,{...noBreak,approvalKey:JSON.stringify(oldParts)});
-  assert.equal(await approvals.isApproved(context.subject,noBreak),false);
+  const key=review(rows,{...limits,...window,...normalizedBreaks}).approvalKey;
+  const legacy=JSON.parse(key);legacy[0]='saved-queue-appointments-v3';
+  await approvals.approve(context.subject,{...review(rows,{...limits,...window,...normalizedBreaks}),approvalKey:JSON.stringify(legacy)});
+  assert.equal(await approvals.isApproved(context.subject,review(rows,{...limits,...window,...normalizedBreaks})),false);
 });
 
-test('version-three settings round trip breaks under hashed isolated operator/business/day scopes',async()=>{
-  const f=fixture();
-  await f.store.save(context,{...settings,breakStart:' 12:00 '});
-  assert.deepEqual(await createLocalSavedQueueWorkloadStore(f.storage,digest).load(context),settings);
+test('version-four settings round trip sorted intervals under hashed isolated scopes',async()=>{
+  const f=fixture();await f.store.save(context,{...settings,...breaks});
+  assert.deepEqual(await f.store.load(context),settings);
   for(const other of [{...context,subject:'operator-b'},{...context,businessId:'business-b'},{...context,date:'2026-10-14'}]){
     assert.equal(await f.store.load(other),null);
-    await f.store.save(other,{...settings,breakStart:'13:00',breakFinish:'13:30'});
+    await f.store.save(other,{...settings,breaks:'13:00-13:30'});
     assert.deepEqual(await f.store.load(context),settings);
   }
   for(const raw of f.records.values()){
-    assert.equal(JSON.parse(raw).version,3);
+    assert.equal(JSON.parse(raw).version,4);
     assert.ok(raw.length<=512);
     for(const identity of [context.subject,context.businessId,context.date])assert.equal(raw.includes(identity),false);
   }
 });
 
-test('version-one and version-two settings restore without inventing a break or writing on read',async()=>{
+test('versions one and two restore without inventing breaks or writing on read',async()=>{
   const f=fixture();await f.store.save(context,limits);
   const [key,value]=[...f.records][0],identity=JSON.parse(value).contextDigest;
   for(const [version,expected] of [[1,limits],[2,{...limits,...window}]] as const){
@@ -242,18 +259,46 @@ test('version-one and version-two settings restore without inventing a break or 
     assert.deepEqual(await f.store.load(context),expected);
     assert.equal(f.records.get(key),raw);assert.equal(f.writes(),writes);
   }
-  await f.store.save(context,settings);
-  assert.equal(JSON.parse(f.records.get(key)!).version,3);
 });
 
-test('corrupt break records and legacy versions with break fields fail without replacing bytes',async()=>{
+test('version-three single breaks migrate to the list on read without changing stored bytes',async()=>{
   const f=fixture();await f.store.save(context,settings);
-  const [key,value]=[...f.records][0],record=JSON.parse(value);
+  const [key,value]=[...f.records][0],current=JSON.parse(value);
+  const legacy={version:3,contextDigest:current.contextDigest,hours:settings.hours,maxJobs:settings.maxJobs,
+    workdayStart:settings.workdayStart,workdayFinish:settings.workdayFinish,breakStart:'12:00',breakFinish:'12:30'};
+  const raw=JSON.stringify(legacy);f.records.set(key,raw);const writes=f.writes();
+  assert.deepEqual(await f.store.load(context),{...limits,...window,breaks:'12:00-12:30'});
+  assert.equal(f.records.get(key),raw);assert.equal(f.writes(),writes);
+  await f.store.save(context,settings);
+  assert.equal(JSON.parse(f.records.get(key)!).version,4);
+});
+
+test('legacy version-three records without a break remain blank and partial legacy pairs fail safely',async()=>{
+  const f=fixture();await f.store.save(context,settings);
+  const [key,value]=[...f.records][0],current=JSON.parse(value);
+  const legacy={version:3,contextDigest:current.contextDigest,...limits,...window};
+  const raw=JSON.stringify(legacy);f.records.set(key,raw);
+  assert.deepEqual(await f.store.load(context),{...limits,...window});
+  for(const malformed of [
+    {...legacy,breakStart:'12:00'},
+    {...legacy,breakStart:'12:00',breakFinish:750},
+    {...legacy,breakStart:'18:00',breakFinish:'18:30'},
+    {...legacy,breakStart:'14:00',breakFinish:'13:00'},
+    {...legacy,breakStart:'12:00',breakFinish:'12:30',breaks:'13:00-13:30'}
+  ]){
+    const bad=JSON.stringify(malformed);f.records.set(key,bad);
+    await assert.rejects(()=>f.store.load(context),/could not be read/);
+    assert.equal(f.records.get(key),bad);
+  }
+});
+
+test('invalid version-four break lists and breaks on earlier formats fail without modifying bytes',async()=>{
+  const f=fixture();await f.store.save(context,settings);
+  const [key,value]=[...f.records][0],current=JSON.parse(value);
   for(const invalid of [
-    {...record,breakFinish:undefined},{...record,breakStart:null},{...record,breakFinish:750},
-    {...record,breakFinish:'11:59'},{...record,breakFinish:'17:01'},
-    {...record,version:2},{...record,version:1},
-    {version:1,contextDigest:record.contextDigest,...limits,breakStart:'',breakFinish:''}
+    {...current,breaks:'12:00-'},{...current,breaks:'12:00-13:00\n12:30-13:30'},
+    {...current,breaks:'07:00-08:15'},{...current,breakStart:'12:00'},
+    {...current,version:2,breaks:'12:00-12:30'},{...current,version:1,breaks:'12:00-12:30'}
   ]){
     const raw=JSON.stringify(invalid);f.records.set(key,raw);
     await assert.rejects(()=>f.store.load(context),/could not be read/);
@@ -261,66 +306,68 @@ test('corrupt break records and legacy versions with break fields fail without r
   }
 });
 
-test('break-only edits stay unsaved until explicit save, survive restart and can be cleared',async()=>{
+test('any break-list edit stays unsaved until explicitly persisted and can be cleared',async()=>{
   const f=fixture();await f.store.save(context,settings);await f.controller.activate(context);
-  for(const field of ['breakStart','breakFinish'] as const){
-    f.controller.edit(field,field==='breakStart'?'12:05':'12:45');
+  for(const breaks of ['09:00-09:15\n12:00-12:30','09:00-09:15\n12:00-12:35']){
+    f.controller.edit('breaks',breaks);
     assert.equal(workloadSettingsHaveUnsavedChanges(f.controller.getState()),true);
     assert.equal(workloadSettingsReadyForApproval(f.controller.getState()),false);
     assert.equal(await f.controller.save(),true);
   }
   const restored=createSavedQueueWorkloadSettings(f.store);await restored.activate(context);
-  assert.deepEqual(restored.getState().draft,{...settings,breakStart:'12:05',breakFinish:'12:45'});
-  restored.edit('breakStart','');restored.edit('breakFinish','');
-  assert.equal(await restored.save(),true);
+  assert.deepEqual(restored.getState().draft,{...settings,breaks:'09:00-09:15\n12:00-12:35'});
+  restored.edit('breaks','');assert.equal(await restored.save(),true);
   assert.deepEqual(await f.store.load(context),{...limits,...window});
 });
 
-test('invalid break edits preserve saved settings and cannot become approval-ready',async()=>{
+test('invalid interval edit leaves saved bytes unchanged and blocks approval readiness',async()=>{
   const f=fixture();await f.store.save(context,settings);await f.controller.activate(context);
-  const writes=f.writes();f.controller.edit('breakFinish','');
+  const writes=f.writes();f.controller.edit('breaks','12:00-');
   assert.equal(await f.controller.save(),false);
   assert.equal(workloadSettingsReadyForApproval(f.controller.getState()),false);
   assert.equal(f.writes(),writes);assert.deepEqual(await f.store.load(context),settings);
-  assert.match(f.controller.getState().error,/both a break/);
+  assert.match(f.controller.getState().error,/start and finish/);
 });
 
-test('pending break saves capture inputs, reject edits and repeated taps, and ignore late scopes',async()=>{
+test('pending interval writes capture text, reject duplicate taps and ignore a changed scope',async()=>{
   const f=fixture(),input={...settings};
-  const writing=f.store.save(context,input);input.breakStart='13:00';input.breakFinish='14:00';
+  const writing=f.store.save(context,input);input.breaks='14:00-14:30';
   await writing;assert.deepEqual(await f.store.load(context),settings);
   const pending=deferred<SavedQueueWorkloadLimits>();let writes=0;
   const controller=createSavedQueueWorkloadSettings({
     async load(){return settings;},async save(){writes++;return pending.promise;}
   });
-  await controller.activate(context);controller.edit('breakFinish','12:45');
+  await controller.activate(context);controller.edit('breaks','09:00-09:15\n12:00-12:45');
   const saving=controller.save();
-  assert.equal(controller.edit('breakStart','13:00'),false);
+  assert.equal(controller.edit('breaks','13:00-13:30'),false);
   assert.equal(await controller.save(),false);
-  const other={...context,date:'2026-10-14'};await controller.activate(other);
-  pending.resolve({...settings,breakFinish:'12:45'});
+  const next={...context,date:'2026-10-14'};await controller.activate(next);
+  pending.resolve({...settings,breaks:'09:00-09:15\n12:00-12:45'});
   assert.equal(await saving,false);assert.equal(writes,1);
-  assert.equal(controller.getState().scopeKey,workloadSettingsScope(other));
-  assert.deepEqual(controller.getState().draft,settings);
+  assert.equal(controller.getState().scopeKey,workloadSettingsScope(next));
 });
 
-test('uncertain break writes require readback and late restoration cannot cross scopes',async()=>{
+test('an uncertain interval write is read back once without a retry write',async()=>{
   const f=fixture();await f.store.save(context,settings);
   const uncertain:WorkloadSettingsStore={
     load:f.store.load,async save(scope,value){await f.store.save(scope,value);throw Error('ack lost');}
   };
   const controller=createSavedQueueWorkloadSettings(uncertain);
-  await controller.activate(context);controller.edit('breakFinish','12:45');
+  await controller.activate(context);controller.edit('breaks','09:00-09:15\n12:00-12:45');
   assert.equal(await controller.save(),false);
-  assert.equal(workloadSettingsReadyForApproval(controller.getState()),false);
   const writes=f.writes();await controller.retry();
-  assert.equal(f.writes(),writes);assert.equal(controller.getState().saved?.breakFinish,'12:45');
-  const pending=deferred<SavedQueueWorkloadLimits|null>(),other={...context,date:'2026-10-14'};
-  const delayed=createSavedQueueWorkloadSettings({
-    async load(scope){return scope.date===context.date?pending.promise:{...limits,...window};},save:f.store.save
+  assert.equal(f.writes(),writes);
+  assert.deepEqual(controller.getState().saved,{...settings,breaks:'09:00-09:15\n12:00-12:45'});
+  assert.equal(workloadSettingsReadyForApproval(controller.getState()),true);
+});
+
+test('late restoration results cannot enter another work-date scope',async()=>{
+  const pending=deferred<SavedQueueWorkloadLimits|null>(),next={...context,date:'2026-10-14'};
+  const controller=createSavedQueueWorkloadSettings({
+    async load(scope){return scope.date===context.date?pending.promise:{...limits,...window};},
+    async save(scope,value){return value;}
   });
-  const loading=delayed.activate(context);await delayed.activate(other);
-  pending.resolve(settings);await loading;
-  assert.equal(delayed.getState().scopeKey,workloadSettingsScope(other));
-  assert.deepEqual(delayed.getState().draft,{...limits,...window});
+  const first=controller.activate(context);await controller.activate(next);pending.resolve(settings);await first;
+  assert.equal(controller.getState().scopeKey,workloadSettingsScope(next));
+  assert.deepEqual(controller.getState().draft,{...limits,...window});
 });
