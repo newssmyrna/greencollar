@@ -330,3 +330,21 @@ Google requires publicly accessible Terms of Use and a Privacy Policy referencin
 - No app/Worker implementation, account, key, billing configuration, production setting, customer data, or deployment changed.
 
 Next phase: implement the server-side Google adapter, atomic monthly element reservation, operator/admin authorization and notice gates, result-discard policy, mobile/manual fallback, and tests. Keep routing disabled until public policies exist and the spend gate is verified.
+
+
+## Edgewater routing controls — Phase #68
+
+Delivery: server-side implementation staged for review; live routing remains disabled. Elapsed active implementation time: approximately 15 minutes for adapter, spend/consent controls, and offline verification; CI wait and Phase #67 provider selection excluded.
+
+| Feature / functionality | Completion | Impact |
+|---|---:|---|
+| Google matrix adapter, response bounds, indexing, and timeout | 100% | Testing only; code staged |
+| Atomic Pacific-month $120 / 19,500-element usage reservation | 100% | Testing only; migration unapplied |
+| Tenant authorization, admin activation, notice, policy and current-rate checks | 100% | Testing only; inactive configuration |
+| Ephemeral route values, attribution field, and manual fallback responses | 100% | Testing only; mobile flow planned |
+| Public Terms/Privacy pages and in-app routing UI | 0% | Planned; future domain required |
+| Provider account, key, billing, live requests, database apply, production activation | 0% | Not configured or performed |
+
+Paths: Worker auth/router/provider/meter/API, `cloudflare/migrations/0010_routing_provider_controls.sql`, provider/meter/API/schema tests, `docs/ROAD_PROVIDER.md`, and this handoff.
+
+Impact: live pages/posts **none**; planned **future public legal pages and app routing notice/manual fallback**; documentation-only **provider implementation/policy handoff**; testing-only **mocked Google responses and synthetic coordinates**. No real provider calls or location data were used. Manual travel estimates remain the active workflow; provider durations are not persisted.

@@ -1,14 +1,16 @@
-# Routing provider integration (not live)
-`cloudflare/src/road-provider.ts` includes a network adapter for a server-configured OSRM-compatible **HTTPS** table service. It validates point count, geographic coordinates, response dimensions, returned durations, and 8-second timeout. Unreachable roads remain `null`.
+# Routing provider integration (inactive)
+`cloudflare/src/road-provider.ts` retains the legacy OSRM-compatible adapter and includes a Google Routes Compute Route Matrix adapter. The Google adapter sends coordinates only, validates the complete indexed matrix within a response byte limit, uses an 8-second timeout, and preserves unreachable roads as `null`.
 
-This is **not yet activated**. Google Routes API Compute Route Matrix Essentials is selected for the Edgewater pilot, but no Google project, billing account, key, provider call, or production usage is configured. Do not call the adapter until the public GreenCollar Terms of Use and Privacy Policy are available on the future domain, the coordinate notice and authorization gates are implemented, and the hard monthly element meter is tested. Keep Google's credential server-side; never put it in the mobile app.
+This is **not activated**. Google Routes API Compute Route Matrix Essentials is selected for the Edgewater pilot. Calls remain disabled unless server configuration, a fresh rate review, public GreenCollar Terms/Privacy URLs, admin enablement, current operator notice acknowledgment, and the D1 spend meter all pass. No Google project, billing account, key, provider call, or production usage is configured. The D1 migration is committed for review and has not been applied. Keep Google's credential server-side; never put it in the mobile app.
+
+**Public-policy gate detail:** `ROAD_ROUTING_POLICY_PUBLIC=true` is a future operator attestation. The Worker checks that configured Terms/Privacy URLs use HTTPS, but it does not fetch those pages or review their contents. Before setting the flag, confirm the pages are publicly reachable and the disclosure has been reviewed. This flag and all provider settings are currently unset.
 
 
 ## Edgewater pilot provider decision — 2026-10-13
 
 **Selected provider:** Google Routes API, **Compute Route Matrix Essentials**. Pilot use is limited to ordinary `DRIVE` mode with `TRAFFIC_UNAWARE` routing for transient travel-time estimates. This is a documented selection, not an active account or API integration.
 
-The selection favors a published Essentials unit price that can be budgeted for this workload and avoids Mapbox's separate commercial vehicle-use license, which requires an annual subscription and may have a per-user/seat component. GreenCollar's existing OSRM-compatible helper cannot call Google directly: a server-side Google adapter and response mapper still need implementation. Before use, verify the current Google account agreement and price sheet.
+The selection favors a published Essentials unit price that can be budgeted for this workload and avoids Mapbox's separate commercial vehicle-use license, which requires an annual subscription and may have a per-user/seat component. GreenCollar's legacy OSRM-compatible helper cannot call Google directly; a dedicated Google adapter and response mapper are now staged in the Worker. Before use, verify the current Google account agreement and price sheet.
 
 **Vehicle scope:** the selected route profile is a standard driving estimate. It does not model truck height, weight, axle, hazmat, or other commercial-vehicle restrictions. If any of the three trucks requires those constraints, keep that route manual and reassess the provider/SKU before activation.
 
@@ -76,4 +78,24 @@ Official sources checked 2026-10-13:
 
 ### Phase #67 handoff
 
-Provider selection, the pilot volume ceiling, and the privacy/spend policy are defined. The integration is still **inactive**: no Google account/project, API key, billing configuration, provider request, code integration, live public policy page, or deployment was created. The next implementation must deliver the secure adapter, atomic element meter, authorization/notice gates, response validation, tests, and mobile/manual fallback, then run acceptance on the actual Edgewater workflow.
+Provider selection, the pilot volume ceiling, and the privacy/spend policy are defined. At Phase #67, no Google account/project, API key, billing configuration, provider request, code integration, live public policy page, or deployment existed. Phase #68 stages the secure adapter, atomic element meter, authorization/notice gates, response validation, and tests; mobile integration and actual Edgewater acceptance remain planned.
+
+
+### Phase #68 handoff — server controls staged, routing inactive
+
+| Feature / functionality | Phase completion | Impact |
+|---|---:|---|
+| Coordinate-only Google matrix adapter and bounded response validation | 100% | Testing only; server code staged |
+| Pacific billing-month meter and $120 / 19,500-element atomic stop | 100% | Testing only; migration unapplied |
+| Tenant roles, admin activation, operator notice, and public-policy gates | 100% | Testing only; disabled without configuration |
+| Ephemeral result response, attribution, and manual fallback | 100% | Testing only; mobile app unchanged |
+| Public Terms/Privacy pages and operator-facing app flow | 0% | Planned; no domain yet |
+| Google account/key/billing, database apply, activation, and deployment | 0% | Not configured or performed |
+
+**Phase completion: 100% of server-side integration controls; 0% live routing.** Approximate active implementation and offline verification time: 15 minutes; CI wait excluded.
+
+Changed paths: Worker auth/router/provider/meter/API, `cloudflare/migrations/0010_routing_provider_controls.sql`, four routing tests, and this handoff plus `docs/DAILY_WORKFLOW.md`.
+
+Page/post impact: live pages/posts **none**; planned **future public Terms/Privacy pages and the in-app notice/manual fallback**; documentation-only **provider policy and handoff**; testing-only **mocked provider/D1 paths and synthetic coordinates**. No real coordinates or provider calls were used. No account, secret, billing setup, database migration, production setting, or deployment was created.
+
+Remaining acceptance: review D1 `RETURNING` support and apply the migration only in an approved non-production test database later; add the mobile notice/attribution/manual workflow and validate actual truck/depot operations after the domain and provider signup are ready.
