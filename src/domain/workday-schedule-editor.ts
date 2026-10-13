@@ -92,3 +92,26 @@ export function hydrateSingleRouteDraft(
     tasksByAgreement
   };
 }
+
+/** Returns an actionable error when task drafts do not match the selected route crew. */
+export function validateScheduleTasksForCrew(
+  agreementIds:readonly string[],
+  tasksByAgreement:Readonly<Record<string,readonly ScheduledTask[]>>,
+  workerSubjects:readonly string[]
+):string|null{
+  const crew=new Set(workerSubjects);
+  for(const agreementId of agreementIds){
+    const tasks=tasksByAgreement[agreementId]??[];
+    if(tasks.length===0)return 'Add at least one task to every selected stop.';
+    for(const task of tasks){
+      if(typeof task.label!=='string'||!task.label.trim())return 'Give every task a name before updating the draft.';
+      if(!Number.isInteger(task.estimatedMinutes)||task.estimatedMinutes<1||task.estimatedMinutes>1440)
+        return 'Task estimates must be whole minutes from 1 to 1440.';
+      if(!Array.isArray(task.assignedSubjects)||task.assignedSubjects.length===0)
+        return 'Assign every task to at least one route crew member.';
+      if(task.assignedSubjects.some(subject=>!crew.has(subject)))
+        return 'Reassign tasks to members of the current route crew before updating the draft.';
+    }
+  }
+  return null;
+}
