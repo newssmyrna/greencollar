@@ -34,6 +34,19 @@ Public references checked 2026-10-13:
 
 For a full square matrix with `N` stops, billable elements are generally `N × N`; at GreenCollar's current 25-point limit, one full matrix is up to 625 elements. Estimate monthly volume by summing matrix elements across all planning sessions, businesses, refreshes, and retries. A per-request price alone is not a safe monthly budget.
 
+#### Edgewater pilot volume (owner input, 2026-10-13)
+
+Pilot area: Edgewater, Florida. Expected workload: 10 stops per day.
+
+| Matrix points included in one daily plan | Elements per full matrix | 22 planning days/month | 30 planning days/month | With one additional full rerun each day |
+|---|---:|---:|---:|---:|
+| 10 visit stops | 100 | 2,200 | 3,000 | 4,400 / 6,000 |
+| 10 visit stops plus start and end depots | 144 | 3,168 | 4,320 | 6,336 / 8,640 |
+
+Assumptions: one business/crew and one full square matrix per planning run; “22” and “30” are alternative operating-day counts, not a claim about the schedule. If the starting point or depot is not sent as a matrix node, use the 10-stop row. Additional crews, businesses, planning sessions, retries, or other API usage multiply the estimate. One distinct extra matrix node would make 11² = 121 elements per run.
+
+At 10 stop nodes and one run/day, the estimate is 2,200–3,000 monthly matrix elements. That is below the currently published 10,000-element Google Routes Essentials free usage cap and Mapbox's 100,000 monthly Matrix free tier, assuming no other usage shares the billing account and the request stays in those price categories. This does not establish a zero-dollar project cost: provider features/SKU, shared account usage, account-specific terms, and (for Mapbox vehicle use) the separate commercial license can change the bill. Recheck the rate sheet before enabling calls.
+
 Before enabling a provider:
 
 1. **Set the pilot scope:** initial service area, representative routes to validate, expected active businesses, routes planned per day, typical stop counts, and how often operators refresh or re-run planning.
