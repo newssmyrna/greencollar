@@ -3,6 +3,8 @@
 
 This is **not activated**. Google Routes API Compute Route Matrix Essentials is selected for the Edgewater pilot. Calls remain disabled unless server configuration, a fresh rate review, public GreenCollar Terms/Privacy URLs, admin enablement, current operator notice acknowledgment, and the D1 spend meter all pass. No Google project, billing account, key, provider call, or production usage is configured. The D1 migration is committed for review and has not been applied. Keep Google's credential server-side; never put it in the mobile app.
 
+**Public-policy gate detail:** `ROAD_ROUTING_POLICY_PUBLIC=true` is a future operator attestation. The Worker checks that configured Terms/Privacy URLs use HTTPS, but it does not fetch those pages or review their contents. Before setting the flag, confirm the pages are publicly reachable and the disclosure has been reviewed. This flag and all provider settings are currently unset.
+
 
 ## Edgewater pilot provider decision — 2026-10-13
 
