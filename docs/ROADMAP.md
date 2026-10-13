@@ -54,3 +54,12 @@ Keep every change narrowly scoped and tested; never silently remove agreed featu
 - Workers can report only themselves; owners/admins can record for verified business members and review team availability.
 - Store local work date and minute intervals; sick/unavailable may span a full day without collecting diagnoses.
 - Event capture never changes jobs or routes; manager replan integration and UI remain future work.
+
+
+## Phase 75 — General workday and multi-worker route scheduler
+- Make the workday planner the home for worker availability, lunch blocks, trucks, routes, and assignments.
+- Allow multiple workers per route and separate worker-attributed tasks at the same stop.
+- Keep shared truck GPS route-level; task progress remains individual; split crews require explicit route legs.
+- Track labor capacity separately from route elapsed time and do not assume two workers double productivity.
+- Keep the pilot's 10-stop target scope (operation-wide or per truck) explicit and unresolved.
+- Draft/publish versioning and owner/admin recalibration control remain required; this phase is documentation only.
