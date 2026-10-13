@@ -92,7 +92,8 @@ Keep every change narrowly scoped and tested; never silently remove agreed featu
 - Clear cached availability when business or work date changes, ignore stale roster requests, and keep sick/unavailable overlap enforcement on the server.
 - A reported event never publishes or changes a route by itself.
 
-\n## Phase 82 — Edit saved single-route workday drafts safely
+
+## Phase 82 — Edit saved single-route workday drafts safely
 - Hydrate existing single-route drafts into the current editor without dropping truck, worker, lunch, stop order, or task data.
 - Preserve multi-route, stale-stop, removed-worker, and unsupported shift drafts as read-only.
 - Update using the saved version and reject concurrent edits or deleted drafts.
