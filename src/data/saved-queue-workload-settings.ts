@@ -13,7 +13,9 @@ const idle=():WorkloadSettingsState=>({scopeKey:null,status:'idle',draft:empty()
 export function workloadSettingsHaveUnsavedChanges(state:WorkloadSettingsState):boolean{
   return !state.saved||state.draft.hours!==state.saved.hours||state.draft.maxJobs!==state.saved.maxJobs
     ||(state.draft.workdayStart??'')!==(state.saved.workdayStart??'')
-    ||(state.draft.workdayFinish??'')!==(state.saved.workdayFinish??'');
+    ||(state.draft.workdayFinish??'')!==(state.saved.workdayFinish??'')
+    ||(state.draft.breakStart??'')!==(state.saved.breakStart??'')
+    ||(state.draft.breakFinish??'')!==(state.saved.breakFinish??'');
 }
 export function workloadSettingsReadyForApproval(state:WorkloadSettingsState|null):boolean{
   return !!state&&state.status==='ready'&&!workloadSettingsHaveUnsavedChanges(state);
