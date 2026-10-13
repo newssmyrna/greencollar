@@ -18,7 +18,8 @@ export function formatServiceClock(minute:number):string{
   if(!Number.isInteger(minute)||minute<0||minute>1440)return 'Invalid time';
   return String(Math.floor(minute/60)).padStart(2,'0')+':'+String(minute%60).padStart(2,'0');
 }
-export function serviceTimeConstraints(value:Record<string,unknown>,estimatedMinutes:number):ServiceTimeConstraints{
+/** Read bounded clock fields without deciding whether a particular duration or queue can fit. */
+export function readServiceTimeConstraints(value:Record<string,unknown>):ServiceTimeConstraints{
   const fields=[
     ['preferredStartMinute','Earliest start',0,1439],
     ['preferredFinishMinute','Latest finish',1,1440],
@@ -32,6 +33,10 @@ export function serviceTimeConstraints(value:Record<string,unknown>,estimatedMin
       throw new Error(label+' must be a valid whole minute in the service day');
     result[key]=minute;
   }
+  return result;
+}
+export function serviceTimeConstraints(value:Record<string,unknown>,estimatedMinutes:number):ServiceTimeConstraints{
+  const result=readServiceTimeConstraints(value);
   if(Object.keys(result).length){
     if(!Number.isInteger(estimatedMinutes)||estimatedMinutes<1||estimatedMinutes>1440)
       throw new Error('Enter a valid estimated service duration');
