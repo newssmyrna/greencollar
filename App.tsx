@@ -6,7 +6,7 @@ import { fetchDayData, type DayData } from './src/data/greencollar-api';
 import { summarizeSavedDay } from './src/data/saved-day';
 import { getBusinesses, createBusiness } from './src/data/business-api';
 import { listSavedCustomers, createSavedCustomer, type SavedCustomer } from './src/data/customer-api';
-import { startWork, pauseWork, resumeWork, completeWork, getElapsedMinutes, completionRecord, type WorkSession } from './src/domain/work-session';
+import { startWork, pauseWork, resumeWork, completeWork, getElapsedMinutes, completionRecord, markWorkSessionSavedIfCurrent, type WorkSession } from './src/domain/work-session';
 import {saveVisitCompletion} from './src/data/visit-completion';
 import {billableCompletedServices,invoiceFromCompletedService,unbillableCompletedServiceCount} from './src/domain/completed-invoice';
 import {invoiceTotals,type InvoiceDraft} from './src/domain/invoice';
@@ -165,7 +165,7 @@ function GreenCollarDashboard() {
       const agreementId=prefix.slice(0,-(serviceDate.length+1));
       if(!agreementId||!prefix.endsWith(':'+serviceDate))throw new Error('Invalid scheduled visit');
       await saveVisitCompletion(api,token,{businessId,agreementId,date:serviceDate,actualMinutes:completionRecord(session).actualMinutes});
-      setWorkSession(current=>current?{...current,completionSaved:true}:current);
+      setWorkSession(current=>markWorkSessionSavedIfCurrent(current,session));
       if(connectedBusiness?.id===businessId){
         try{setSavedDay(await fetchDayData(api,businessId,serviceDate,token));}
         catch{setSavedDayError('Visit saved. Reload the saved workday to refresh it.');}
@@ -269,9 +269,15 @@ function GreenCollarDashboard() {
   }
 
   function discardCompletedVisit() {
+    const session=workSession;
+    if(!session||session.status!=='completed'||session.jobId==='demo-job'||session.completionSaved||submitting.current)return;
     Alert.alert('Discard unsaved visit?', 'The recorded duration will be removed from this device. The server may already have accepted a request if the connection failed; retry Save first if you are unsure.', [
       {text:'Keep visit',style:'cancel'},
-      {text:'Discard visit',style:'destructive',onPress:()=>{setWorkSession(null);setTimerError('');}}
+      {text:'Discard visit',style:'destructive',onPress:()=>{
+        if(submitting.current)return;
+        setWorkSession(current=>current===session?null:current);
+        setTimerError('');
+      }}
     ]);
   }
 
@@ -351,7 +357,7 @@ function GreenCollarDashboard() {
             {workSession && workSession.status!=='completed' && <Pressable style={styles.primary} onPress={()=>timerAction('complete')}><Text style={styles.primaryText}>Complete job</Text></Pressable>}
             {workSession?.status==='running' && <Pressable style={styles.primary} onPress={()=>setTimerNow(Date.now())}><Text style={styles.primaryText}>Refresh elapsed time</Text></Pressable>}
             {workSession?.status==='completed' && <Text style={styles.body}>Recorded demo duration: {completionRecord(workSession).actualMinutes} min</Text>}
-            {workSession?.status==='completed' && workSession.jobId!=='demo-job' && !workSession.completionSaved && <><Pressable style={styles.primary} disabled={loadingSaved} onPress={()=>void saveCompletedService()}><Text style={styles.primaryText}>Save completed visit</Text></Pressable><Pressable style={[styles.primary,{backgroundColor:'#f0f5ef'}]} onPress={discardCompletedVisit}><Text style={styles.primaryText}>Discard unsaved visit</Text></Pressable></>}
+            {workSession?.status==='completed' && workSession.jobId!=='demo-job' && !workSession.completionSaved && <><Pressable style={styles.primary} disabled={loadingSaved} onPress={()=>void saveCompletedService()}><Text style={styles.primaryText}>Save completed visit</Text></Pressable><Pressable style={[styles.primary,{backgroundColor:'#f0f5ef'}]} disabled={loadingSaved} onPress={discardCompletedVisit}><Text style={styles.primaryText}>Discard unsaved visit</Text></Pressable></>}
             {workSession?.completionSaved && <Text style={styles.body}>Visit completion saved to Cloudflare.</Text>}
             {workSession?.status==='completed' && workSession.jobId==='demo-job' && <Pressable style={styles.primary} onPress={()=>timerAction('start')}><Text style={styles.primaryText}>Start another demo</Text></Pressable>}
             {!!timerError && <Text style={styles.muted}>{timerError}</Text>}
