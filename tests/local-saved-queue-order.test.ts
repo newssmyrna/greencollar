@@ -17,6 +17,37 @@ test('chosen order survives reload without storing raw identities',async()=>{
  const saved=[...f.memory.entries()].flat().join('');
  for(const sensitive of ['operator-1','business-1','visit-a','visit-b','visit-c'])assert.equal(saved.includes(sensitive),false);
 });
+test('adjacent travel estimates survive reload as hashes and a changed order drops stale legs',async()=>{
+ const f=fixture();
+ await f.store.save(context,['visit-a','visit-b','visit-c'],[
+  {fromVisitId:'visit-a',toVisitId:'visit-b',minutes:20},
+  {fromVisitId:'visit-b',toVisitId:'visit-c',minutes:35}
+ ]);
+ const raw=[...f.memory.values()].join('');
+ for(const sensitive of ['visit-a','visit-b','visit-c'])assert.equal(raw.includes(sensitive),false);
+ const restored=await createLocalSavedQueueOrderStore(f.storage,digest).loadState(context,['visit-a','visit-b','visit-c']);
+ assert.deepEqual(restored,{visitIds:['visit-a','visit-b','visit-c'],travelEstimates:[
+  {fromVisitId:'visit-a',toVisitId:'visit-b',minutes:20},
+  {fromVisitId:'visit-b',toVisitId:'visit-c',minutes:35}
+ ]});
+ await assert.rejects(()=>f.store.save(context,['visit-a','visit-c','visit-b'],[
+  {fromVisitId:'visit-a',toVisitId:'visit-b',minutes:20}
+ ]),/adjacent stops/);
+ await f.store.save(context,['visit-a','visit-c','visit-b'],[
+  {fromVisitId:'visit-a',toVisitId:'visit-c',minutes:40}
+ ]);
+ assert.deepEqual((await f.store.loadState(context,['visit-a','visit-b','visit-c']))?.travelEstimates,[
+  {fromVisitId:'visit-a',toVisitId:'visit-c',minutes:40}
+ ]);
+});
+test('version-1 saved orders restore without travel estimates and are not rewritten on read',async()=>{
+ const f=fixture(),key='greencollar_queue_order_'+await digest('operator:'+context.subject);
+ const legacy=JSON.stringify({version:1,businessDigest:await digest('business:'+context.businessId),date:context.date,
+  visitDigests:await Promise.all(['visit-a','visit-b'].map(id=>digest('visit:'+id)))});
+ f.memory.set(key,legacy);
+ assert.deepEqual(await f.store.loadState(context,['visit-a','visit-b']),{visitIds:['visit-a','visit-b'],travelEstimates:[]});
+ assert.equal(f.memory.get(key),legacy);
+});
 test('foreign operator, business, and date cannot restore an order',async()=>{
  const f=fixture();await f.store.save(context,['b','a']);
  for(const foreign of [{...context,subject:'operator-2'},{...context,businessId:'business-2'},{...context,date:'2026-10-13'}])assert.equal(await f.store.load(foreign,['a','b']),null);
