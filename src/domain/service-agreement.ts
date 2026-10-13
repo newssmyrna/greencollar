@@ -1,6 +1,7 @@
 import type {Frequency} from './recurrence';
 import {validRecordId} from './service-location';
-export type ServiceAgreementInput={
+import {serviceTimeConstraints,type ServiceTimeConstraints} from './service-time';
+export type ServiceAgreementInput=ServiceTimeConstraints&{
  locationId:string;serviceName:string;rateCents:number;estimatedMinutes:number;
  startsOn:string;endsOn?:string;frequency:Frequency;intervalDays?:number;
 };
@@ -33,5 +34,6 @@ export function serviceAgreementInput(value:unknown):ServiceAgreementInput{
  if(v.frequency!=='custom'&&v.intervalDays!==undefined)throw new Error('A custom interval requires the custom schedule');
  return {locationId:v.locationId,serviceName:v.serviceName.trim(),rateCents:v.rateCents,estimatedMinutes:v.estimatedMinutes,
  startsOn:v.startsOn,...(v.endsOn?{endsOn:v.endsOn as string}:{}),frequency:v.frequency as Frequency,
- ...(v.frequency==='custom'?{intervalDays:v.intervalDays as number}:{})};
+ ...(v.frequency==='custom'?{intervalDays:v.intervalDays as number}:{}),
+ ...serviceTimeConstraints(v,v.estimatedMinutes)};
 }
