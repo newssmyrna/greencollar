@@ -1,9 +1,10 @@
+import type {ServiceTimeConstraints} from '../domain/service-time';
 import { generateDueVisits, type Agreement } from '../domain/recurrence';
 import {predictDuration} from '../domain/planner';
 import type {DayData} from './greencollar-api';
 
 export type DueSummary = {
-  due: Array<{id:string;service:string;address:string;customer:string;rateCents:number;estimatedMinutes:number;lat:number|null;lon:number|null}>;
+  due: Array<ServiceTimeConstraints&{id:string;service:string;address:string;customer:string;rateCents:number;estimatedMinutes:number;lat:number|null;lon:number|null}>;
   completedCount:number;
   skippedCount:number;
   pendingCount:number;
@@ -40,7 +41,10 @@ export function summarizeSavedDay(data:DayData):DueSummary {
       address:byAgreement.get(v.agreementId)?.address??'Address unavailable',
       customer:customers.get(v.customerId)??'Customer unavailable',
       rateCents:v.rateCents,estimatedMinutes:predictDuration(history.get(v.agreementId)??[],v.estimatedMinutes).minutes,
-      lat:byAgreement.get(v.agreementId)?.lat??null,lon:byAgreement.get(v.agreementId)?.lon??null
+      lat:byAgreement.get(v.agreementId)?.lat??null,lon:byAgreement.get(v.agreementId)?.lon??null,
+      ...(v.earliestStartMinute!==undefined?{preferredStartMinute:v.earliestStartMinute}:{}),
+      ...(v.latestFinishMinute!==undefined?{preferredFinishMinute:v.latestFinishMinute}:{}),
+      ...(v.fixedStartMinute!==undefined?{fixedStartMinute:v.fixedStartMinute}:{})
     })),
     completedCount:dates.filter(v=>status.get(v.agreementId)==='completed').length,
     skippedCount:dates.filter(v=>status.get(v.agreementId)==='skipped').length,
