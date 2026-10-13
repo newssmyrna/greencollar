@@ -8,6 +8,7 @@ import { fetchRoutingSettings, acknowledgeRoutingNotice, setBusinessRoutingEnabl
 import { reportWeatherInterruption, listWeatherInterruptions, type WeatherInterruption, type WeatherInterruptionReason } from './src/data/weather-interruptions';
 import { getWorkdaySchedule, saveWorkdaySchedule, listWorkdayMembers, type WorkdaySchedule, type ScheduledTask, type BusinessMember } from './src/data/workday-schedules';
 import { listAvailability, type CrewAvailability } from './src/data/availability';
+import { reportedLunchBlocks } from './src/domain/workday-availability';
 import { businessRoleCapabilities } from './src/domain/weather-replan';
 import { prepareTruckPreview, type PreviewTruck, type TruckPreviewRoute } from './src/domain/truck-preview';
 import { summarizeSavedDay } from './src/data/saved-day';
@@ -1083,10 +1084,7 @@ function GreenCollarDashboard() {
                   listWorkdayMembers(api,connectedBusiness.id,token),
                   listAvailability(api,connectedBusiness.id,savedDay.date,token)
                 ]);
-                const reportedLunch=availability.filter(event=>event.kind==='break').reduce<Record<string,Array<{start:string;end:string}>>>((byWorker,event)=>{
-                  (byWorker[event.memberSubject]??=[]).push({start:scheduleMinuteClock(event.startMinute),end:scheduleMinuteClock(event.endMinute)});
-                  return byWorker;
-                },{});
+                const reportedLunch=reportedLunchBlocks(availability);
                 setScheduleMembers(members);setScheduleAvailability(availability);
                 setScheduleWorkerSubjects(current=>current.filter(subject=>members.some(member=>member.subject===subject)));
                 setScheduleLunchBlocks(current=>{
