@@ -77,4 +77,69 @@ export function assessSavedQueueAppointments(visits:readonly AppointmentVisit[],
     const candidateStart=Math.max(availableStart,times.fixedStartMinute??0);
     const start=uninterruptedStart(candidateStart,visit.estimatedMinutes,intervals);
     const finish=start+visit.estimatedMinutes;
-    c
+    const latestFinish=Math.min(times.preferredFinishMinute??1440,window.finishMinute);
+    const workdayEndsFirst=window.status==='set'&&(times.preferredFinishMinute===undefined||window.finishMinute<times.preferredFinishMinute);
+    if(times.fixedStartMinute!==undefined){
+      const overlapping=intervals.filter(interval=>overlapsBreak(times.fixedStartMinute!,visit.estimatedMinutes,interval));
+      if(overlapping.length){
+        const range=overlapping.map(interval=>formatServiceClock(interval.startMinute)+'–'+formatServiceClock(interval.finishMinute)).join(', ');
+        result.issues.push({visitId:visit.id,kind:'fixed_break_conflict',
+          message:'Fixed start '+formatServiceClock(times.fixedStartMinute)+' with a '+visit.estimatedMinutes+'-minute service overlaps your planned break'+(overlapping.length>1?'s':'')+' '+range+'. Services are checked without interruption.'});
+      }else if(start>times.fixedStartMinute){
+        const travelCopy=visit.travelMinutesBefore
+          ?' after the '+visit.travelMinutesBefore+'-minute travel estimate '+(index===0?'from your chosen starting point':'from the previous stop'):'';
+        result.issues.push({visitId:visit.id,kind:'fixed_start_conflict',
+          message:visit.travelMinutesBefore
+            ?'Fixed start '+formatServiceClock(times.fixedStartMinute)+' cannot fit this work window and order'+travelCopy+' with the saved timing settings ('+(start-times.fixedStartMinute)+' min short), even without '+excludedTime+'.'
+            :'Fixed start '+formatServiceClock(times.fixedStartMinute)+' cannot fit this work window, order and saved timing settings ('+(start-times.fixedStartMinute)+' min short), even without '+excludedTime+'.'});
+      }
+    }
+    if(finish>latestFinish){
+      result.issues.push({visitId:visit.id,kind:workdayEndsFirst?'workday_finish_conflict':times.preferredFinishMinute===undefined?'day_boundary_conflict':'finish_window_conflict',
+        message:workdayEndsFirst
+          ?'The '+visit.estimatedMinutes+'-minute service cannot finish by your '+formatServiceClock(window.finishMinute)+' workday finish in this order ('+(finish-window.finishMinute)+' min over), even without '+excludedTime+'.'
+          :times.preferredFinishMinute===undefined
+          ?'This order exceeds the local service day by at least '+(finish-1440)+' min before '+excludedTime+'.'
+          :'The '+visit.estimatedMinutes+'-minute service cannot finish by '+formatServiceClock(latestFinish)+' in this order ('+(finish-latestFinish)+' min over), even without '+excludedTime+'.'});
+    }
+    earliestFreeMinute=finish;
+  });
+  result.status=result.issues.length?'conflicts':result.constrainedVisitCount||result.travelEstimateCount||window.status==='set'||intervals.length?'no_conflicts_detected':'no_constraints';
+  return result;
+}
+export function describeSavedQueueAppointments(result:SavedQueueAppointments):string{
+  if(result.status==='invalid_window')return result.workdayWindow.error;
+  if(result.status==='invalid_break')return result.plannedBreak.error;
+  if(result.status==='invalid_visits')return 'Appointment checks stopped because saved timing or duration data is invalid. Reload and review the affected services before approving.';
+  if(!result.visitCount)return 'No remaining visits to check.';
+  if(result.status==='no_constraints')return 'No appointment times are saved for this remaining queue.';
+  if(result.status==='conflicts'){
+    const count=result.issues.length;
+    return count+' potential timing '+(count===1?'conflict':'conflicts')+' in this queue. Review the warnings with each visit before approving.';
+  }
+  return 'No timing conflicts found under these assumptions. This does not establish an achievable schedule.';
+}
+
+export function describeAppointmentCheckAssumptions(result:SavedQueueAppointments):string{
+  const window=result.workdayWindow,plannedBreak=result.plannedBreak;
+  if(window.status==='invalid')return 'Correct the workday window before checking appointment timing or approving.';
+  if(plannedBreak.status==='invalid')return 'Correct the planned break list before checking appointment timing or approving.';
+  if(window.status==='not_set'&&plannedBreak.status==='not_set')return result.travelEstimateCount
+    ?APPOINTMENT_CHECK_ASSUMPTIONS+' '+travelSummary(result)
+    :APPOINTMENT_CHECK_ASSUMPTIONS;
+  const workWindow=window.status==='set'
+    ?'within your planned '+formatServiceClock(window.startMinute)+'–'+formatServiceClock(window.finishMinute)+' work window.'
+    :'with a best-case start at 00:00. The actual workday start is not set.';
+  const breakCopy=plannedBreak.status==='set'
+    ?'The planned breaks '+plannedBreak.intervals.map(interval=>
+      formatServiceClock(interval.startMinute)+'–'+formatServiceClock(interval.finishMinute)
+    ).join(', ')+' are reserved; services are not split around them. '+(result.travelEstimateCount?'Unentered travel and any other breaks are excluded.':'Travel and any other breaks are excluded.')
+    :result.travelEstimateCount?'Unentered travel and breaks are excluded.':'Travel and breaks are excluded.';
+  const estimateCopy=travelSummary(result);
+  return 'Checks use the current queue order, service estimates and one shared local clock '+workWindow+' '+breakCopy+(estimateCopy?' '+estimateCopy:'')+' The device clock is not used; update the remaining-work start yourself. These are not route or arrival times.';
+}
+
+function travelSummary(result:SavedQueueAppointments):string{
+  if(!result.travelEstimateCount)return '';
+  return 'Your manual estimates cover '+result.travelEstimateCount+' travel '+(result.travelEstimateCount===1?'leg':'legs')+' ('+result.estimatedTravelMinutes+' minutes total). If estimated, travel to the first stop starts from a point you choose; that point is not stored.';
+}
