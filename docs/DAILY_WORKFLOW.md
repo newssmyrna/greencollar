@@ -291,3 +291,22 @@ Persistence writes record version 3 only when a first-leg estimate exists. The r
 Paths: `App.tsx`, `src/domain/saved-queue-appointments.ts`, `src/domain/saved-queue-review.ts`, `src/domain/saved-queue-order.ts`, `src/data/local-saved-queue-order.ts`, `tests/saved-queue-appointments.test.ts`, `tests/local-saved-queue-order.test.ts`, and this document.
 
 Impact: planned Today input, warnings and approval; planned device-local work-order settings; testing-only synthetic records and regressions; documentation-only handoff. No live pages/posts, customer records, API/schema changes, production settings, provider calls, messages or billing changed. Phase completion measures this feature only, not overall product readiness.
+
+
+## Routing provider readiness screen — Phase #67
+
+Date: 2026-10-13. Delivery: prepared for review; documentation-only. Elapsed time: approximately 8 minutes.
+
+| Feature / functionality | Phase completion | Impact |
+|---|---:|---|
+| Existing road-adapter contract and activation boundary reviewed | 100% | Documentation only |
+| Google and Mapbox matrix pricing, limits, and commercial gates screened from current official docs | 100% | Documentation only |
+| Monthly element estimate and privacy, authorization, tenant quota, and hard-spend gates recorded | 100% | Documentation only |
+| Provider/account selection and usage budget | 0% | Planned; requires pilot scope and owner inputs |
+| Provider-specific Worker integration and mobile planning flow | 0% | Planned; remains disabled |
+
+**Phase completion: 100% of this readiness-screen scope.** No provider was selected or called.
+
+Impacts: `docs/ROAD_PROVIDER.md` and this handoff are documentation-only on the review branch. No app or Worker implementation, public website page, post, provider account, credential, or live deployment changed. No source tests were run because this phase changes documentation only; no external routing calls were made.
+
+Next inputs to make a safe integration phase concrete: initial service area; active businesses and planning runs/day; typical stops per route and re-run frequency; monthly spend limit; customer-coordinate consent/retention policy; and a provider/commercial-terms decision.
