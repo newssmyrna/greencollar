@@ -61,3 +61,49 @@ test('rejects invalid recurrence and bounded-body violations without inserting',
   assert.equal(f.queries.some(q=>q.sql.startsWith('INSERT')),false);
  }
 });
+
+test('appointment minutes are bound to the correct columns and returned, including midnight',async()=>{
+ for(const timing of [
+  {preferredStartMinute:540,preferredFinishMinute:660,fixedStartMinute:600},
+  {preferredStartMinute:0,preferredFinishMinute:60,fixedStartMinute:0}
+ ]){
+  const f=fixture();const r=req('POST',JSON.stringify({...input,...timing}));
+  const response=await api(r.request,f.env,r.url);assert.equal(response.status,201);
+  const body=await response.json() as {agreement:{preferred_start_minute:number;preferred_finish_minute:number;fixed_start_minute:number}};
+  assert.equal(body.agreement.preferred_start_minute,timing.preferredStartMinute);
+  assert.equal(body.agreement.preferred_finish_minute,timing.preferredFinishMinute);
+  assert.equal(body.agreement.fixed_start_minute,timing.fixedStartMinute);
+  const insertion=f.queries.find(q=>q.sql.startsWith('INSERT'))!;
+  assert.match(insertion.sql,/interval_days,preferred_start_minute,preferred_finish_minute,fixed_start_minute,active/);
+  assert.equal((insertion.sql.match(/\?/g)??[]).length,insertion.values.length);
+  assert.deepEqual(insertion.values.slice(11,14),[timing.preferredStartMinute,timing.preferredFinishMinute,timing.fixedStartMinute]);
+  assert.deepEqual(insertion.values.slice(-3),['location-a','business-a','customer-a']);
+ }
+});
+
+test('inconsistent, fractional and out-of-range appointment constraints reject before insertion',async()=>{
+ for(const timing of [
+  {fixedStartMinute:1440},{fixedStartMinute:1.5},{fixedStartMinute:null},
+  {preferredStartMinute:600,preferredFinishMinute:630},
+  {preferredStartMinute:600,fixedStartMinute:599},
+  {fixedStartMinute:1439},{preferredFinishMinute:0}
+ ]){
+  const f=fixture();const r=req('POST',JSON.stringify({...input,...timing}));
+  assert.equal((await api(r.request,f.env,r.url)).status,400);
+  assert.equal(f.queries.some(q=>q.sql.startsWith('INSERT')),false);
+ }
+});
+
+test('optional appointment fields preserve flexible schedules and existing authorization boundaries',async()=>{
+ const f=fixture();const r=req();const response=await api(r.request,f.env,r.url);
+ const body=await response.json() as {agreement:{preferred_start_minute:null;preferred_finish_minute:null;fixed_start_minute:null}};
+ assert.equal(body.agreement.preferred_start_minute,null);
+ assert.equal(body.agreement.preferred_finish_minute,null);
+ assert.equal(body.agreement.fixed_start_minute,null);
+ assert.deepEqual(f.queries.find(q=>q.sql.startsWith('INSERT'))!.values.slice(11,14),[null,null,null]);
+ for(const denied of [fixture('worker'),fixture(null),fixture('owner',false)]){
+  const request=req('POST',JSON.stringify({...input,fixedStartMinute:600}));
+  assert.ok([403,404].includes((await api(request.request,denied.env,request.url)).status));
+  assert.equal(denied.queries.some(q=>q.sql.startsWith('INSERT')),false);
+ }
+});
