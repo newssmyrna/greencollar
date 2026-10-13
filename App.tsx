@@ -7,6 +7,7 @@ import { fetchDayData, type DayData } from './src/data/greencollar-api';
 import { fetchRoutingSettings, acknowledgeRoutingNotice, setBusinessRoutingEnabled, requestRoutingMatrix, type RoutingSettings } from './src/data/routing-api';
 import { reportWeatherInterruption, listWeatherInterruptions, type WeatherInterruption, type WeatherInterruptionReason } from './src/data/weather-interruptions';
 import { getWorkdaySchedule, saveWorkdaySchedule, listWorkdayMembers, type WorkdaySchedule, type ScheduledTask, type BusinessMember } from './src/data/workday-schedules';
+import { listAvailability, type CrewAvailability } from './src/data/availability';
 import { businessRoleCapabilities } from './src/domain/weather-replan';
 import { prepareTruckPreview, type PreviewTruck, type TruckPreviewRoute } from './src/domain/truck-preview';
 import { summarizeSavedDay } from './src/data/saved-day';
@@ -247,7 +248,7 @@ function GreenCollarDashboard() {
   const [weatherInbox,setWeatherInbox]=useState<{scope:string;items:WeatherInterruption[]}|null>(null);
   const [weatherInboxBusy,setWeatherInboxBusy]=useState(false);
   const [weatherInboxError,setWeatherInboxError]=useState('');
-  useEffect(()=>{setAgreementEarliest('');setAgreementLatest('');setAgreementFixed('');setScheduleMembers([]);setScheduleWorkerSubjects([]);setScheduleLunchStart({});setScheduleLunchEnd({});setScheduleTaskWorker('');setWorkdaySchedule(null);},[userId,connectedBusiness?.id]);
+  useEffect(()=>{setAgreementEarliest('');setAgreementLatest('');setAgreementFixed('');setScheduleMembers([]);setScheduleWorkerSubjects([]);setScheduleLunchBlocks({});setScheduleAvailability([]);setScheduleTaskWorker('');setWorkdaySchedule(null);},[userId,connectedBusiness?.id]);
   useEffect(()=>{
     routingSettingsRequest.current++;
     routingSettingsBusyRef.current=false;
@@ -447,8 +448,8 @@ function GreenCollarDashboard() {
   const [scheduleMembers,setScheduleMembers]=useState<BusinessMember[]>([]);
   const [scheduleRosterBusy,setScheduleRosterBusy]=useState(false);
   const [scheduleWorkerSubjects,setScheduleWorkerSubjects]=useState<string[]>([]);
-  const [scheduleLunchStart,setScheduleLunchStart]=useState<Record<string,string>>({});
-  const [scheduleLunchEnd,setScheduleLunchEnd]=useState<Record<string,string>>({});
+  const [scheduleLunchBlocks,setScheduleLunchBlocks]=useState<Record<string,Array<{start:string;end:string}>>>({});
+  const [scheduleAvailability,setScheduleAvailability]=useState<CrewAvailability[]>([]);
   const [scheduleSelectedAgreementIds,setScheduleSelectedAgreementIds]=useState<string[]>([]);
   const [scheduleTaskDrafts,setScheduleTaskDrafts]=useState<Record<string,ScheduledTask[]>>({});
   const [scheduleTaskLabel,setScheduleTaskLabel]=useState('Mowing');
