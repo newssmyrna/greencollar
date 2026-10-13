@@ -403,7 +403,7 @@ function GreenCollarDashboard() {
       const token=await getToken({template:'greencollar-api'});
       if(!token)throw new Error('Sign in first');
       if(action==='acknowledge'||action==='withdraw'){
-        await acknowledgeRoutingNotice(api,business.id,token,settings.noticeVersion,action==='acknowledge');
+        await acknowledgeRoutingNotice(api,business.id,token,settings.noticeVersion??'',action==='acknowledge');
         writeSubmitted=true;
       }else{
         await setBusinessRoutingEnabled(api,business.id,token,action==='enable',settings.noticeAcknowledged,settings.noticeVersion??'');
