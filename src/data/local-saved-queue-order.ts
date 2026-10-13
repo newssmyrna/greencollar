@@ -81,4 +81,22 @@ export function createLocalSavedQueueOrderStore(storage:KeyValueSecureStore,dige
     }
     if(!Number.isSafeInteger(estimate.minutes)||estimate.minutes<0||estimate.minutes>1440)throw new Error('Travel estimates must be whole numbers from 0 to 1440 minutes.');
     if(byIndex.has(to))throw new Error('Only one travel estimate can be saved for each stop pair.');
-    byIndex.set(to,estimate.minutes)
+    byIndex.set(to,estimate.minutes);
+   }
+   const [key,businessDigest,visitDigests]=await Promise.all([
+    keyFor(context.subject),digest('business:'+context.businessId),Promise.all(visitIds.map(id=>digest('visit:'+id)))
+   ]);
+   const travelByStop=[...byIndex].sort((a,b)=>a[0]-b[0]).map(([toIndex,minutes])=>({toIndex,minutes}));
+   const record:OrderRecord=travelByStop.length
+    ?{version:byIndex.has(0)?3:2,businessDigest,date:context.date,visitDigests,travelByStop}
+    :{version:1,businessDigest,date:context.date,visitDigests};
+   const serialized=JSON.stringify(record);
+   if(serialized.length>MAX_RECORD_LENGTH)throw new Error('This work queue and its travel estimates are too large to save securely on this device. Keep the current order.');
+   await storage.setItemAsync(key,serialized);
+  },
+  async load(context:QueueOrderContext,currentVisitIds:readonly string[]):Promise<string[]|null>{
+   return (await loadState(context,currentVisitIds))?.visitIds??null;
+  },
+  loadState
+ };
+}
