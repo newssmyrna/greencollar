@@ -5,7 +5,8 @@ import { useHostedAuth } from '@clerk/expo/hosted-auth';
 import { tokenCache } from '@clerk/expo/token-cache';
 import { fetchDayData, type DayData } from './src/data/greencollar-api';
 import { summarizeSavedDay } from './src/data/saved-day';
-import {createSavedQueueReview,canApproveSavedQueueReview,isSavedQueueApproved} from './src/domain/saved-queue-review';
+import {createSavedQueueReview,canApproveSavedQueueReview,isSavedQueueApproved,savedQueueApprovalAction} from './src/domain/saved-queue-review';
+import {describeSavedQueueAppointments,APPOINTMENT_CHECK_ASSUMPTIONS} from './src/domain/saved-queue-appointments';
 import {assessServiceWorkload} from './src/domain/service-workload';
 import {describeSavedQueueWorkload,type SavedQueueWorkloadLimits} from './src/domain/saved-queue-workload';
 import {orderSavedQueue,moveSavedQueueVisit,type SavedQueueOrder} from './src/domain/saved-queue-order';
@@ -283,11 +284,12 @@ function GreenCollarDashboard() {
   function requestSavedQueueApproval(){
     if(!savedQueueReview||!currentSavedQueueContext.current.canApprove||savedQueueApprovalChecking||savedQueueApprovalBusy)return;
     const review=savedQueueReview;
-    const workloadDetails=review.workload?describeSavedQueueWorkload(review.workload)+' All visits remain in this queue. Travel, breaks and appointment timing are not assessed.\n\n':'';
-    const details=workloadDetails+review.visitCount+' scheduled visits · '+review.estimatedServiceMinutes+' estimated service minutes · $'+(review.expectedRevenueCents/100).toFixed(2)+' expected revenue. This is the saved work order; travel is not optimized.\n\n'+savedQueueVisits.map((visit,index)=>(index+1)+'. '+visit.customer+' · '+visit.service+' · '+describeServiceTimeConstraints(visit)).join('\n');
+    const workloadDetails=review.workload?describeSavedQueueWorkload(review.workload)+' All visits remain in this queue. Workload totals exclude travel and breaks.\n\n':'';
+    const appointmentDetails=describeSavedQueueAppointments(review.appointments)+' '+APPOINTMENT_CHECK_ASSUMPTIONS+(review.appointments.status==='conflicts'?' Approval records your review; it does not resolve these conflicts.':'')+'\n\n';
+    const details=workloadDetails+appointmentDetails+review.visitCount+' scheduled visits · '+review.estimatedServiceMinutes+' estimated service minutes · $'+(review.expectedRevenueCents/100).toFixed(2)+' expected revenue. This is the saved work order; travel is not optimized.\n\n'+savedQueueVisits.map((visit,index)=>(index+1)+'. '+visit.customer+' · '+visit.service+' · '+describeServiceTimeConstraints(visit)).join('\n');
     Alert.alert("Review today's work queue",details,[
       {text:'Keep reviewing',style:'cancel'},
-      {text:review.workload?.status==='over_limits'?'Approve with workload warnings':'Approve work queue',onPress:()=>void persistSavedQueueApproval(review)}
+      {text:savedQueueApprovalAction(review),onPress:()=>void persistSavedQueueApproval(review)}
     ]);
   }  function confirmSkipSavedVisit(agreementId:string,date:string){
     Alert.alert('Skip this scheduled service?','This records the visit as skipped for '+date+'. You can’t skip a completed or active visit.',[
@@ -700,6 +702,12 @@ function GreenCollarDashboard() {
   const savedWorkloadDirty=!!currentWorkloadState&&workloadSettingsHaveUnsavedChanges(currentWorkloadState);
   const savedQueueReview=savedDay&&connectedBusiness&&savedDueSummary?createSavedQueueReview(connectedBusiness.id,savedDay.date,savedQueueVisits,currentWorkloadLimits):null;
   const savedQueueWorkload=savedQueueReview?.workload;
+  const savedQueueWorkloadValid=savedQueueWorkload?.status==='within_limits'||savedQueueWorkload?.status==='over_limits';
+  const savedQueueAppointments=savedQueueReview?.appointments;
+  const savedQueueAppointmentIssues=new Map<string,string[]>();
+  for(const issue of savedQueueAppointments?.issues??[]){
+    savedQueueAppointmentIssues.set(issue.visitId,[...(savedQueueAppointmentIssues.get(issue.visitId)??[]),issue.message]);
+  }
   const savedQueueCanApprove=savedWorkloadReadyForApproval&&canApproveSavedQueueReview(savedQueueReview)&&savedQueueOrderReady&&!savedQueueOrderLoadBusy&&!savedQueueOrderSaveBusy&&!loadingSaved&&!visitSkipBusy;
   currentSavedQueueContext.current={userId,approvalKey:savedQueueReview?.approvalKey??null,canApprove:savedQueueCanApprove};
   const savedQueueEditingLocked=timerTransitionBusy||!savedQueueOrderReady||savedQueueOrderLoadBusy||savedQueueOrderSaveBusy||loadingSaved||savedQueueApprovalChecking||savedQueueApprovalBusy||!!visitSkipBusy||!!workSession&&workSession.status!=='completed';
@@ -904,16 +912,22 @@ function GreenCollarDashboard() {
               <Text style={styles.label}>Remaining visit limit</Text>
               <TextInput accessibilityLabel="Maximum remaining saved visits" style={styles.input} keyboardType="number-pad" placeholder="Optional, 1 to 200" placeholderTextColor="#819b8b" value={currentWorkloadLimits.maxJobs} maxLength={3} editable={!savedQueueWorkloadEditingLocked} onChangeText={value=>changeSavedQueueWorkloadLimit('maxJobs',value)}/>
               <Text accessibilityLiveRegion="polite" style={styles.body}>{describeSavedQueueWorkload(savedQueueWorkload)}</Text>
-              <Text style={styles.muted}>All {savedQueueWorkload.visitCount} remaining visits stay visible. Limits do not skip, defer or reorder them. This is service time only; travel, breaks, appointment windows and fuel are not assessed.</Text>
+              <Text style={styles.muted}>All {savedQueueWorkload.visitCount} remaining visits stay visible. Limits do not skip, defer or reorder them. These totals count service time only. Appointment checks are shown separately; travel, breaks and fuel are excluded.</Text>
               {(!currentWorkloadState||currentWorkloadState.status==='loading')&&<Text accessibilityLiveRegion="polite" style={styles.muted}>Restoring saved workload limits…</Text>}
               {!!currentWorkloadState?.error&&<Text accessibilityLiveRegion="polite" style={styles.muted}>{currentWorkloadState.error}</Text>}
               {currentWorkloadState?.status==='error'&&<>
                 <Pressable accessibilityRole="button" style={styles.primary} disabled={savedQueueWorkloadOperationLocked} onPress={retrySavedQueueWorkloadLimits}><Text style={styles.primaryText}>Retry restoring workload limits</Text></Pressable>
                 <Pressable accessibilityRole="button" style={styles.primary} disabled={savedQueueWorkloadOperationLocked} onPress={replaceSavedQueueWorkloadLimits}><Text style={styles.primaryText}>Enter replacement limits</Text></Pressable>
               </>}
-              {(currentWorkloadState?.status==='ready'||currentWorkloadState?.status==='saving')&&<Pressable accessibilityRole="button" accessibilityState={{disabled:savedQueueWorkloadEditingLocked||!savedWorkloadDirty||!canApproveSavedQueueReview(savedQueueReview)}} style={styles.primary} disabled={savedQueueWorkloadEditingLocked||!savedWorkloadDirty||!canApproveSavedQueueReview(savedQueueReview)} onPress={()=>void saveSavedQueueWorkloadLimits()}><Text style={styles.primaryText}>{currentWorkloadState.status==='saving'?'Saving workload limits…':savedWorkloadDirty?'Save workload limits':'Workload limits saved on this device'}</Text></Pressable>}
+              {(currentWorkloadState?.status==='ready'||currentWorkloadState?.status==='saving')&&<Pressable accessibilityRole="button" accessibilityState={{disabled:savedQueueWorkloadEditingLocked||!savedWorkloadDirty||!savedQueueWorkloadValid}} style={styles.primary} disabled={savedQueueWorkloadEditingLocked||!savedWorkloadDirty||!savedQueueWorkloadValid} onPress={()=>void saveSavedQueueWorkloadLimits()}><Text style={styles.primaryText}>{currentWorkloadState.status==='saving'?'Saving workload limits…':savedWorkloadDirty?'Save workload limits':'Workload limits saved on this device'}</Text></Pressable>}
               {currentWorkloadState?.status==='ready'&&savedWorkloadDirty&&<Text style={styles.muted}>Save valid limits before approving this work queue. Unsaved edits do not replace the stored limits.</Text>}
               <Text style={styles.muted}>Saved limits restore on this device for the same operator, business and date. They do not sync across devices. After completing work, update and save the budget for the remaining visits.</Text>
+            </View>}
+            {savedQueueAppointments&&savedDueSummary.pendingCount>0&&<View style={styles.card}>
+              <Text style={styles.cardHeading}>Appointment checks</Text>
+              <Text accessibilityLiveRegion="polite" style={styles.body}>{savedQueueOrderReady?describeSavedQueueAppointments(savedQueueAppointments):'Restore the work order before checking appointment timing.'}</Text>
+              <Text style={styles.muted}>{APPOINTMENT_CHECK_ASSUMPTIONS}</Text>
+              {savedQueueOrderReady&&savedQueueAppointments.status==='conflicts'&&<Text style={styles.muted}>Review each timing warning below. You can change the order and check again. Approving with warnings records your review; it does not resolve the conflicts or change an appointment.</Text>}
             </View>}
             <Pressable accessibilityRole="button" accessibilityState={{disabled:!savedQueueCanApprove||savedQueueApprovalChecking||savedQueueApprovalBusy}} style={styles.primary} disabled={!savedQueueCanApprove||savedQueueApprovalChecking||savedQueueApprovalBusy} onPress={requestSavedQueueApproval}><Text style={styles.primaryText}>{!savedQueueOrderReady?'Restore work order before approval':savedQueueOrderSaveBusy?'Saving work order…':savedQueueApprovalChecking?'Checking saved approval…':savedQueueApprovalBusy?'Saving approval…':savedQueueApproved?'Work queue approved on this device':'Review and approve work queue'}</Text></Pressable>
             {!!savedQueueApprovalError&&<Text accessibilityLiveRegion="polite" style={styles.muted}>{savedQueueApprovalError}</Text>}{!savedQueueApproved&&savedDueSummary.pendingCount>0&&<Text style={styles.muted}>Review the current work order before starting a saved visit. Approval is saved securely on this device and tied to this business, date, visit order, estimates, appointment times and workload limits; changes require review again.</Text>}
@@ -928,6 +942,7 @@ function GreenCollarDashboard() {
             {savedQueueVisits.map((j,index)=><View key={j.id}>
               <Text style={styles.body}>{index+1}. {j.customer} · {j.service} · {j.address}</Text>
               <Text style={styles.muted}>{describeServiceTimeConstraints(j)}</Text>
+              {savedQueueOrderReady&&(savedQueueAppointmentIssues.get(j.id)??[]).map((message,issueIndex)=><Text key={issueIndex} style={[styles.body,{color:'#a4481d'}]}>Timing warning: {message}</Text>)}
               <View style={{flexDirection:'row',flexWrap:'wrap',gap:8}}>
                 <Pressable accessibilityRole="button" accessibilityLabel={'Move '+j.customer+' '+j.service+' earlier'} accessibilityState={{disabled:savedQueueEditingLocked||index===0}} style={[styles.primary,{backgroundColor:'#f0f5ef'}]} disabled={savedQueueEditingLocked||index===0} onPress={()=>changeSavedQueueOrder(j.id,'earlier')}><Text style={styles.primaryText}>Move earlier</Text></Pressable>
                 <Pressable accessibilityRole="button" accessibilityLabel={'Move '+j.customer+' '+j.service+' later'} accessibilityState={{disabled:savedQueueEditingLocked||index===savedQueueVisits.length-1}} style={[styles.primary,{backgroundColor:'#f0f5ef'}]} disabled={savedQueueEditingLocked||index===savedQueueVisits.length-1} onPress={()=>changeSavedQueueOrder(j.id,'later')}><Text style={styles.primaryText}>Move later</Text></Pressable>

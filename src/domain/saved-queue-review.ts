@@ -1,4 +1,5 @@
 import type {ServiceTimeConstraints} from './service-time';
+import {assessSavedQueueAppointments,type SavedQueueAppointments} from './saved-queue-appointments';
 import {assessSavedQueueWorkload,type SavedQueueWorkloadLimits,type SavedQueueWorkloadAssessment} from './saved-queue-workload';
 
 export type QueueReviewVisit=ServiceTimeConstraints&{
@@ -17,6 +18,7 @@ export type SavedQueueReview={
   expectedRevenueCents:number;
   approvalKey:string;
   workload?:SavedQueueWorkloadAssessment|null;
+  appointments:SavedQueueAppointments;
 };
 /** A review of the saved work queue in its current order; this does not claim route optimization. */
 export function createSavedQueueReview(businessId:string,date:string,visits:QueueReviewVisit[],limits?:SavedQueueWorkloadLimits):SavedQueueReview{
@@ -32,21 +34,29 @@ export function createSavedQueueReview(businessId:string,date:string,visits:Queu
     if(!Number.isFinite(visit.estimatedMinutes)||visit.estimatedMinutes<0)throw new Error('Visit durations must be valid');
   }
   const workload=limits?assessSavedQueueWorkload(visits,limits):null;
+  const appointments=assessSavedQueueAppointments(visits);
   const snapshot=[businessId,date,visits.map(v=>[v.id,v.rateCents,v.estimatedMinutes,v.preferredStartMinute??null,v.preferredFinishMinute??null,v.fixedStartMinute??null])];
-  const approvalKey=JSON.stringify(limits
-    ?['saved-queue-workload-v2',...snapshot,workload?.status,workload?.availableMinutes,workload?.maxJobs]
-    :snapshot);
+  const approvalKey=JSON.stringify(['saved-queue-appointments-v1',...snapshot,
+    limits?[workload?.status,workload?.availableMinutes,workload?.maxJobs]:null]);
   return {
     businessId,date,visitIds:visits.map(v=>v.id),visitCount:visits.length,
     estimatedServiceMinutes:visits.reduce((total,v)=>total+v.estimatedMinutes,0),
     expectedRevenueCents:visits.reduce((total,v)=>total+v.rateCents,0),
-    approvalKey,workload
+    approvalKey,workload,appointments
   };
 }
 export function canApproveSavedQueueReview(review:SavedQueueReview|null):boolean{
-  return !!review&&review.visitCount>0&&(!review.workload
+  return !!review&&review.visitCount>0&&!!review.appointments&&review.appointments.status!=='invalid_visits'&&(!review.workload
     ||review.workload.status==='within_limits'||review.workload.status==='over_limits');
 }
 export function isSavedQueueApproved(review:SavedQueueReview|null,approvedKey:string|null):boolean{
   return canApproveSavedQueueReview(review)&&approvedKey===review?.approvalKey;
+}
+
+export function savedQueueApprovalAction(review:SavedQueueReview):string{
+  const appointments=review.appointments.status==='conflicts';
+  const workload=review.workload?.status==='over_limits';
+  if(appointments&&workload)return 'Approve with warnings';
+  if(appointments)return 'Approve with appointment warnings';
+  return workload?'Approve with workload warnings':'Approve work queue';
 }
