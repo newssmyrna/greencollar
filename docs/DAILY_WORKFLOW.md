@@ -382,3 +382,10 @@ The rain-out carryover case and manager/worker decision rights are specified in 
 ### Rain-out carryover prototype
 
 Phase 71 adds a pure, non-persistent calculator for next-day and spread-across-horizon options, plus capability rules mapped to the current `owner` / `admin` / `worker` memberships. It preserves completed visits and reports service-minute capacity, moved/unplaced stops, projected revenue, and delay metrics. It explicitly warns when drive time, appointment windows, breaks, and route feasibility are not modeled. This is calculator/test foundation only: no interruption capture, manager UI, schedule write, or customer notification is live.
+
+
+### Rain-out interruption reporting (Phase 72)
+
+The Today screen now stages a weather interruption report for an owner/operator or field worker and a date-scoped report inbox for an owner/admin. The server stores the report idempotently after membership and agreement checks. Recording or viewing a report does not change visits, agreements, routes, or customer notifications. This feature is staged in PR #72, unmerged and undeployed. The manager's adjustment options and schedule decision UI remain future work.
+
+The interruption is a shortened-workday report rather than a rain-only control: rain is the common pilot case, and the other-reason path covers any cause for ending early.
