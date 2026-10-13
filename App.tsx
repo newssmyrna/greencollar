@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useRef } from 'react';
-import { ReadOnlyDemo } from './src/components/ReadOnlyDemo';
+import { ReadOnlyDemo, DemoEntryOnly } from './src/components/ReadOnlyDemo';
 import * as Location from 'expo-location';
 import { ClerkProvider, useAuth, useClerk } from '@clerk/expo';
 import { useHostedAuth } from '@clerk/expo/hosted-auth';
@@ -1703,11 +1703,6 @@ function AuthGate() {
 
 export default function App() {
   const key = process.env.EXPO_PUBLIC_CLERK_PUBLISHABLE_KEY;
-  if (!key) return (
-    <SafeAreaView style={[styles.page,{padding:24,justifyContent:'center'}]}>
-      <Text style={styles.logo}>greencollar.</Text>
-      <Text style={styles.muted}>Clerk publishable key not configured. Add EXPO_PUBLIC_CLERK_PUBLISHABLE_KEY to your local .env file.</Text>
-    </SafeAreaView>
-  );
+  if (!key) return <DemoEntryOnly/>;
   return <ClerkProvider publishableKey={key} tokenCache={tokenCache}><AuthGate/></ClerkProvider>;
 }
