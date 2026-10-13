@@ -1,0 +1,28 @@
+name: GreenCollar Expo web export
+concurrency:
+  group: greencollar-web-export-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+on:
+  pull_request:
+  workflow_dispatch:
+jobs:
+  export-web:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+      - name: Install dependencies
+        run: npm install
+      - name: Export actual app screens for web preview
+        run: npm run export:web
+        env:
+          EXPO_PUBLIC_GREENCOLLAR_APP_PREVIEW: 'true'
+      - name: Upload Expo web bundle
+        uses: actions/upload-artifact@v4
+        with:
+          name: greencollar-expo-web
+          path: dist/
+          if-no-files-found: error
+          retention-days: 7

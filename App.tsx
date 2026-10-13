@@ -106,8 +106,9 @@ function travelDraftsValid(visitIds:readonly string[],drafts:Record<string,strin
   return travelEstimatesFromDrafts(visitIds,drafts).every(estimate=>Number.isSafeInteger(estimate.minutes)&&estimate.minutes>=0&&estimate.minutes<=1440);
 }
 
-function GreenCollarDashboard() {
-  const {getToken,userId} = useAuth();
+type GreenCollarDashboardProps = Pick<ReturnType<typeof useAuth>, 'getToken' | 'userId'> & { previewMode?: boolean };
+
+function GreenCollarDashboard({getToken,userId,previewMode=false}:GreenCollarDashboardProps) {
   const [savedDay,setSavedDay] = useState<DayData|null>(null);
   const [savedCustomers,setSavedCustomers] = useState<SavedCustomer[]>([]);
   const [savedCustomerName,setSavedCustomerName] = useState('');
@@ -244,7 +245,7 @@ function GreenCollarDashboard() {
   const [savedDayError,setSavedDayError] = useState('');
   const [loadingSaved,setLoadingSaved] = useState(false);
   const [businessName,setBusinessName] = useState('');
-  const [connectedBusiness,setConnectedBusiness] = useState<OwnedBusiness|null>(null);
+  const [connectedBusiness,setConnectedBusiness] = useState<OwnedBusiness|null>(()=>previewMode?{id:'preview-business',name:'GreenCollar visual preview · sample workspace',role:'owner'}:null);
   const [weatherReportBusy,setWeatherReportBusy]=useState(false);
   const [weatherReportError,setWeatherReportError]=useState('');
   const [weatherReportSent,setWeatherReportSent]=useState(false);
@@ -1099,6 +1100,7 @@ function GreenCollarDashboard() {
       <ScrollView contentContainerStyle={styles.content}>
         <Text style={styles.logo}>greencollar.</Text>
         <Text style={styles.subtitle}>Your business. On autopilot.</Text>
+        {previewMode&&<View style={styles.previewBanner}><Text style={styles.previewTitle}>REAL APP SCREENS · VISUAL PREVIEW</Text><Text style={styles.muted}>The five-tab dashboard below is the app screen from this source commit. Preview workspace and any Example or Sample records are fixtures. Clerk sign-in and the Cloudflare API are not connected; saved business data, schedules, service addresses, invoice drafts, weather reports and live routing cannot load or save here. Planner calculations are local previews only.</Text></View>}
         <View style={styles.tabs}>
           {(['today', 'customers', 'planner', 'invoices', ...(connectedBusiness&&businessRoleCapabilities(connectedBusiness.role).manageSchedule?['schedule' as const]:[])] as const).map(t => (
             <Pressable key={t} style={[styles.tab, tab === t && styles.activeTab]} onPress={() => setTab(t)}>
@@ -1658,6 +1660,8 @@ function GreenCollarDashboard() {
 
 const styles = StyleSheet.create({
   page: { flex: 1, backgroundColor: '#0e261b' },
+  previewBanner: { borderWidth: 1, borderColor: '#d5f48b', backgroundColor: '#294a35', padding: 13, borderRadius: 12, gap: 5 },
+  previewTitle: { color: '#d5f48b', fontSize: 11, fontWeight: '900', letterSpacing: 1 },
   content: { padding: 20, paddingBottom: 50, gap: 12, maxWidth: 680, width: '100%', alignSelf: 'center' },
   logo: { color: pale, fontSize: 34, fontWeight: '900', marginTop: 14 },
   subtitle: { color: '#c4d9cc', fontSize: 14, marginBottom: 12 },
@@ -1680,13 +1684,13 @@ const styles = StyleSheet.create({
 
 function AuthGate() {
   const [demoOpen,setDemoOpen]=useState(false);
-  const { isLoaded, isSignedIn } = useAuth();
+  const { isLoaded, isSignedIn, getToken, userId } = useAuth();
   const { startHostedAuth } = useHostedAuth();
   const { signOut } = useClerk();
   const [authError, setAuthError] = useState('');
   if (!isLoaded) return <SafeAreaView style={styles.page}><Text style={styles.logo}>greencollar.</Text><Text style={styles.muted}>Loading secure sign-in...</Text></SafeAreaView>;
   if (demoOpen) return <ReadOnlyDemo onExit={()=>setDemoOpen(false)}/>;
-  if (isSignedIn) return <><GreenCollarDashboard/><Pressable accessibilityRole="button" style={{backgroundColor:'#183d2b',padding:10,alignItems:'center'}} onPress={() => void signOut()}><Text style={{color:'#d5f48b'}}>Sign out</Text></Pressable></>;
+  if (isSignedIn) return <><GreenCollarDashboard getToken={getToken} userId={userId}/><Pressable accessibilityRole="button" style={{backgroundColor:'#183d2b',padding:10,alignItems:'center'}} onPress={() => void signOut()}><Text style={{color:'#d5f48b'}}>Sign out</Text></Pressable></>;
   return (
     <SafeAreaView style={[styles.page,{justifyContent:'center',padding:24,gap:16}]}>
       <Text style={styles.logo}>greencollar.</Text>
@@ -1702,6 +1706,8 @@ function AuthGate() {
 }
 
 export default function App() {
+  const previewMode = process.env.EXPO_PUBLIC_GREENCOLLAR_APP_PREVIEW === 'true';
+  if (previewMode) return <GreenCollarDashboard getToken={async () => null} userId={null} previewMode/>;
   const key = process.env.EXPO_PUBLIC_CLERK_PUBLISHABLE_KEY;
   if (!key) return <DemoEntryOnly/>;
   return <ClerkProvider publishableKey={key} tokenCache={tokenCache}><AuthGate/></ClerkProvider>;
