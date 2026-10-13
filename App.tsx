@@ -4,6 +4,7 @@ import { ClerkProvider, useAuth, useClerk } from '@clerk/expo';
 import { useHostedAuth } from '@clerk/expo/hosted-auth';
 import { tokenCache } from '@clerk/expo/token-cache';
 import { fetchDayData, type DayData } from './src/data/greencollar-api';
+import { fetchRoutingSettings, acknowledgeRoutingNotice, setBusinessRoutingEnabled, type RoutingSettings } from './src/data/routing-api';
 import { summarizeSavedDay } from './src/data/saved-day';
 import {createSavedQueueReview,canApproveSavedQueueReview,isSavedQueueApproved,savedQueueApprovalAction} from './src/domain/saved-queue-review';
 import {describeSavedQueueAppointments,describeAppointmentCheckAssumptions} from './src/domain/saved-queue-appointments';
@@ -39,7 +40,7 @@ import {listLocationConfirmations,syncLocationConfirmation,type ServerLocationCo
 import {filterLocationConfirmations,type LocationConfirmationKindFilter,type LocationConfirmationSourceFilter} from './src/domain/location-confirmation-filter';
 import {
   SafeAreaView, ScrollView, View, Text, TextInput, AppState,
-  Pressable, StyleSheet, StatusBar, Alert
+  Pressable, StyleSheet, StatusBar, Alert, Linking
 } from 'react-native';
 
 type Customer = {
@@ -235,6 +236,11 @@ function GreenCollarDashboard() {
   const [businessName,setBusinessName] = useState('');
   const [connectedBusiness,setConnectedBusiness] = useState<{id:string;name:string}|null>(null);
   useEffect(()=>{setAgreementEarliest('');setAgreementLatest('');setAgreementFixed('');},[userId,connectedBusiness?.id]);
+  useEffect(()=>{
+    routingSettingsRequest.current++;
+    routingSettingsBusyRef.current=false;
+    setRoutingSettings(null);setRoutingSettingsBusy(false);setRoutingSettingsError('');
+  },[userId,connectedBusiness?.id]);
   useEffect(()=>{setInvoiceDrafts([]);invoiceDraftSnapshot.current.clear();setInvoiceError('');},[userId,connectedBusiness?.id]);
   async function saveCompletedService() {
     if(!connectedBusiness||!savedDay||!workSession||workSession.status!=='completed'||workSession.jobId==='demo-job')
@@ -360,6 +366,64 @@ function GreenCollarDashboard() {
     }catch(e){setSavedDayError(e instanceof Error?e.message:'Unable to load saved data');}
     finally{setLoadingSaved(false);}
   }
+  async function loadRoutingSettings(){
+    const api=process.env.EXPO_PUBLIC_GREENCOLLAR_API_URL;
+    if(!api||!connectedBusiness){setRoutingSettingsError('Load a saved business and configure the API URL first. Manual travel estimates remain available.');return;}
+    if(routingSettingsBusyRef.current)return;
+    routingSettingsBusyRef.current=true;
+    const request=++routingSettingsRequest.current;
+    const scope=JSON.stringify([userId,connectedBusiness.id]);
+    setRoutingSettingsBusy(true);setRoutingSettingsError('');
+    try{
+      const token=await getToken({template:'greencollar-api'});
+      if(!token)throw new Error('Sign in first');
+      const settings=await fetchRoutingSettings(api,connectedBusiness.id,token);
+      if(request===routingSettingsRequest.current&&scope===JSON.stringify([userId,connectedBusiness?.id]))
+        setRoutingSettings(settings);
+    }catch(error){
+      if(request===routingSettingsRequest.current)
+        setRoutingSettingsError(error instanceof Error?error.message:'Routing readiness is unavailable. Manual travel estimates remain active.');
+    }finally{
+      if(request===routingSettingsRequest.current){routingSettingsBusyRef.current=false;setRoutingSettingsBusy(false);}
+    }
+  }
+  async function updateRoutingSettings(action:'acknowledge'|'withdraw'|'enable'|'disable'){
+    const api=process.env.EXPO_PUBLIC_GREENCOLLAR_API_URL,settings=routingSettings,business=connectedBusiness;
+    if(!api||!business||!settings||(action!=='disable'&&!settings.noticeVersion)){setRoutingSettingsError('Current routing policy settings are unavailable. Manual travel estimates remain active.');return;}
+    if(action==='acknowledge'&&(!settings.termsUrl||!settings.privacyUrl)){setRoutingSettingsError('Public Terms and Privacy pages must be ready before acknowledging the notice.');return;}
+    if(action==='enable'&&(!settings.available||!settings.noticeAcknowledged)){setRoutingSettingsError('Provider readiness and this operator’s current notice acknowledgment are both required.');return;}
+    if(action==='disable'&&!settings.businessEnabled){return;}
+    if(routingSettingsBusyRef.current)return;
+    routingSettingsBusyRef.current=true;
+    const request=++routingSettingsRequest.current;
+    const scope=JSON.stringify([userId,business.id]);
+    setRoutingSettingsBusy(true);setRoutingSettingsError('');
+    let writeSubmitted=false;
+    try{
+      const token=await getToken({template:'greencollar-api'});
+      if(!token)throw new Error('Sign in first');
+      if(action==='acknowledge'||action==='withdraw'){
+        await acknowledgeRoutingNotice(api,business.id,token,settings.noticeVersion,action==='acknowledge');
+        writeSubmitted=true;
+      }else{
+        await setBusinessRoutingEnabled(api,business.id,token,action==='enable',settings.noticeAcknowledged,settings.noticeVersion??'');
+        writeSubmitted=true;
+      }
+      const updated=await fetchRoutingSettings(api,business.id,token);
+      if(request===routingSettingsRequest.current&&scope===JSON.stringify([userId,connectedBusiness?.id]))
+        setRoutingSettings(updated);
+    }catch(error){
+      if(request===routingSettingsRequest.current)
+        setRoutingSettingsError(writeSubmitted?'The setting change was submitted but could not be confirmed. Refresh routing readiness before retrying.':error instanceof Error?error.message:'Could not update routing settings. Manual travel estimates remain active.');
+    }finally{
+      if(request===routingSettingsRequest.current){routingSettingsBusyRef.current=false;setRoutingSettingsBusy(false);}
+    }
+  }
+  async function openRoutingPolicy(url:string|null){
+    if(!url||!/^https:\/\//i.test(url)){setRoutingSettingsError('A public HTTPS policy page is not configured.');return;}
+    try{await Linking.openURL(url);}
+    catch{setRoutingSettingsError('Could not open the policy page. Manual travel estimates remain active.');}
+  }
   const [tab, setTab] = useState<'today' | 'customers' | 'planner' | 'invoices'>('today');
   const [customers, setCustomers] = useState<Customer[]>(seed);
   const [name, setName] = useState('');
@@ -397,6 +461,11 @@ function GreenCollarDashboard() {
   const [savedQueueOrderReload,setSavedQueueOrderReload]=useState(0);
   const [savedQueueTravelDrafts,setSavedQueueTravelDrafts]=useState<Record<string,string>>({});
   const [savedQueueTravelError,setSavedQueueTravelError]=useState('');
+  const [routingSettings,setRoutingSettings]=useState<RoutingSettings|null>(null);
+  const [routingSettingsBusy,setRoutingSettingsBusy]=useState(false);
+  const [routingSettingsError,setRoutingSettingsError]=useState('');
+  const routingSettingsRequest=useRef(0);
+  const routingSettingsBusyRef=useRef(false);
   const savedQueueOrderWriteLock=useRef(false);
   const savedQueueScopeRef=useRef('');
   const currentSavedQueueContext=useRef<{userId:string|null|undefined;approvalKey:string|null;canApprove:boolean}>({userId:null,approvalKey:null,canApprove:false});
@@ -1012,6 +1081,29 @@ function GreenCollarDashboard() {
               {savedAppointmentCheckReady&&savedWorkloadDirty&&<Text style={styles.muted}>This preview uses your unsaved work settings. Save them before approving.</Text>}
               {savedAppointmentCheckReady&&savedQueueTravelDirty&&<Text style={styles.muted}>This preview uses unsaved travel estimates. Save them on this device before approving.</Text>}
               {savedAppointmentCheckReady&&savedQueueAppointments.status==='conflicts'&&<Text style={styles.muted}>Review each timing warning below. You can change the order and check again. Approving with warnings records your review; it does not resolve the conflicts or change an appointment.</Text>}
+            </View>}
+            {savedDueSummary.pendingCount>0&&<View style={styles.card}>
+              <Text style={styles.cardHeading}>Road routing readiness</Text>
+              <Text style={styles.muted}>This panel checks policy, provider, and business settings only. It does not send stop coordinates or request a route matrix. Manual travel estimates below remain available.</Text>
+              {!routingSettings&&<Text style={styles.body}>Routing remains unavailable until public policy pages, current provider pricing, provider credentials, and business controls are ready.</Text>}
+              {!!routingSettings&&<Text accessibilityLiveRegion="polite" style={styles.body}>
+                {routingSettings.enabled?'Business routing is enabled.':routingSettings.businessEnabled?'Business routing is saved, but provider or policy checks are not ready.':routingSettings.available?'Provider and policy checks are ready; business routing is off.':'Provider or policy checks are not ready. Manual travel estimates remain active.'}
+              </Text>}
+              {!!routingSettings&&routingSettings.noticeVersion&&routingSettings.termsUrl&&routingSettings.privacyUrl&&<>
+                <Text style={styles.muted}>{routingSettings.notice}</Text>
+                <View style={{flexDirection:'row',gap:8,flexWrap:'wrap'}}>
+                  <Pressable accessibilityRole="button" style={[styles.primary,{padding:11}]} disabled={routingSettingsBusy} onPress={()=>void openRoutingPolicy(routingSettings.termsUrl)}><Text style={styles.primaryText}>Review Terms</Text></Pressable>
+                  <Pressable accessibilityRole="button" style={[styles.primary,{padding:11}]} disabled={routingSettingsBusy} onPress={()=>void openRoutingPolicy(routingSettings.privacyUrl)}><Text style={styles.primaryText}>Review Privacy</Text></Pressable>
+                </View>
+                {routingSettings.noticeAcknowledged
+                  ?<><Text style={styles.muted}>This operator has acknowledged the current location notice.</Text><Pressable accessibilityRole="button" style={[styles.primary,{backgroundColor:'#f0f5ef'}]} disabled={routingSettingsBusy} onPress={()=>void updateRoutingSettings('withdraw')}><Text style={styles.primaryText}>Withdraw my routing acknowledgment</Text></Pressable></>
+                  :<Pressable accessibilityRole="button" style={styles.primary} disabled={routingSettingsBusy} onPress={()=>void updateRoutingSettings('acknowledge')}><Text style={styles.primaryText}>Acknowledge the current location notice</Text></Pressable>}
+              </>}
+              {!!routingSettings&&routingSettings.available&&!routingSettings.businessEnabled&&routingSettings.noticeAcknowledged&&<Pressable accessibilityRole="button" style={styles.primary} disabled={routingSettingsBusy} onPress={()=>void updateRoutingSettings('enable')}><Text style={styles.primaryText}>Enable for this business · owner/admin</Text></Pressable>}
+              {!!routingSettings&&routingSettings.businessEnabled&&<Pressable accessibilityRole="button" style={[styles.primary,{backgroundColor:'#f0f5ef'}]} disabled={routingSettingsBusy} onPress={()=>void updateRoutingSettings('disable')}><Text style={styles.primaryText}>Disable routing for this business · owner/admin</Text></Pressable>}
+              <Pressable accessibilityRole="button" style={[styles.primary,{backgroundColor:'#f0f5ef'}]} disabled={routingSettingsBusy||!connectedBusiness} onPress={()=>void loadRoutingSettings()}><Text style={styles.primaryText}>{routingSettingsBusy?'Checking routing settings…':routingSettings?'Refresh routing readiness':'Check routing readiness'}</Text></Pressable>
+              {!!routingSettingsError&&<Text accessibilityLiveRegion="polite" style={styles.muted}>{routingSettingsError}</Text>}
+              <Text style={styles.muted}>Only an explicit route request in a later phase will send saved stop coordinates. Every operator needs their own current notice acknowledgment; enabling or disabling the business setting makes no provider request.</Text>
             </View>}
             <Pressable accessibilityRole="button" accessibilityState={{disabled:!savedQueueCanApprove||savedQueueApprovalChecking||savedQueueApprovalBusy}} style={styles.primary} disabled={!savedQueueCanApprove||savedQueueApprovalChecking||savedQueueApprovalBusy} onPress={requestSavedQueueApproval}><Text style={styles.primaryText}>{!savedQueueOrderReady?'Restore work order before approval':savedQueueOrderSaveBusy?'Saving work order…':savedQueueApprovalChecking?'Checking saved approval…':savedQueueApprovalBusy?'Saving approval…':savedQueueApproved?'Work queue approved on this device':'Review and approve work queue'}</Text></Pressable>
             {!!savedQueueApprovalError&&<Text accessibilityLiveRegion="polite" style={styles.muted}>{savedQueueApprovalError}</Text>}{!savedQueueApproved&&savedDueSummary.pendingCount>0&&<Text style={styles.muted}>Review the current work order before starting a saved visit. Approval is saved securely on this device and tied to this business, date, visit order, service and travel estimates, appointment times, work window, planned breaks and workload limits; changes require review again. Your chosen starting point itself is not saved.</Text>}
