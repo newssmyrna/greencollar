@@ -98,3 +98,9 @@ Keep every change narrowly scoped and tested; never silently remove agreed featu
 - Preserve multi-route, stale-stop, removed-worker, and unsupported shift drafts as read-only.
 - Update using the saved version and reject concurrent edits or deleted drafts.
 - Test hydration, preservation, and read-only cases; do not publish routes or contact customers.
+
+## Phase 83 — Edit stop tasks in saved route drafts
+- Edit saved task names, estimates, and route-worker assignments while preserving each task ID.
+- Remove tasks from the draft with clear feedback when crew changes leave an assignment invalid.
+- Validate every selected stop's task names, whole-minute estimates, and assignments against the selected route crew before saving.
+- Keep schedule changes draft-only and covered by focused domain tests.

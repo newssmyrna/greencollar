@@ -9,7 +9,7 @@ import { reportWeatherInterruption, listWeatherInterruptions, type WeatherInterr
 import { getWorkdaySchedule, saveWorkdaySchedule, listWorkdayMembers, type WorkdaySchedule, type ScheduledTask, type BusinessMember } from './src/data/workday-schedules';
 import { listAvailability, type CrewAvailability } from './src/data/availability';
 import { reportedLunchBlocks } from './src/domain/workday-availability';
-import { hydrateSingleRouteDraft } from './src/domain/workday-schedule-editor';
+import { hydrateSingleRouteDraft, validateScheduleTasksForCrew } from './src/domain/workday-schedule-editor';
 import { businessRoleCapabilities } from './src/domain/weather-replan';
 import { prepareTruckPreview, type PreviewTruck, type TruckPreviewRoute } from './src/domain/truck-preview';
 import { summarizeSavedDay } from './src/data/saved-day';
@@ -1068,7 +1068,7 @@ function GreenCollarDashboard() {
 
         {tab === 'schedule' && connectedBusiness && businessRoleCapabilities(connectedBusiness.role).manageSchedule && <>
           <Text style={styles.heading}>Workday schedule draft</Text>
-          <Text style={styles.muted}>Build one truck route for the loaded workday. Add multiple crew members, order stops, and assign separate tasks to individual workers. Saving creates a draft only when none exists for this workday. Existing drafts can be inspected but this first editor does not yet hydrate them for editing. Workers can view only routes they are assigned to.</Text>
+          <Text style={styles.muted}>Build one truck route for the loaded workday. Add crew members, order stops, and create or edit stop tasks assigned to route workers. Saved single-route drafts can be updated after loading; multi-route drafts remain read-only. Workers can view only routes they are assigned to.</Text>
           {!savedDay && <Text style={styles.muted}>Load today’s saved workday from the Today tab first so eligible service stops are available.</Text>}
           <View style={styles.card}>
             <Text style={styles.cardHeading}>Route and crew</Text>
@@ -1137,16 +1137,32 @@ function GreenCollarDashboard() {
                 <Pressable accessibilityRole="button" accessibilityState={{selected}} onPress={()=>setScheduleSelectedAgreementIds(current=>selected?current.filter(id=>id!==agreement.id):[...current,agreement.id])}>
                   <Text style={styles.body}>{selected?'☑':'□'} {selected?(scheduleSelectedAgreementIds.indexOf(agreement.id)+1)+'. ':''}{agreement.service_name} · {agreement.address}</Text>
                 </Pressable>
-                {!!tasks.length&&tasks.map(task=><Text key={task.taskId} style={styles.muted}>• {task.label} · {task.estimatedMinutes} min · {task.assignedSubjects.join(', ')}</Text>)}
+                {!!tasks.length&&tasks.map(task=><View key={task.taskId} style={styles.card}>
+                  <Text style={styles.label}>Edit saved task</Text>
+                  <Text style={styles.label}>Task name</Text>
+                  <TextInput accessibilityLabel={'Task name for '+agreement.service_name+' task'} style={styles.input} value={task.label} maxLength={80} editable={!scheduleBusy} onChangeText={label=>setScheduleTaskDrafts(current=>({...current,[agreement.id]:(current[agreement.id]??[]).map(item=>item.taskId===task.taskId?{...item,label}:item)}))} />
+                  <Text style={styles.label}>Assigned route crew</Text>
+                  {!scheduleWorkerSubjects.length&&<Text style={styles.muted}>Select a route crew member before assigning this task.</Text>}
+                  {task.assignedSubjects.filter(subject=>!scheduleWorkerSubjects.includes(subject)).map(subject=><View key={task.taskId+'-unassigned-'+subject} style={styles.card}>
+                    <Text style={styles.muted}>No longer on the route crew: {subject}</Text>
+                    <Pressable accessibilityRole="button" accessibilityLabel={'Remove unavailable assignment '+subject+' from '+task.label} style={styles.primary} disabled={scheduleBusy} onPress={()=>setScheduleTaskDrafts(current=>({...current,[agreement.id]:(current[agreement.id]??[]).map(item=>item.taskId===task.taskId?{...item,assignedSubjects:item.assignedSubjects.filter(assignedSubject=>assignedSubject!==subject)}:item)}))}><Text style={styles.primaryText}>Remove unavailable assignment</Text></Pressable>
+                  </View>)}
+                  {scheduleWorkerSubjects.map(subject=><Pressable key={subject} accessibilityRole="button" accessibilityState={{selected:task.assignedSubjects.includes(subject)}} style={styles.primary} disabled={scheduleBusy} onPress={()=>setScheduleTaskDrafts(current=>({...current,[agreement.id]:(current[agreement.id]??[]).map(item=>item.taskId===task.taskId?{...item,assignedSubjects:item.assignedSubjects.includes(subject)?item.assignedSubjects.filter(assignedSubject=>assignedSubject!==subject):[...item.assignedSubjects,subject]}:item)}))}><Text style={styles.primaryText}>{task.assignedSubjects.includes(subject)?'✓ ':''}{subject}</Text></Pressable>)}
+                  <Text style={styles.label}>Estimated task minutes</Text>
+                  <TextInput accessibilityLabel={'Estimated minutes for '+agreement.service_name+' task'} keyboardType="numeric" style={styles.input} value={Number.isFinite(task.estimatedMinutes)?String(task.estimatedMinutes):''} editable={!scheduleBusy} onChangeText={value=>setScheduleTaskDrafts(current=>({...current,[agreement.id]:(current[agreement.id]??[]).map(item=>item.taskId===task.taskId?{...item,estimatedMinutes:value.trim()===''?0:Number(value)}:item)}))} />
+                  <Pressable accessibilityRole="button" accessibilityLabel={'Remove '+task.label+' task from '+agreement.service_name+' draft'} style={styles.primary} disabled={scheduleBusy} onPress={()=>setScheduleTaskDrafts(current=>({...current,[agreement.id]:(current[agreement.id]??[]).filter(item=>item.taskId!==task.taskId)}))}><Text style={styles.primaryText}>Remove task from draft</Text></Pressable>
+                </View>)}
                 {selected&&<View style={styles.card}>
                   <Text style={styles.label}>Task name for this stop</Text>
-                  <TextInput accessibilityLabel={'Task name '+agreement.service_name} style={styles.input} value={scheduleTaskLabel} onChangeText={setScheduleTaskLabel} />
+                  <TextInput accessibilityLabel={'Task name '+agreement.service_name} style={styles.input} value={scheduleTaskLabel} maxLength={80} onChangeText={setScheduleTaskLabel} />
                   <Text style={styles.label}>Assigned worker</Text>
                   {scheduleWorkerSubjects.map(subject=><Pressable key={subject} accessibilityRole="button" accessibilityState={{selected:scheduleTaskWorker===subject}} style={styles.primary} onPress={()=>setScheduleTaskWorker(subject)}><Text style={styles.primaryText}>{scheduleTaskWorker===subject?'✓ ':''}{subject}</Text></Pressable>)}
                   <Text style={styles.label}>Estimated task minutes</Text>
                   <TextInput accessibilityLabel="Estimated task minutes" keyboardType="numeric" style={styles.input} value={scheduleTaskMinutes} onChangeText={setScheduleTaskMinutes} />
-                  <Pressable accessibilityRole="button" style={styles.primary} onPress={()=>{
+                  {tasks.length>=20&&<Text style={styles.muted}>This stop has reached the 20-task draft limit.</Text>}
+                  <Pressable accessibilityRole="button" style={styles.primary} disabled={scheduleBusy||tasks.length>=20} onPress={()=>{
                     const minutes=Number(scheduleTaskMinutes),worker=scheduleTaskWorker;
+                    if((scheduleTaskDrafts[agreement.id]??[]).length>=20){setScheduleError('Each stop can have no more than 20 tasks.');return;}
                     if(!worker||!Number.isInteger(minutes)||minutes<1||minutes>1440){setScheduleError('Choose a crew member and enter task minutes from 1 to 1440.');return;}
                     setScheduleError('');
                     setScheduleTaskDrafts(current=>({...current,[agreement.id]:[...(current[agreement.id]??[]),{taskId:'task-'+Date.now()+'-'+(current[agreement.id]??[]).length,label:scheduleTaskLabel.trim()||agreement.service_name,assignedSubjects:[worker],estimatedMinutes:minutes}]}));
@@ -1195,7 +1211,8 @@ function GreenCollarDashboard() {
               const selected=scheduleSelectedAgreementIds;
               if(!selected.length)throw new Error('Select at least one stop.');
               const routes=[{routeId:scheduleRouteId,truckId:scheduleTruckId.trim(),startMinute,endMinute,workers:scheduledWorkers,stops:selected.map((id,index)=>({visitId:id+':'+savedDay.date,order:index+1,tasks:scheduleTaskDrafts[id]??[]}))}];
-              if(routes[0].stops.some(stop=>!stop.tasks.length))throw new Error('Add at least one task to every selected stop.');
+              const taskError=validateScheduleTasksForCrew(selected,scheduleTaskDrafts,workers);
+              if(taskError)throw new Error(taskError);
               const expectedVersion=scheduleDraftLoadedForEdit&&workdaySchedule?workdaySchedule.version:0;
               const saved=await saveWorkdaySchedule(api,token,{businessId:connectedBusiness.id,workDate:savedDay.date,expectedVersion,routes});
               setWorkdaySchedule(saved);setScheduleDraftLoadedForEdit(true);setScheduleNotice((expectedVersion?'Draft updated':'Draft saved')+'. It is not published to a live route or GPS device.');
