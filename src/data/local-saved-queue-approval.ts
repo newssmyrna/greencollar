@@ -41,7 +41,7 @@ export function createLocalSavedQueueApprovalStore(storage:KeyValueSecureStore,d
       if(!review.visitCount)throw new Error('There are no visits to approve');
       if(!canApproveSavedQueueReview(review))throw new Error(review.appointments?.status==='invalid_window'
         ?'Enter a valid workday window before approving':review.appointments?.status==='invalid_break'
-        ?'Enter a valid planned break before approving':review.appointments?.status==='invalid_visits'
+        ?'Enter a valid planned break list before approving':review.appointments?.status==='invalid_visits'
         ?'Resolve invalid appointment data before approving':'Enter valid workload limits before approving');
       const [key,businessDigest,approvalDigest]=await Promise.all([
         keyFor(subject),
