@@ -60,7 +60,7 @@ test('corrupt, oversized or wrong-scope records reject without deleting original
   const f=fixture();assert.equal(await f.store.load(context),null);
   await f.store.save(context,limits);
   const [key,value]=[...f.memory.entries()][0],record=JSON.parse(value);
-  for(const bad of ['not-json',' '.repeat(513),JSON.stringify({...record,version:2}),JSON.stringify({...record,contextDigest:'wrong'}),JSON.stringify({...record,maxJobs:3}),JSON.stringify({...record,hours:'',maxJobs:''})]){
+  for(const bad of ['not-json',' '.repeat(513),JSON.stringify({...record,version:99}),JSON.stringify({...record,contextDigest:'wrong'}),JSON.stringify({...record,maxJobs:3}),JSON.stringify({...record,hours:'',maxJobs:''})]){
     f.memory.set(key,bad);
     await assert.rejects(()=>f.store.load(context),/could not be read/);
     assert.equal(f.memory.get(key),bad);
