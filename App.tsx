@@ -1138,9 +1138,21 @@ function GreenCollarDashboard() {
               const workers=[...new Set(scheduleWorkerSubjects)];
               const startMinute=scheduleClockMinute(scheduleStart),endMinute=scheduleClockMinute(scheduleEnd);
               if(!scheduleTruckId.trim()||!workers.length||startMinute===null||endMinute===null||startMinute>=endMinute)throw new Error('Enter a truck, load and select at least one verified crew member, and enter valid start/end times.');
+              const scheduledWorkers=workers.map(subject=>{
+                const lunchStartText=(scheduleLunchStart[subject]??'').trim(),lunchEndText=(scheduleLunchEnd[subject]??'').trim();
+                if(Boolean(lunchStartText)!==Boolean(lunchEndText))throw new Error('Enter both lunch start and end for each selected worker, or leave both blank.');
+                let breaks:{startMinute:number;endMinute:number}[]=[];
+                if(lunchStartText){
+                  const lunchStartMinute=scheduleClockMinute(lunchStartText),lunchEndMinute=scheduleClockMinute(lunchEndText);
+                  if(lunchStartMinute===null||lunchEndMinute===null||lunchStartMinute>=lunchEndMinute||lunchStartMinute<startMinute||lunchEndMinute>endMinute)
+                    throw new Error('Each lunch block must be valid and fit inside that worker’s shift.');
+                  breaks=[{startMinute:lunchStartMinute,endMinute:lunchEndMinute}];
+                }
+                return {subject,startMinute,endMinute,breaks};
+              });
               const selected=scheduleSelectedAgreementIds;
               if(!selected.length)throw new Error('Select at least one stop.');
-              const routes=[{routeId:'route-1',truckId:scheduleTruckId.trim(),startMinute,endMinute,workers:workers.map(subject=>({subject,startMinute,endMinute})),stops:selected.map((id,index)=>({visitId:id+':'+savedDay.date,order:index+1,tasks:scheduleTaskDrafts[id]??[]}))}];
+              const routes=[{routeId:'route-1',truckId:scheduleTruckId.trim(),startMinute,endMinute,workers:scheduledWorkers,stops:selected.map((id,index)=>({visitId:id+':'+savedDay.date,order:index+1,tasks:scheduleTaskDrafts[id]??[]}))}];
               if(routes[0].stops.some(stop=>!stop.tasks.length))throw new Error('Add at least one task to every selected stop.');
               const saved=await saveWorkdaySchedule(api,token,{businessId:connectedBusiness.id,workDate:savedDay.date,expectedVersion:0,routes});
               setWorkdaySchedule(saved);setScheduleNotice('Draft saved. It is not published to a live route or GPS device.');
