@@ -84,3 +84,10 @@ Keep every change narrowly scoped and tested; never silently remove agreed featu
 - Show separate lunch start/end inputs for each selected worker in the owner/admin draft editor.
 - Preserve lunch blocks in saved and loaded drafts for later capacity and route timing calculations.
 - Stop arrival times and route feasibility remain unmodeled until travel and stop time windows are available.
+
+## Phase 81 — Reported lunch events in schedule drafts
+- Load business/date-scoped availability alongside the verified crew roster.
+- Show break, sick, and unavailable events for each worker; prefill lunch blocks from reported break events.
+- Let the owner/admin adjust, remove, or add worker-specific lunch intervals before saving.
+- Keep sick/unavailable overlap as a server-side hard conflict; never convert reported events into a published route automatically.
+- Test event-to-worker mapping and preserve date and business scope.
