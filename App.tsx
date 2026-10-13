@@ -247,7 +247,7 @@ function GreenCollarDashboard() {
   const [weatherInbox,setWeatherInbox]=useState<{scope:string;items:WeatherInterruption[]}|null>(null);
   const [weatherInboxBusy,setWeatherInboxBusy]=useState(false);
   const [weatherInboxError,setWeatherInboxError]=useState('');
-  useEffect(()=>{setAgreementEarliest('');setAgreementLatest('');setAgreementFixed('');setScheduleMembers([]);setScheduleWorkerSubjects([]);setScheduleTaskWorker('');setWorkdaySchedule(null);},[userId,connectedBusiness?.id]);
+  useEffect(()=>{setAgreementEarliest('');setAgreementLatest('');setAgreementFixed('');setScheduleMembers([]);setScheduleWorkerSubjects([]);setScheduleLunchStart({});setScheduleLunchEnd({});setScheduleTaskWorker('');setWorkdaySchedule(null);},[userId,connectedBusiness?.id]);
   useEffect(()=>{
     routingSettingsRequest.current++;
     routingSettingsBusyRef.current=false;
@@ -447,6 +447,8 @@ function GreenCollarDashboard() {
   const [scheduleMembers,setScheduleMembers]=useState<BusinessMember[]>([]);
   const [scheduleRosterBusy,setScheduleRosterBusy]=useState(false);
   const [scheduleWorkerSubjects,setScheduleWorkerSubjects]=useState<string[]>([]);
+  const [scheduleLunchStart,setScheduleLunchStart]=useState<Record<string,string>>({});
+  const [scheduleLunchEnd,setScheduleLunchEnd]=useState<Record<string,string>>({});
   const [scheduleSelectedAgreementIds,setScheduleSelectedAgreementIds]=useState<string[]>([]);
   const [scheduleTaskDrafts,setScheduleTaskDrafts]=useState<Record<string,ScheduledTask[]>>({});
   const [scheduleTaskLabel,setScheduleTaskLabel]=useState('Mowing');
