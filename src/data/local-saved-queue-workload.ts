@@ -9,6 +9,7 @@ export type WorkloadSettingsStore={
   save(context:WorkloadSettingsContext,limits:SavedQueueWorkloadLimits):Promise<SavedQueueWorkloadLimits>;
 };
 const MAX_RECORD_LENGTH=512;
+const hasOwn=(value:object,key:string)=>Object.prototype.hasOwnProperty.call(value,key);
 
 export function workloadSettingsScope(context:WorkloadSettingsContext):string{
   return JSON.stringify([context.subject,context.businessId,context.date]);
@@ -57,7 +58,7 @@ export function createLocalSavedQueueWorkloadStore(storage:KeyValueSecureStore,d
       const captured={...context},normalized=normalizeWorkloadLimits(limits);
       return ordered(workloadSettingsScope(captured),async()=>{
         const {contextDigest,key}=await identity(captured);
-        const record=JSON.stringify({version:3,contextDigest,...normalized});
+        const record=JSON.stringify({version:4,contextDigest,...normalized});
         if(record.length>MAX_RECORD_LENGTH)throw new Error('Workload settings are too large to save');
         await storage.setItemAsync(key,record);
         return {...normalized};
@@ -73,12 +74,27 @@ export function createLocalSavedQueueWorkloadStore(storage:KeyValueSecureStore,d
         try{
           if(value.length>MAX_RECORD_LENGTH)throw new Error('Oversized record');
           const record=JSON.parse(value);
-          if(!record||typeof record!=='object'||![1,2,3].includes(record.version)||record.contextDigest!==contextDigest)
+          if(!record||typeof record!=='object'||![1,2,3,4].includes(record.version)||record.contextDigest!==contextDigest)
             throw new Error('Mismatched record');
           if(record.version===1&&('workdayStart' in record||'workdayFinish' in record))
             throw new Error('Unexpected workday fields in a legacy record');
-          if(record.version<3&&('breakStart' in record||'breakFinish' in record))
+          if(record.version<3&&('breakStart' in record||'breakFinish' in record||'breaks' in record))
             throw new Error('Unexpected break fields in a legacy record');
+          if(record.version===3){
+            const hasStart=hasOwn(record,'breakStart'),hasFinish=hasOwn(record,'breakFinish');
+            if(hasStart!==hasFinish||'breaks' in record)throw new Error('Unexpected legacy break fields');
+            if(hasStart){
+              if(typeof record.breakStart!=='string'||typeof record.breakFinish!=='string')
+                throw new Error('Malformed version-three break fields');
+              const legacyBreak=normalizeWorkdayBreak({
+                workdayStart:record.workdayStart as string|undefined,
+                workdayFinish:record.workdayFinish as string|undefined,
+                breaks:record.breakStart+'-'+record.breakFinish
+              });
+              return normalizeWorkloadLimits({...record,...legacyBreak});
+            }
+          }else if(record.version===4&&('breakStart' in record||'breakFinish' in record))
+            throw new Error('Unexpected old break fields');
           return normalizeWorkloadLimits(record);
         }catch{
           throw new Error('Saved work settings could not be read. Retry or explicitly enter replacement settings.');
