@@ -4,12 +4,13 @@ import {createVisitCompletionApi} from '../src/visit-completion-api';
 import type {Env} from '../src/auth';
 const metadata={OIDC_ISSUER:'https://example.test',OIDC_AUDIENCE:'greencollar-api',OIDC_JWKS_URL:'https://example.test/jwks'};
 const body={businessId:'business-a',agreementId:'agreement-a',date:'2026-10-12',actualMinutes:45};
-function fixture(role:'owner'|'admin'|'worker'|null='owner',completed=false){
+function fixture(role:'owner'|'admin'|'worker'|null='owner',completed=false,existingMinutes=45){
  const queries:Array<{sql:string;values:unknown[]}>=[];
  const DB={prepare(sql:string){return {bind(...values:unknown[]){queries.push({sql,values});return {
   async first(){
    if(sql.includes('business_memberships'))return role?{role}:null;
    if(sql.startsWith('SELECT id FROM service_agreements'))return {id:'agreement-a'};
+   if(sql.startsWith('SELECT status,actual_minutes FROM service_visits'))return completed?{status:'completed',actual_minutes:existingMinutes}:null;
    if(sql.startsWith('INSERT INTO service_visits'))return completed?null:{id:'visit-a'};
    return null;
   }
@@ -38,7 +39,15 @@ test('completion captures customer, service and rate in the same tenant-scoped w
  assert.match(write.sql,/WHERE service_visits\.business_id=excluded\.business_id AND service_visits\.status!='completed'/);
  assert.deepEqual(write.values.slice(2),[45,'business-a','agreement-a','2026-10-12','2026-10-12']);
 });
-test('a repeated completion never rewrites a prior snapshot',async()=>{
- const f=fixture('owner',true);
- assert.equal((await api(request(),f.env)).status,409);
+test('a repeated identical completion is safe after a lost response',async()=>{
+ const f=fixture('owner',true,45);
+ const response=await api(request(),f.env);
+ assert.equal(response.status,200);
+ assert.deepEqual(await response.json(),{agreementId:'agreement-a',date:'2026-10-12',status:'completed',actualMinutes:45});
+ assert.equal(f.queries.some(q=>q.sql.startsWith('INSERT INTO service_visits')),false);
+});
+test('a different duration cannot rewrite a completed visit snapshot',async()=>{
+ const f=fixture('owner',true,45);
+ assert.equal((await api(request({...body,actualMinutes:50}),f.env)).status,409);
+ assert.equal(f.queries.some(q=>q.sql.startsWith('INSERT INTO service_visits')),false);
 });

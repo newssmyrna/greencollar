@@ -6,7 +6,7 @@ import { fetchDayData, type DayData } from './src/data/greencollar-api';
 import { summarizeSavedDay } from './src/data/saved-day';
 import { getBusinesses, createBusiness } from './src/data/business-api';
 import { listSavedCustomers, createSavedCustomer, type SavedCustomer } from './src/data/customer-api';
-import { startWork, pauseWork, resumeWork, completeWork, getElapsedMinutes, completionRecord, type WorkSession } from './src/domain/work-session';
+import { startWork, pauseWork, resumeWork, completeWork, getElapsedMinutes, completionRecord, markWorkSessionSavedIfCurrent, type WorkSession } from './src/domain/work-session';
 import {saveVisitCompletion} from './src/data/visit-completion';
 import {billableCompletedServices,invoiceFromCompletedService,unbillableCompletedServiceCount} from './src/domain/completed-invoice';
 import {invoiceTotals,type InvoiceDraft} from './src/domain/invoice';
@@ -16,7 +16,7 @@ import {listServiceAgreements,createServiceAgreement,type SavedServiceAgreement}
 import {dollarsToCents,localCalendarDate} from './src/domain/service-agreement';
 import {generateDueVisits,type Frequency} from './src/domain/recurrence';
 import {
-  SafeAreaView, ScrollView, View, Text, TextInput,
+  Alert, SafeAreaView, ScrollView, View, Text, TextInput,
   Pressable, StyleSheet, StatusBar
 } from 'react-native';
 
@@ -149,21 +149,27 @@ function GreenCollarDashboard() {
   const [businessName,setBusinessName] = useState('');
   const [connectedBusiness,setConnectedBusiness] = useState<{id:string;name:string}|null>(null);
   async function saveCompletedService() {
-    if(!connectedBusiness||!savedDay||!workSession||workSession.status!=='completed'||workSession.jobId==='demo-job')
-      return;
+    const session=workSession;
+    if(!session||session.status!=='completed'||session.jobId==='demo-job')return;
     const api=process.env.EXPO_PUBLIC_GREENCOLLAR_API_URL;
     if(!api){setTimerError('API URL not configured');return;}
-    if(submitting.current||timerSaved)return;
+    if(submitting.current||session.completionSaved)return;
     submitting.current=true;setLoadingSaved(true);setTimerError('');
     try {
       const token=await getToken({template:'greencollar-api'});
       if(!token)throw new Error('Sign in first');
-      const prefix=workSession.jobId;
-      const agreementId=prefix.slice(0,-(savedDay.date.length+1));
-      if(!agreementId||!prefix.endsWith(':'+savedDay.date))throw new Error('Invalid scheduled visit');
-      await saveVisitCompletion(api,token,{businessId:connectedBusiness.id,agreementId,date:savedDay.date,actualMinutes:completionRecord(workSession).actualMinutes});
-      setTimerSaved(true);
-      setSavedDay(await fetchDayData(api,connectedBusiness.id,savedDay.date,token));
+      const businessId=session.businessId;
+      const serviceDate=session.serviceDate;
+      if(!businessId||!serviceDate)throw new Error('This restored timer has no saved visit identity. Review its duration, then discard it to continue.');
+      const prefix=session.jobId;
+      const agreementId=prefix.slice(0,-(serviceDate.length+1));
+      if(!agreementId||!prefix.endsWith(':'+serviceDate))throw new Error('Invalid scheduled visit');
+      await saveVisitCompletion(api,token,{businessId,agreementId,date:serviceDate,actualMinutes:completionRecord(session).actualMinutes});
+      setWorkSession(current=>markWorkSessionSavedIfCurrent(current,session));
+      if(connectedBusiness?.id===businessId){
+        try{setSavedDay(await fetchDayData(api,businessId,serviceDate,token));}
+        catch{setSavedDayError('Visit saved. Reload the saved workday to refresh it.');}
+      }
     } catch(e) {setTimerError(e instanceof Error?e.message:'Unable to save completed service');}
     finally {submitting.current=false;setLoadingSaved(false);}
   }
@@ -206,7 +212,6 @@ function GreenCollarDashboard() {
   const [workSession,setWorkSession]=useState<WorkSession|null>(null);
   const [timerNow,setTimerNow]=useState(Date.now());
   const [timerError,setTimerError]=useState('');
-  const [timerSaved,setTimerSaved]=useState(false);
   const [invoiceDrafts,setInvoiceDrafts]=useState<InvoiceDraft[]>([]);
   const [invoiceError,setInvoiceError]=useState('');
   function prepareInvoiceDrafts(){
@@ -251,11 +256,29 @@ function GreenCollarDashboard() {
     try {
       if(!timerRestored)throw new Error('Timer is restoring');
       const now=Date.now();setTimerNow(now);setTimerError('');
-      if(action==='start'){setTimerSaved(false);setWorkSession(startWork(jobId,now));return;}
+      if(action==='start'){
+        if(workSession?.status==='completed'&&workSession.jobId!=='demo-job'&&!workSession.completionSaved)throw new Error('Save or explicitly discard the completed visit before starting another job');
+        const visit=jobId==='demo-job'?undefined:connectedBusiness&&savedDay?{businessId:connectedBusiness.id,serviceDate:savedDay.date}:undefined;
+        if(jobId!=='demo-job'&&!visit)throw new Error('Load a saved workday before starting a scheduled service');
+        setWorkSession(startWork(jobId,now,visit));return;
+      }
       if(!workSession)throw new Error('Start a job first');
       const next=action==='pause'?pauseWork(workSession,now):action==='resume'?resumeWork(workSession,now):completeWork(workSession,now);
       setWorkSession(next);
     }catch(e){setTimerError(e instanceof Error?e.message:'Timer error');}
+  }
+
+  function discardCompletedVisit() {
+    const session=workSession;
+    if(!session||session.status!=='completed'||session.jobId==='demo-job'||session.completionSaved||submitting.current)return;
+    Alert.alert('Discard unsaved visit?', 'The recorded duration will be removed from this device. The server may already have accepted a request if the connection failed; retry Save first if you are unsure.', [
+      {text:'Keep visit',style:'cancel'},
+      {text:'Discard visit',style:'destructive',onPress:()=>{
+        if(submitting.current)return;
+        setWorkSession(current=>current===session?null:current);
+        setTimerError('');
+      }}
+    ]);
   }
 
   function addCustomer() {
@@ -334,9 +357,9 @@ function GreenCollarDashboard() {
             {workSession && workSession.status!=='completed' && <Pressable style={styles.primary} onPress={()=>timerAction('complete')}><Text style={styles.primaryText}>Complete job</Text></Pressable>}
             {workSession?.status==='running' && <Pressable style={styles.primary} onPress={()=>setTimerNow(Date.now())}><Text style={styles.primaryText}>Refresh elapsed time</Text></Pressable>}
             {workSession?.status==='completed' && <Text style={styles.body}>Recorded demo duration: {completionRecord(workSession).actualMinutes} min</Text>}
-            {workSession?.status==='completed' && workSession.jobId!=='demo-job' && !timerSaved && <Pressable style={styles.primary} disabled={loadingSaved} onPress={()=>void saveCompletedService()}><Text style={styles.primaryText}>Save completed visit</Text></Pressable>}
-            {timerSaved && <Text style={styles.body}>Visit completion saved to Cloudflare.</Text>}
-            {workSession?.status==='completed' && <Pressable style={styles.primary} onPress={()=>timerAction('start')}><Text style={styles.primaryText}>Start another demo</Text></Pressable>}
+            {workSession?.status==='completed' && workSession.jobId!=='demo-job' && !workSession.completionSaved && <><Pressable style={styles.primary} disabled={loadingSaved} onPress={()=>void saveCompletedService()}><Text style={styles.primaryText}>Save completed visit</Text></Pressable><Pressable style={[styles.primary,{backgroundColor:'#f0f5ef'}]} disabled={loadingSaved} onPress={discardCompletedVisit}><Text style={styles.primaryText}>Discard unsaved visit</Text></Pressable></>}
+            {workSession?.completionSaved && <Text style={styles.body}>Visit completion saved to Cloudflare.</Text>}
+            {workSession?.status==='completed' && workSession.jobId==='demo-job' && <Pressable style={styles.primary} onPress={()=>timerAction('start')}><Text style={styles.primaryText}>Start another demo</Text></Pressable>}
             {!!timerError && <Text style={styles.muted}>{timerError}</Text>}
           </View>
           <Text style={styles.muted}>Prototype customer cards below use synthetic data. Saved Cloudflare records load separately.</Text>
@@ -344,7 +367,7 @@ function GreenCollarDashboard() {
           {connectedBusiness && <Text style={styles.muted}>Business: {connectedBusiness.name}</Text>}
           <Pressable style={styles.primary} disabled={loadingSaved} onPress={()=>void loadSavedDay()}><Text style={styles.primaryText}>{loadingSaved?'Loading...':'Load saved workday'}</Text></Pressable>
           {!!savedDayError && <Text style={styles.muted}>{savedDayError}</Text>}
-          {savedDay && <View style={styles.card}><Text style={styles.cardHeading}>Due today · Saved records</Text><Text style={styles.body}>{summarizeSavedDay(savedDay).pendingCount} jobs due · ${(summarizeSavedDay(savedDay).estimatedRevenueCents / 100).toFixed(2)} expected revenue · {summarizeSavedDay(savedDay).estimatedServiceMinutes} service minutes</Text><Text style={styles.muted}>{summarizeSavedDay(savedDay).completedCount} completed · {summarizeSavedDay(savedDay).skippedCount} skipped. Due-work preview only; no road routing or fuel estimate yet.</Text>{summarizeSavedDay(savedDay).due.slice(0,12).map(j=><View key={j.id}><Text style={styles.body}>{j.customer} · {j.service} · {j.address}</Text><Pressable style={styles.primary} disabled={!!workSession&&workSession.status!=='completed'} onPress={()=>timerAction('start',j.id)}><Text style={styles.primaryText}>Start this service</Text></Pressable></View>)}</View>}
+          {savedDay && <View style={styles.card}><Text style={styles.cardHeading}>Due today · Saved records</Text><Text style={styles.body}>{summarizeSavedDay(savedDay).pendingCount} jobs due · ${(summarizeSavedDay(savedDay).estimatedRevenueCents / 100).toFixed(2)} expected revenue · {summarizeSavedDay(savedDay).estimatedServiceMinutes} service minutes</Text><Text style={styles.muted}>{summarizeSavedDay(savedDay).completedCount} completed · {summarizeSavedDay(savedDay).skippedCount} skipped. Due-work preview only; no road routing or fuel estimate yet.</Text>{summarizeSavedDay(savedDay).due.slice(0,12).map(j=><View key={j.id}><Text style={styles.body}>{j.customer} · {j.service} · {j.address}</Text><Pressable style={styles.primary} disabled={!!workSession&&(workSession.status!=='completed'||(workSession.jobId!=='demo-job'&&!workSession.completionSaved))} onPress={()=>timerAction('start',j.id)}><Text style={styles.primaryText}>Start this service</Text></Pressable></View>)}</View>}
           <View style={styles.card}>
             <Text style={styles.label}>Example customers</Text>
             <Text style={styles.big}>{customers.length}</Text>
