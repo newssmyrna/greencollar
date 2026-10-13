@@ -79,3 +79,22 @@ test('blocks a task still assigned to a worker removed from the selected route c
     'agreement-a':[{taskId:'task-a',label:'Mow',assignedSubjects:['worker-removed'],estimatedMinutes:45}]
   },['worker-a'])??'',/current route crew/);
 });
+
+test('keeps saved tasks read-only when task identity, name, estimate, or assignment data is invalid',()=>{
+  const cases=[
+    (schedule:WorkdaySchedule)=>{schedule.routes[0].stops[0].tasks[0].taskId='';},
+    (schedule:WorkdaySchedule)=>{schedule.routes[0].stops[0].tasks[0].label='  ';},
+    (schedule:WorkdaySchedule)=>{schedule.routes[0].stops[0].tasks[0].estimatedMinutes=0;},
+    (schedule:WorkdaySchedule)=>{schedule.routes[0].stops[0].tasks[0].assignedSubjects=[];}
+  ];
+  for(const invalidate of cases){
+    const schedule=sampleSchedule();invalidate(schedule);
+    assert.throws(()=>hydrateSingleRouteDraft(schedule,'business-a',workDate,['agreement-a','agreement-b']),/saved task has invalid data/);
+  }
+});
+
+test('keeps saved tasks read-only when task IDs are duplicated across stops',()=>{
+  const schedule=sampleSchedule();
+  schedule.routes[0].stops[0].tasks[0].taskId=schedule.routes[0].stops[1].tasks[0].taskId;
+  assert.throws(()=>hydrateSingleRouteDraft(schedule,'business-a',workDate,['agreement-a','agreement-b']),/saved task has invalid data/);
+});
