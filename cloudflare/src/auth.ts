@@ -5,6 +5,16 @@ export type Env = {
   OIDC_ISSUER?: string;
   OIDC_AUDIENCE?: string;
   OIDC_JWKS_URL?: string;
+  // Intentionally absent from wrangler.toml until the pilot is approved.
+  ROAD_ROUTING_PROVIDER_ENABLED?: string;
+  ROAD_ROUTING_POLICY_PUBLIC?: string;
+  ROAD_ROUTING_NOTICE_VERSION?: string;
+  ROAD_ROUTING_TERMS_URL?: string;
+  ROAD_ROUTING_PRIVACY_URL?: string;
+  ROAD_ROUTING_RATE_CARD_MONTH?: string;
+  ROAD_ROUTING_RATE_REVIEWED_ON?: string;
+  ROAD_ROUTING_RATE_MICRO_USD_PER_1000?: string;
+  GOOGLE_ROUTES_API_KEY?: string;
 };
 
 /** Testable cryptographic verification shared by every protected endpoint. */
