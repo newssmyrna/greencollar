@@ -24,7 +24,7 @@ import {localSavedQueueWorkload} from './src/data/local-saved-queue-workload-nat
 import {createSavedQueueWorkloadSettings,workloadSettingsHaveUnsavedChanges,workloadSettingsReadyForApproval} from './src/data/saved-queue-workload-settings';
 import {localSavedQueueApproval} from './src/data/local-saved-queue-approval-native';
 import { getBusinesses, createBusiness, type OwnedBusiness } from './src/data/business-api';
-import { listSavedCustomers, createSavedCustomer, type SavedCustomer } from './src/data/customer-api';
+import { listSavedCustomers, createSavedCustomer, customerDetailsInput, type SavedCustomer } from './src/data/customer-api';
 import { pauseWork, resumeWork, completeWork, completionRecord, type WorkSession } from './src/domain/work-session';
 import {canStartNextWork,startNextWork,hasSavedWorkCompletion,workSessionDate} from './src/domain/work-handoff';
 import {normalizeWorkNote,withWorkNote} from './src/domain/work-note';
@@ -39,16 +39,18 @@ import {createDurableTimerTransition} from './src/domain/durable-timer-transitio
 import {loadWorkSession,saveWorkSession} from './src/data/local-work-session';
 import {listServiceLocations,createServiceLocation,type SavedServiceLocation} from './src/data/service-location-api';
 import {listServiceAgreements,createServiceAgreement,type SavedServiceAgreement} from './src/data/service-agreement-api';
-import {dollarsToCents,localCalendarDate} from './src/domain/service-agreement';
+import {serviceLocationInput} from './src/domain/service-location';
+import {dollarsToCents,localCalendarDate,serviceAgreementInput} from './src/domain/service-agreement';
 import {parseServiceClock,describeServiceTimeConstraints} from './src/domain/service-time';
 import {generateDueVisits,type Frequency} from './src/domain/recurrence';
 import {assessProximity,createLocationConfirmation,type ProximityAssessment,type LocationConfirmation} from './src/domain/location-assist';
 import {loadLocationConfirmations,saveLocationConfirmation,markLocationConfirmationSynced,pendingLocationConfirmations,type StoredLocationConfirmation} from './src/data/local-location-confirmations';
 import {listLocationConfirmations,syncLocationConfirmation,type ServerLocationConfirmation} from './src/data/location-confirmation-api';
 import {filterLocationConfirmations,type LocationConfirmationKindFilter,type LocationConfirmationSourceFilter} from './src/domain/location-confirmation-filter';
+import {clearLocalDemoWorkspace,createDemoRecordId,createInitialDemoWorkspace,demoCustomerFixtures,demoDayForDate,loadLocalDemoWorkspace,saveLocalDemoWorkspace,type LocalDemoWorkspace} from './src/demo/local-demo-store';
 import {
   SafeAreaView, ScrollView, View, Text, TextInput, AppState,
-  Pressable, StyleSheet, StatusBar, Alert, Linking
+  Pressable, StyleSheet, StatusBar, Alert, Linking, Modal
 } from 'react-native';
 
 type Customer = {
@@ -61,11 +63,7 @@ type Customer = {
   notes: string;
 };
 
-const seed: Customer[] = [
-  { id: 1, name: 'Jordan Smith', address: 'Edgewater, FL', service: 'Exterior maintenance', rate: 65, minutes: 45, notes: 'Close side gate.' },
-  { id: 2, name: 'Morgan Davis', address: 'New Smyrna Beach, FL', service: 'Pool service', rate: 80, minutes: 35, notes: 'Call before arrival.' },
-  { id: 3, name: 'Casey Johnson', address: 'Port Orange, FL', service: 'Cleaning', rate: 110, minutes: 90, notes: 'Use rear entrance.' },
-];
+const seed: Customer[] = demoCustomerFixtures.map((fixture,index)=>({id:index+1,...fixture}));
 const green = '#183d2b';
 const pale = '#d5f48b';
 
@@ -109,8 +107,16 @@ function travelDraftsValid(visitIds:readonly string[],drafts:Record<string,strin
 type GreenCollarDashboardProps = Pick<ReturnType<typeof useAuth>, 'getToken' | 'userId'> & { previewMode?: boolean };
 
 function GreenCollarDashboard({getToken,userId,previewMode=false}:GreenCollarDashboardProps) {
-  const [savedDay,setSavedDay] = useState<DayData|null>(null);
-  const [savedCustomers,setSavedCustomers] = useState<SavedCustomer[]>([]);
+  const [demoBootstrap] = useState(()=>previewMode
+    ?loadLocalDemoWorkspace()
+    :{workspace:createInitialDemoWorkspace(),persistence:'session' as const});
+  const demoWorkspaceRef=useRef<LocalDemoWorkspace>(demoBootstrap.workspace);
+  const [demoPersistence,setDemoPersistence]=useState<'browser'|'session'>(demoBootstrap.persistence);
+  const [demoPersistenceNotice,setDemoPersistenceNotice]=useState(demoBootstrap.notice??'');
+  const [demoModal,setDemoModal]=useState<'customer'|'location'|'agreement'|'reset'|null>(null);
+  const [demoScheduleDate,setDemoScheduleDate]=useState(()=>localCalendarDate());
+  const [savedDay,setSavedDay] = useState<DayData|null>(()=>previewMode?demoDayForDate(demoBootstrap.workspace,localCalendarDate()):null);
+  const [savedCustomers,setSavedCustomers] = useState<SavedCustomer[]>(()=>previewMode?demoBootstrap.workspace.customers:[]);
   const [savedCustomerName,setSavedCustomerName] = useState('');
   const [savedCustomerPhone,setSavedCustomerPhone] = useState('');
   const [savedCustomerEmail,setSavedCustomerEmail] = useState('');
@@ -144,6 +150,7 @@ function GreenCollarDashboard({getToken,userId,previewMode=false}:GreenCollarDas
   const [agreementNotice,setAgreementNotice]=useState('');
   const [agreementLoading,setAgreementLoading]=useState(false);
   const agreementSaving=useRef(false);
+  const customerSaving=useRef(false);
   function scheduledServicePreview():string{
     try{
       const due=generateDueVisits(serviceAgreements.map(a=>({
@@ -159,6 +166,40 @@ function GreenCollarDashboard({getToken,userId,previewMode=false}:GreenCollarDas
   }
   async function saveAgreement(){
     const api=process.env.EXPO_PUBLIC_GREENCOLLAR_API_URL;
+    if(previewMode){
+      if(!connectedBusiness||!locationCustomerId||!agreementLocationId){setAgreementError('Choose a sample customer and service address first');return;}
+      if(agreementSaving.current)return;
+      agreementSaving.current=true;setAgreementLoading(true);setAgreementError('');setAgreementNotice('');
+      try{
+        if(!/^\d{1,4}$/.test(agreementMinutes.trim()))throw new Error('Enter estimated duration in whole minutes');
+        const location=demoWorkspaceRef.current.locations.find(item=>item.id===agreementLocationId&&item.customer_id===locationCustomerId);
+        if(!location)throw new Error('Choose a saved sample service address');
+        const details=serviceAgreementInput({
+          locationId:agreementLocationId,serviceName:agreementName,rateCents:dollarsToCents(agreementPrice),
+          estimatedMinutes:Number(agreementMinutes),startsOn:agreementStart,endsOn:agreementEnd||undefined,
+          frequency:agreementFrequency,...(agreementFrequency==='custom'?{intervalDays:Number(agreementInterval)}:{}),
+          preferredStartMinute:parseServiceClock(agreementEarliest),
+          preferredFinishMinute:parseServiceClock(agreementLatest,true),
+          fixedStartMinute:parseServiceClock(agreementFixed)
+        });
+        const saved:SavedServiceAgreement={
+          id:createDemoRecordId('agreement'),customer_id:locationCustomerId,location_id:details.locationId,
+          service_name:details.serviceName,rate_cents:details.rateCents,estimated_minutes:details.estimatedMinutes,
+          starts_on:details.startsOn,ends_on:details.endsOn??null,frequency:details.frequency,
+          interval_days:details.intervalDays??null,days_of_week:null,
+          preferred_start_minute:details.preferredStartMinute??null,
+          preferred_finish_minute:details.preferredFinishMinute??null,
+          fixed_start_minute:details.fixedStartMinute??null,active:1,
+          address:location.address,preferences:location.preferences,lat:location.lat,lon:location.lon
+        };
+        commitDemoWorkspace({...demoWorkspaceRef.current,agreements:[...demoWorkspaceRef.current.agreements,saved]},savedDay?.date??localCalendarDate(),locationCustomerId);
+        setAgreementName('');setAgreementPrice('');setAgreementEarliest('');setAgreementLatest('');setAgreementFixed('');
+        setAgreementNotice('Sample schedule saved in this browser. No customer is contacted; the visit appears on the selected date.');
+        closePreviewModal();
+      }catch(e){setAgreementError(e instanceof Error?e.message:'Could not save sample schedule');}
+      finally{agreementSaving.current=false;setAgreementLoading(false);}
+      return;
+    }
     if(!api||!connectedBusiness||!locationCustomerId){setAgreementError('Select a saved customer first');return;}
     if(agreementSaving.current)return;
     agreementSaving.current=true;setAgreementLoading(true);setAgreementError('');setAgreementNotice('');
@@ -195,6 +236,12 @@ function GreenCollarDashboard({getToken,userId,previewMode=false}:GreenCollarDas
     setServiceAgreements([]);setAgreementsHaveMore(false);setAgreementLocationId('');
     setAgreementName('');setAgreementPrice('');setAgreementError('');setAgreementNotice('');
     setAgreementEarliest('');setAgreementLatest('');setAgreementFixed('');
+    if(previewMode){
+      const workspace=demoWorkspaceRef.current;
+      setLocations(workspace.locations.filter(item=>item.customer_id===customerId));
+      setServiceAgreements(workspace.agreements.filter(item=>item.customer_id===customerId));
+      return;
+    }
     const api=process.env.EXPO_PUBLIC_GREENCOLLAR_API_URL;
     if(!api||!connectedBusiness){setLocationError('Load your business first');return;}
     setLocationLoading(true);
@@ -214,6 +261,28 @@ function GreenCollarDashboard({getToken,userId,previewMode=false}:GreenCollarDas
   }
   async function saveLocation(){
     const api=process.env.EXPO_PUBLIC_GREENCOLLAR_API_URL;
+    if(previewMode){
+      if(!connectedBusiness||!locationCustomerId){setLocationError('Choose a sample customer first');return;}
+      if(locationSaving.current)return;
+      locationSaving.current=true;setLocationLoading(true);setLocationError('');
+      try{
+        const details=serviceLocationInput({
+          address:locationAddress,preferences:locationPreferences,
+          ...(locationLat.trim()!==''?{lat:Number(locationLat.trim())}:{}),
+          ...(locationLon.trim()!==''?{lon:Number(locationLon.trim())}:{})
+        });
+        const saved:SavedServiceLocation={
+          id:createDemoRecordId('location'),customer_id:locationCustomerId,
+          address:details.address,preferences:details.preferences??null,
+          lat:details.lat??null,lon:details.lon??null
+        };
+        commitDemoWorkspace({...demoWorkspaceRef.current,locations:[...demoWorkspaceRef.current.locations,saved]},savedDay?.date??localCalendarDate(),locationCustomerId);
+        setAgreementLocationId(saved.id);setLocationAddress('');setLocationPreferences('');setLocationLat('');setLocationLon('');
+        closePreviewModal();
+      }catch(e){setLocationError(e instanceof Error?e.message:'Could not save sample service address');}
+      finally{locationSaving.current=false;setLocationLoading(false);}
+      return;
+    }
     if(!api||!connectedBusiness||!locationCustomerId){setLocationError('Select a saved customer first');return;}
     if(locationSaving.current)return;
     locationSaving.current=true;setLocationLoading(true);setLocationError('');
@@ -371,6 +440,11 @@ function GreenCollarDashboard({getToken,userId,previewMode=false}:GreenCollarDas
     finally{setLoadingSaved(false);}
   }
   async function loadSavedDay(date=localCalendarDate()) {
+    if(previewMode){
+      setSavedDay(demoDayForDate(demoWorkspaceRef.current,date));
+      setSavedDayError('');
+      return;
+    }
     const api=process.env.EXPO_PUBLIC_GREENCOLLAR_API_URL;
     if(!api){setSavedDayError('API URL not configured yet.');return;}
     setLoadingSaved(true);setSavedDayError('');
@@ -535,6 +609,7 @@ function GreenCollarDashboard({getToken,userId,previewMode=false}:GreenCollarDas
   const invoiceDraftSnapshot=useRef(new Map<string,string>());
   const invoiceRevision=(d:PersistedInvoiceDraft)=>JSON.stringify({dueOn:d.dueOn,unitPriceCents:d.lines[0]?.unitPriceCents,taxBasisPoints:d.taxBasisPoints});
   async function prepareInvoiceDrafts(){
+    if(previewMode){setInvoiceError('Invoice draft storage needs the authenticated Cloudflare API and is unavailable in this preview.');return;}
     const api=process.env.EXPO_PUBLIC_GREENCOLLAR_API_URL;
     if(!savedDay||!connectedBusiness||!api){setInvoiceError('Load a saved workday, business, and API connection first');return;}
     setInvoiceBusy(true);setInvoiceError('');
@@ -793,6 +868,11 @@ function GreenCollarDashboard({getToken,userId,previewMode=false}:GreenCollarDas
     setName(''); setAddress('');
   }
   async function loadSavedCustomers() {
+    if(previewMode){
+      setSavedCustomers(demoWorkspaceRef.current.customers);
+      setSavedDayError('');
+      return;
+    }
     const api=process.env.EXPO_PUBLIC_GREENCOLLAR_API_URL;
     if(!api||!connectedBusiness){setSavedDayError('Load your business first');return;}
     setLoadingSaved(true);setSavedDayError('');
@@ -804,6 +884,24 @@ function GreenCollarDashboard({getToken,userId,previewMode=false}:GreenCollarDas
     finally{setLoadingSaved(false);}
   }
   async function saveCustomer() {
+    if(previewMode){
+      if(customerSaving.current)return;
+      customerSaving.current=true;setLoadingSaved(true);setSavedDayError('');
+      try{
+        const details=customerDetailsInput({name:savedCustomerName,phone:savedCustomerPhone,email:savedCustomerEmail,notes:savedCustomerNotes});
+        const saved:SavedCustomer={
+          id:createDemoRecordId('customer'),name:details.name,
+          phone:details.phone??null,email:details.email??null,notes:details.notes??null,
+          created_at:new Date().toISOString()
+        };
+        commitDemoWorkspace({...demoWorkspaceRef.current,customers:[...demoWorkspaceRef.current.customers,saved]},savedDay?.date??localCalendarDate(),saved.id);
+        setLocationCustomerId(saved.id);setLocations([]);setServiceAgreements([]);setAgreementLocationId('');
+        setSavedCustomerName('');setSavedCustomerPhone('');setSavedCustomerEmail('');setSavedCustomerNotes('');
+        closePreviewModal();
+      }catch(e){setSavedDayError(e instanceof Error?e.message:'Could not save sample customer');}
+      finally{customerSaving.current=false;setLoadingSaved(false);}
+      return;
+    }
     const api=process.env.EXPO_PUBLIC_GREENCOLLAR_API_URL;
     if(!api||!connectedBusiness){setSavedDayError('Load your business first');return;}
     setLoadingSaved(true);setSavedDayError('');
@@ -829,6 +927,40 @@ function GreenCollarDashboard({getToken,userId,previewMode=false}:GreenCollarDas
       setBusinessName('');
     }catch(e){setSavedDayError(e instanceof Error?e.message:'Unable to create business');}
     finally{setLoadingSaved(false);}
+  }
+  function commitDemoWorkspace(next:LocalDemoWorkspace,date=savedDay?.date??localCalendarDate(),selectedCustomerId=locationCustomerId):boolean{
+    demoWorkspaceRef.current=next;
+    const persisted=saveLocalDemoWorkspace(next);
+    setDemoPersistence(persisted?'browser':'session');
+    setDemoPersistenceNotice(persisted?'':'Browser storage is unavailable. Preview edits are kept only until this page reloads.');
+    setSavedCustomers(next.customers);
+    setLocations(selectedCustomerId?next.locations.filter(item=>item.customer_id===selectedCustomerId):[]);
+    setServiceAgreements(selectedCustomerId?next.agreements.filter(item=>item.customer_id===selectedCustomerId):[]);
+    setSavedDay(demoDayForDate(next,date));
+    return persisted;
+  }
+  function closePreviewModal(){
+    if(demoModal==='customer'){
+      setSavedCustomerName('');setSavedCustomerPhone('');setSavedCustomerEmail('');setSavedCustomerNotes('');setSavedDayError('');
+    }else if(demoModal==='location'){
+      setLocationAddress('');setLocationPreferences('');setLocationLat('');setLocationLon('');setLocationError('');
+    }else if(demoModal==='agreement'){
+      setAgreementName('');setAgreementPrice('');setAgreementError('');setAgreementEarliest('');setAgreementLatest('');setAgreementFixed('');
+    }
+    setDemoModal(null);
+  }
+  function restoreDemoWorkspace(){
+    clearLocalDemoWorkspace();
+    const fresh=createInitialDemoWorkspace();
+    const persisted=commitDemoWorkspace(fresh,localCalendarDate(),'');
+    setLocationCustomerId('');setAgreementLocationId('');
+    setLocationAddress('');setLocationPreferences('');setLocationLat('');setLocationLon('');
+    setAgreementName('');setAgreementPrice('');setAgreementError('');setAgreementNotice('');
+    setSavedCustomerName('');setSavedCustomerPhone('');setSavedCustomerEmail('');setSavedCustomerNotes('');
+    setDemoScheduleDate(localCalendarDate());setDemoModal(null);setTab('today');
+    setDemoPersistenceNotice(persisted
+      ?'Sample workspace restored. New edits remain in this browser’s local storage until you clear it or reset the workspace.'
+      :'Sample workspace restored. Browser storage is unavailable, so new edits remain only until this page reloads.');
   }
   const savedDueSummary=savedDay?summarizeSavedDay(savedDay):null;
   const completedTimerSaved=timerSaved||hasSavedWorkCompletion(workSession,savedDay?.visits??[]);
@@ -988,6 +1120,13 @@ function GreenCollarDashboard({getToken,userId,previewMode=false}:GreenCollarDas
   },[userId,connectedBusiness?.id,savedDay?.date,savedQueueReview?.approvalKey,savedQueueOrderReady,savedWorkloadReadyForApproval]);
   const workloadPreview=planned?assessServiceWorkload(customers.map(customer=>({id:String(customer.id),minutes:customer.minutes})),hours,maxJobs):null;
   const visibleServerLocationConfirmations=filterLocationConfirmations(serverLocationConfirmations,serverAuditKindFilter,serverAuditSourceFilter);
+  const demoScheduleView=(()=>{
+    if(!previewMode)return null;
+    try{
+      const day=demoDayForDate(demoWorkspaceRef.current,demoScheduleDate);
+      return {day,summary:summarizeSavedDay(day)};
+    }catch{return null;}
+  })();
 
   function verifyScheduleRouteRoster(draft:SingleRouteScheduleDraft):void{
     const rosterSubjects=new Set(scheduleMembers.map(member=>member.subject));
@@ -1100,7 +1239,13 @@ function GreenCollarDashboard({getToken,userId,previewMode=false}:GreenCollarDas
       <ScrollView contentContainerStyle={styles.content}>
         <Text style={styles.logo}>greencollar.</Text>
         <Text style={styles.subtitle}>Your business. On autopilot.</Text>
-        {previewMode&&<View style={styles.previewBanner}><Text style={styles.previewTitle}>REAL APP SCREENS · VISUAL PREVIEW</Text><Text style={styles.muted}>The five-tab dashboard below is the app screen from this source commit. Preview workspace and any Example or Sample records are fixtures. Clerk sign-in and the Cloudflare API are not connected; saved business data, schedules, service addresses, invoice drafts, weather reports and live routing cannot load or save here. Planner calculations are local previews only.</Text></View>}
+        {previewMode&&<View style={styles.previewBanner}>
+          <Text style={styles.previewTitle}>WORKING UI PREVIEW · FICTIONAL DATA ONLY</Text>
+          <Text style={styles.muted}>Create sample customers, service addresses, and recurring jobs. Edits stay in {demoPersistence==='browser'?'this browser’s local storage':'this open page'}; they are never sent to GreenCollar or a customer. Clearing browser storage removes them.</Text>
+          {!!demoPersistenceNotice&&<Text accessibilityLiveRegion="polite" style={styles.muted}>{demoPersistenceNotice}</Text>}
+          <Pressable accessibilityRole="button" style={[styles.primary,{alignSelf:'flex-start',paddingVertical:10}]} onPress={()=>setDemoModal('reset')}><Text style={styles.primaryText}>Reset sample workspace</Text></Pressable>
+          <Text style={styles.muted}>Clerk, Cloudflare actions, live routing, and invoice saving are unavailable. Planner totals use sample service estimates only.</Text>
+        </View>}
         <View style={styles.tabs}>
           {(['today', 'customers', 'planner', 'invoices', ...(connectedBusiness&&businessRoleCapabilities(connectedBusiness.role).manageSchedule?['schedule' as const]:[])] as const).map(t => (
             <Pressable key={t} style={[styles.tab, tab === t && styles.activeTab]} onPress={() => setTab(t)}>
@@ -1109,7 +1254,25 @@ function GreenCollarDashboard({getToken,userId,previewMode=false}:GreenCollarDas
           ))}
         </View>
 
-        {tab === 'schedule' && connectedBusiness && businessRoleCapabilities(connectedBusiness.role).manageSchedule && <>
+        {tab === 'schedule' && previewMode && <>
+          <Text style={styles.heading}>Schedule · sample workspace</Text>
+          <Text style={styles.muted}>Recurring service dates are generated from the same schedule data fields used by the app. This view does not assign a crew, calculate road travel, send notices, or create a backend work order.</Text>
+          <View style={styles.card}>
+            <Text style={styles.cardHeading}>Visits for a date</Text>
+            <Text style={styles.label}>Work date (YYYY-MM-DD)</Text>
+            <TextInput accessibilityLabel="Sample work date" style={styles.input} value={demoScheduleDate} onChangeText={setDemoScheduleDate} maxLength={10} placeholder="YYYY-MM-DD" autoCapitalize="none" autoCorrect={false}/>
+            {!demoScheduleView&&<Text accessibilityLiveRegion="polite" style={styles.muted}>Enter a valid calendar date in YYYY-MM-DD format.</Text>}
+            {demoScheduleView?.summary.due.map(visit=><View key={visit.id} style={{paddingVertical:9,borderBottomWidth:1,borderBottomColor:'#31533f'}}>
+              <Text style={styles.body}>{visit.customer} · {visit.service}</Text>
+              <Text style={styles.muted}>{visit.address}</Text>
+              <Text style={styles.muted}>${(visit.rateCents/100).toFixed(2)} sample rate · {visit.estimatedMinutes} estimated service minutes</Text>
+              <Text style={styles.muted}>{describeServiceTimeConstraints(visit)}</Text>
+            </View>)}
+            {demoScheduleView&&demoScheduleView.summary.due.length===0&&<Text style={styles.muted}>No sample visits are due on this date. Add a recurring service from Customers.</Text>}
+          </View>
+          <Pressable accessibilityRole="button" style={styles.primary} onPress={()=>setTab('customers')}><Text style={styles.primaryText}>Manage sample customers and jobs</Text></Pressable>
+        </>}
+        {tab === 'schedule' && !previewMode && connectedBusiness && businessRoleCapabilities(connectedBusiness.role).manageSchedule && <>
           <Text style={styles.heading}>Workday schedule draft</Text>
           <Text style={styles.muted}>Build a truck route for the loaded workday. Add crew members, order stops, and create or edit stop tasks assigned to route workers. Saved multi-route drafts can be edited one route at a time; saving preserves the other routes. Workers can view only routes they are assigned to.</Text>
           {!savedDay && <Text style={styles.muted}>Load today’s saved workday from the Today tab first so eligible service stops are available.</Text>}
@@ -1304,7 +1467,24 @@ function GreenCollarDashboard({getToken,userId,previewMode=false}:GreenCollarDas
             finally{setScheduleBusy(false);}
           }}><Text style={styles.primaryText}>Load saved draft</Text></Pressable>
         </>}
-        {tab === 'today' && <>
+        {tab === 'today' && previewMode && <>
+          <Text style={styles.heading}>Today · sample workspace</Text>
+          <View style={styles.card}>
+            <Text style={styles.cardHeading}>Today's sample schedule · {savedDay?.date??localCalendarDate()}</Text>
+            <Text style={styles.body}>{savedDueSummary?.pendingCount??0} visits due · ${((savedDueSummary?.estimatedRevenueCents??0)/100).toFixed(2)} sample service value · {savedDueSummary?.estimatedServiceMinutes??0} estimated service minutes</Text>
+            {!savedDueSummary?.due.length&&<Text style={styles.muted}>No sample visits are due today. Add a recurring service from Customers to see it here.</Text>}
+            {savedDueSummary?.due.slice(0,8).map(visit=><View key={visit.id} style={{paddingVertical:8,borderBottomWidth:1,borderBottomColor:'#31533f'}}>
+              <Text style={styles.body}>{visit.customer} · {visit.service}</Text>
+              <Text style={styles.muted}>{visit.address} · {visit.estimatedMinutes} estimated service minutes</Text>
+            </View>)}
+            <Text style={styles.muted}>Sample work queue only. No one is assigned, notified, billed, or tracked; travel and route optimization are unavailable.</Text>
+            <Pressable accessibilityRole="button" style={styles.primary} onPress={()=>setTab('schedule')}><Text style={styles.primaryText}>Review schedule by date</Text></Pressable>
+            <Pressable accessibilityRole="button" style={[styles.primary,{backgroundColor:'#f0f5ef'}]} onPress={()=>setTab('customers')}><Text style={styles.primaryText}>Add a sample customer or job</Text></Pressable>
+          </View>
+          {!!savedDayError&&<Text accessibilityLiveRegion="polite" style={styles.muted}>{savedDayError}</Text>}
+          <Pressable accessibilityRole="button" style={styles.primary} disabled={loadingSaved} onPress={()=>void loadSavedDay(localCalendarDate())}><Text style={styles.primaryText}>{loadingSaved?'Refreshing sample day…':'Refresh sample day'}</Text></Pressable>
+        </>}
+        {tab === 'today' && !previewMode && <>
           <Text style={styles.heading}>Today's overview</Text>
           <View style={styles.card}>
             <Text style={styles.cardHeading}>Job timer</Text>
@@ -1531,46 +1711,56 @@ function GreenCollarDashboard({getToken,userId,previewMode=false}:GreenCollarDas
         {tab === 'customers' && <>
           <Text style={styles.heading}>Customers</Text>
           <View style={styles.card}>
-            <Text style={styles.cardHeading}>Saved customers · Cloudflare</Text>
+            <Text style={styles.cardHeading}>{previewMode?'Sample customers · local preview':'Saved customers · Cloudflare'}</Text>
             {connectedBusiness ? <>
-              <Pressable style={styles.primary} disabled={loadingSaved} onPress={()=>void loadSavedCustomers()}><Text style={styles.primaryText}>Load saved customers</Text></Pressable>
+              <Pressable accessibilityRole="button" style={styles.primary} disabled={loadingSaved} onPress={()=>void loadSavedCustomers()}><Text style={styles.primaryText}>{previewMode?'Refresh browser sample records':'Load saved customers'}</Text></Pressable>
               {savedCustomers.map(c=><View key={c.id} style={{paddingVertical:8,borderBottomWidth:1,borderBottomColor:'#31533f'}}><Text style={styles.body}>{c.name}</Text>{!!c.phone&&<Text style={styles.muted}>Phone: {c.phone}</Text>}{!!c.email&&<Text style={styles.muted}>Email: {c.email}</Text>}{!!c.notes&&<Text style={styles.muted}>Notes: {c.notes}</Text>}</View>)}
-              <TextInput style={styles.input} placeholder="Customer name" placeholderTextColor="#819b8b" value={savedCustomerName} onChangeText={setSavedCustomerName}/>
-              <TextInput style={styles.input} placeholder="Phone (optional)" placeholderTextColor="#819b8b" keyboardType="phone-pad" value={savedCustomerPhone} onChangeText={setSavedCustomerPhone}/>
-              <TextInput style={styles.input} placeholder="Email (optional)" placeholderTextColor="#819b8b" keyboardType="email-address" autoCapitalize="none" value={savedCustomerEmail} onChangeText={setSavedCustomerEmail}/>
-              <TextInput style={styles.input} placeholder="Access notes or preferences (optional)" placeholderTextColor="#819b8b" value={savedCustomerNotes} onChangeText={setSavedCustomerNotes} multiline maxLength={2000}/>
-              <Pressable style={styles.primary} disabled={loadingSaved||!savedCustomerName.trim()} onPress={()=>void saveCustomer()}><Text style={styles.primaryText}>Save customer securely</Text></Pressable>
+              {previewMode&&<Pressable accessibilityRole="button" style={styles.primary} onPress={()=>{setSavedDayError('');setSavedCustomerName('');setSavedCustomerPhone('');setSavedCustomerEmail('');setSavedCustomerNotes('');setDemoModal('customer');}}><Text style={styles.primaryText}>Add sample customer</Text></Pressable>}
+              {!previewMode&&<>
+                <TextInput style={styles.input} placeholder="Customer name" placeholderTextColor="#819b8b" value={savedCustomerName} onChangeText={setSavedCustomerName}/>
+                <TextInput style={styles.input} placeholder="Phone (optional)" placeholderTextColor="#819b8b" keyboardType="phone-pad" value={savedCustomerPhone} onChangeText={setSavedCustomerPhone}/>
+                <TextInput style={styles.input} placeholder="Email (optional)" placeholderTextColor="#819b8b" keyboardType="email-address" autoCapitalize="none" value={savedCustomerEmail} onChangeText={setSavedCustomerEmail}/>
+                <TextInput style={styles.input} placeholder="Access notes or preferences (optional)" placeholderTextColor="#819b8b" value={savedCustomerNotes} onChangeText={setSavedCustomerNotes} multiline maxLength={2000}/>
+                <Pressable style={styles.primary} disabled={loadingSaved||!savedCustomerName.trim()} onPress={()=>void saveCustomer()}><Text style={styles.primaryText}>Save customer securely</Text></Pressable>
+              </>}
             </> : <Text style={styles.muted}>Create or load your business on Today before saving real customers.</Text>}
-            {!!savedDayError && <Text style={styles.muted}>{savedDayError}</Text>}
+            {!!savedDayError && (!previewMode||demoModal!=='customer') && <Text style={styles.muted}>{savedDayError}</Text>}
           </View>
           {connectedBusiness&&<View style={styles.card}>
-            <Text style={styles.cardHeading}>Service addresses</Text>
-            <Text style={styles.muted}>Choose a saved customer, then add where the work happens.</Text>
+            <Text style={styles.cardHeading}>{previewMode?'Sample service addresses':'Service addresses'}</Text>
+            <Text style={styles.muted}>{previewMode?'Choose a sample customer, then add a fictional service address.':'Choose a saved customer, then add where the work happens.'}</Text>
             {!savedCustomers.length&&<Text style={styles.muted}>Load or save a customer above to begin.</Text>}
             {savedCustomers.map(c=><Pressable key={c.id} accessibilityRole="button" accessibilityState={{selected:c.id===locationCustomerId,disabled:locationLoading||agreementLoading}} style={styles.primary} disabled={locationLoading||agreementLoading} onPress={()=>void selectLocationCustomer(c.id)}><Text style={styles.primaryText}>{c.id===locationCustomerId?'Selected: ':''}{c.name}</Text></Pressable>)}
             {locationLoading&&<Text style={styles.muted}>Loading service addresses…</Text>}
             {locations.map(l=><View key={l.id}><Text style={styles.body}>{l.address}</Text>{!!l.preferences&&<Text style={styles.muted}>Access preferences: {l.preferences}</Text>}</View>)}
             {locationsHaveMore&&<Text style={styles.muted}>Showing the first 200 saved addresses. Additional addresses exist.</Text>}
             {!!locationCustomerId&&<>
-              <TextInput accessibilityLabel="Service address" style={styles.input} placeholder="Service address" placeholderTextColor="#819b8b" value={locationAddress} onChangeText={setLocationAddress} editable={!locationLoading} maxLength={500}/>
-              <TextInput accessibilityLabel="Service address access preferences" style={styles.input} placeholder="Gate, parking, or access preferences (optional)" placeholderTextColor="#819b8b" value={locationPreferences} onChangeText={setLocationPreferences} editable={!locationLoading} multiline maxLength={2000}/>
-              <Text style={styles.muted}>Optional site pin coordinates. GreenCollar uses them for location assistance only after you save them.</Text>
-              <View style={{flexDirection:'row',gap:8}}><TextInput accessibilityLabel="Latitude" keyboardType="decimal-pad" style={[styles.input,{flex:1}]} placeholder="Latitude" placeholderTextColor="#819b8b" value={locationLat} onChangeText={setLocationLat} editable={!locationLoading}/><TextInput accessibilityLabel="Longitude" keyboardType="decimal-pad" style={[styles.input,{flex:1}]} placeholder="Longitude" placeholderTextColor="#819b8b" value={locationLon} onChangeText={setLocationLon} editable={!locationLoading}/></View>
-              <Pressable accessibilityRole="button" style={[styles.primary,{backgroundColor:'#f0f5ef'}]} disabled={locationLoading} onPress={()=>void captureServiceCoordinates()}><Text style={styles.primaryText}>{locationLoading?'Checking...':'Capture this device location once'}</Text></Pressable>
-              <Text style={styles.muted}>Location is requested only when you tap Capture. No background tracking. You can also paste coordinates manually.</Text>
-              <Pressable accessibilityRole="button" style={styles.primary} disabled={locationLoading||!locationAddress.trim()} onPress={()=>void saveLocation()}><Text style={styles.primaryText}>Save service address</Text></Pressable>
+              {previewMode&&<>
+                <Text style={styles.muted}>Use a fictional address only. Preview address and access notes stay in this browser.</Text>
+                <Pressable accessibilityRole="button" style={styles.primary} onPress={()=>{setLocationError('');setLocationAddress('');setLocationPreferences('');setLocationLat('');setLocationLon('');setDemoModal('location');}}><Text style={styles.primaryText}>Add sample service address</Text></Pressable>
+              </>}
+              {!previewMode&&<>
+                <TextInput accessibilityLabel="Service address" style={styles.input} placeholder="Service address" placeholderTextColor="#819b8b" value={locationAddress} onChangeText={setLocationAddress} editable={!locationLoading} maxLength={500}/>
+                <TextInput accessibilityLabel="Service address access preferences" style={styles.input} placeholder="Gate, parking, or access preferences (optional)" placeholderTextColor="#819b8b" value={locationPreferences} onChangeText={setLocationPreferences} editable={!locationLoading} multiline maxLength={2000}/>
+                <Text style={styles.muted}>Optional site pin coordinates. GreenCollar uses them for location assistance only after you save them.</Text>
+                <View style={{flexDirection:'row',gap:8}}><TextInput accessibilityLabel="Latitude" keyboardType="decimal-pad" style={[styles.input,{flex:1}]} placeholder="Latitude" placeholderTextColor="#819b8b" value={locationLat} onChangeText={setLocationLat} editable={!locationLoading}/><TextInput accessibilityLabel="Longitude" keyboardType="decimal-pad" style={[styles.input,{flex:1}]} placeholder="Longitude" placeholderTextColor="#819b8b" value={locationLon} onChangeText={setLocationLon} editable={!locationLoading}/></View>
+                <Pressable accessibilityRole="button" style={[styles.primary,{backgroundColor:'#f0f5ef'}]} disabled={locationLoading} onPress={()=>void captureServiceCoordinates()}><Text style={styles.primaryText}>{locationLoading?'Checking...':'Capture this device location once'}</Text></Pressable>
+                <Text style={styles.muted}>Location is requested only when you tap Capture. No background tracking. You can also paste coordinates manually.</Text>
+                <Pressable accessibilityRole="button" style={styles.primary} disabled={locationLoading||!locationAddress.trim()} onPress={()=>void saveLocation()}><Text style={styles.primaryText}>Save service address</Text></Pressable>
+              </>}
             </>}
-            {!!locationError&&<Text style={styles.muted}>{locationError}</Text>}
+            {!!locationError&&(!previewMode||demoModal!=='location')&&<Text style={styles.muted}>{locationError}</Text>}
           </View>}
           {connectedBusiness&&!!locationCustomerId&&<View style={styles.card}>
-            <Text style={styles.cardHeading}>Recurring services</Text>
-            <Text style={styles.muted}>Choose a saved address and enter the agreed service price and schedule.</Text>
+            <Text style={styles.cardHeading}>{previewMode?'Recurring sample jobs':'Recurring services'}</Text>
+            <Text style={styles.muted}>{previewMode?'Choose a sample address, then set a recurring job schedule. No customer is contacted.':'Choose a saved address and enter the agreed service price and schedule.'}</Text>
             {!locations.length&&<Text style={styles.muted}>Save a service address above to begin.</Text>}
             {locations.map(l=><Pressable key={l.id} accessibilityRole="button" accessibilityState={{selected:l.id===agreementLocationId}} style={styles.primary} disabled={locationLoading||agreementLoading} onPress={()=>setAgreementLocationId(l.id)}><Text style={styles.primaryText}>{l.id===agreementLocationId?'Selected: ':''}{l.address}</Text></Pressable>)}
             {serviceAgreements.map(a=><View key={a.id}><Text style={styles.body}>{a.service_name} · ${(a.rate_cents/100).toFixed(2)} · {a.estimated_minutes} min</Text><Text style={styles.muted}>{a.address} · {a.frequency}{a.interval_days?' every '+a.interval_days+' days':''} · starts {a.starts_on}{a.ends_on?' · ends '+a.ends_on:''}</Text><Text style={styles.muted}>{describeServiceTimeConstraints({preferredStartMinute:a.preferred_start_minute??undefined,preferredFinishMinute:a.preferred_finish_minute??undefined,fixedStartMinute:a.fixed_start_minute??undefined})}</Text></View>)}
             {agreementsHaveMore&&<Text style={styles.muted}>Showing the first 200 recurring services. Additional services exist.</Text>}
             {!!serviceAgreements.length&&<Text style={styles.muted}>{scheduledServicePreview()}</Text>}
-            {!!agreementLocationId&&<>
+            {previewMode&&!!agreementLocationId&&<Pressable accessibilityRole="button" style={styles.primary} onPress={()=>{setAgreementError('');setAgreementNotice('');setAgreementName('');setAgreementPrice('');setAgreementMinutes('60');setAgreementStart(localCalendarDate());setAgreementEnd('');setAgreementFrequency('weekly');setAgreementInterval('7');setAgreementEarliest('');setAgreementLatest('');setAgreementFixed('');setDemoModal('agreement');}}><Text style={styles.primaryText}>Schedule a sample recurring job</Text></Pressable>}
+            {!previewMode&&!!agreementLocationId&&<>
               <TextInput accessibilityLabel="Service name" style={styles.input} placeholder="Service name" placeholderTextColor="#819b8b" value={agreementName} onChangeText={setAgreementName} maxLength={160} editable={!agreementLoading}/>
               <TextInput accessibilityLabel="Agreed service price in USD" style={styles.input} placeholder="Price per visit (USD)" placeholderTextColor="#819b8b" keyboardType="decimal-pad" value={agreementPrice} onChangeText={setAgreementPrice} editable={!agreementLoading}/>
               <Text style={styles.label}>Estimated duration in minutes</Text>
@@ -1592,27 +1782,29 @@ function GreenCollarDashboard({getToken,userId,previewMode=false}:GreenCollarDas
               <Text style={styles.muted}>Weekly schedules follow the start date's weekday. Monthly schedules use its calendar day, or the last day of a shorter month.</Text>
               <Pressable accessibilityRole="button" style={styles.primary} disabled={agreementLoading||!agreementName.trim()||!agreementPrice.trim()} onPress={()=>void saveAgreement()}><Text style={styles.primaryText}>{agreementLoading?'Saving recurring service…':'Save recurring service'}</Text></Pressable>
             </>}
-            {!!agreementError&&<Text style={styles.muted}>{agreementError}</Text>}
+            {!!agreementError&&(!previewMode||demoModal!=='agreement')&&<Text style={styles.muted}>{agreementError}</Text>}
             {!!agreementNotice&&<Text style={styles.body}>{agreementNotice}</Text>}
           </View>}
-          <Text style={styles.heading}>Sample data · Not saved</Text>
-          {customers.map(c => <View key={c.id} style={styles.card}>
-            <Text style={styles.cardHeading}>{c.name}</Text>
-            <Text style={styles.muted}>{c.address} · {c.service}</Text>
-            <Text style={styles.body}>Rate ${c.rate} · Estimated {c.minutes} min</Text>
-            {!!c.notes && <Text style={styles.label}>Reminder: {c.notes}</Text>}
-          </View>)}
-          <Text style={styles.heading}>Add example customer</Text>
-          <TextInput style={styles.input} placeholder="Customer name" placeholderTextColor="#819b8b" value={name} onChangeText={setName} />
-          <TextInput style={styles.input} placeholder="Service address" placeholderTextColor="#819b8b" value={address} onChangeText={setAddress} />
-          <Pressable style={styles.primary} onPress={addCustomer}><Text style={styles.primaryText}>Add customer</Text></Pressable>
-          <Text style={styles.muted}>Example cards above are in memory only. Use the saved-customer section for database records.</Text>
+          {!previewMode&&<>
+            <Text style={styles.heading}>Sample data · Not saved</Text>
+            {customers.map(c => <View key={c.id} style={styles.card}>
+              <Text style={styles.cardHeading}>{c.name}</Text>
+              <Text style={styles.muted}>{c.address} · {c.service}</Text>
+              <Text style={styles.body}>Rate ${c.rate} · Estimated {c.minutes} min</Text>
+              {!!c.notes && <Text style={styles.label}>Reminder: {c.notes}</Text>}
+            </View>)}
+            <Text style={styles.heading}>Add example customer</Text>
+            <TextInput style={styles.input} placeholder="Customer name" placeholderTextColor="#819b8b" value={name} onChangeText={setName} />
+            <TextInput style={styles.input} placeholder="Service address" placeholderTextColor="#819b8b" value={address} onChangeText={setAddress} />
+            <Pressable style={styles.primary} onPress={addCustomer}><Text style={styles.primaryText}>Add customer</Text></Pressable>
+            <Text style={styles.muted}>Example cards above are in memory only. Use the saved-customer section for database records.</Text>
+          </>}
         </>}
 
         {tab === 'invoices' && <>
           <Text style={styles.heading}>Invoices · Draft review</Text>
-          <Text style={styles.muted}>Drafts save to the business when you tap Save draft changes. No invoice is issued, sent, charged, or marked paid.</Text>
-          <Pressable style={styles.primary} disabled={!savedDay||!connectedBusiness||invoiceBusy} onPress={()=>void prepareInvoiceDrafts()}><Text style={styles.primaryText}>{invoiceBusy?'Loading saved drafts…':'Load or prepare drafts from completed visits'}</Text></Pressable>
+          <Text style={styles.muted}>{previewMode?'Invoice totals and drafts are not connected in this local sample workspace. No invoice is saved, issued, sent, or charged.':'Drafts save to the business when you tap Save draft changes. No invoice is issued, sent, charged, or marked paid.'}</Text>
+          <Pressable style={styles.primary} disabled={previewMode||!savedDay||!connectedBusiness||invoiceBusy} onPress={()=>void prepareInvoiceDrafts()}><Text style={styles.primaryText}>{previewMode?'Invoice storage unavailable in preview':invoiceBusy?'Loading saved drafts…':'Load or prepare drafts from completed visits'}</Text></Pressable>
           {!!savedDay && unbillableCompletedServiceCount(savedDay)>0 && <Text style={styles.muted}>{unbillableCompletedServiceCount(savedDay)} older completed visit(s) need manual billing review because no historical price snapshot exists.</Text>}
           {!!invoiceError && <Text style={styles.muted}>{invoiceError}</Text>}
           {invoiceDrafts.map(d=><View key={d.id} style={styles.card}>
@@ -1629,7 +1821,7 @@ function GreenCollarDashboard({getToken,userId,previewMode=false}:GreenCollarDas
             <Pressable accessibilityRole="button" style={styles.primary} disabled={invoiceSavingId===d.id||invoiceRevision(d)===invoiceDraftSnapshot.current.get(d.id)} onPress={()=>void saveInvoiceDraft(d.id)}><Text style={styles.primaryText}>{invoiceSavingId===d.id?'Saving draft…':'Save draft changes'}</Text></Pressable>
             <Text style={styles.muted}>Tax starts at 0.00%. Enter a rate confirmed for this business; GreenCollar does not determine taxability. Review drafts are not issued, sent, charged, or marked paid.</Text>
           </View>)}
-          {!invoiceDrafts.length && <Text style={styles.muted}>No drafts prepared. Load a workday with completed visits on Today first.</Text>}
+          {!invoiceDrafts.length && <Text style={styles.muted}>{previewMode?'Sample invoice drafts are not included in this preview.':'No drafts prepared. Load a workday with completed visits on Today first.'}</Text>}
         </>}
         {tab === 'planner' && <>
           <Text style={styles.heading}>Plan your day</Text>
@@ -1654,6 +1846,96 @@ function GreenCollarDashboard({getToken,userId,previewMode=false}:GreenCollarDas
           </View>}
         </>}
       </ScrollView>
+      <Modal visible={previewMode&&demoModal==='customer'} transparent animationType="slide" onRequestClose={closePreviewModal}>
+        <View style={styles.modalBackdrop}>
+          <View style={styles.modalCard} accessibilityViewIsModal>
+            <View style={styles.modalHeader}>
+              <Text style={styles.cardHeading}>Add sample customer</Text>
+              <Pressable accessibilityRole="button" accessibilityLabel="Back to customers" onPress={closePreviewModal}><Text style={styles.modalBack}>Back</Text></Pressable>
+            </View>
+            <Text style={styles.muted}>Use fictional details only. This record is stored in this browser’s preview workspace.</Text>
+            <ScrollView style={styles.modalFields} contentContainerStyle={{gap:10}} keyboardShouldPersistTaps="handled">
+              <Text style={styles.label}>Customer name *</Text>
+              <TextInput accessibilityLabel="Sample customer name" style={styles.input} placeholder="Example Customer" placeholderTextColor="#819b8b" value={savedCustomerName} onChangeText={setSavedCustomerName} maxLength={160} autoCapitalize="words"/>
+              <Text style={styles.label}>Phone (optional)</Text>
+              <TextInput accessibilityLabel="Sample customer phone" style={styles.input} placeholder="555-0100" placeholderTextColor="#819b8b" keyboardType="phone-pad" value={savedCustomerPhone} onChangeText={setSavedCustomerPhone} maxLength={50}/>
+              <Text style={styles.label}>Email (optional)</Text>
+              <TextInput accessibilityLabel="Sample customer email" style={styles.input} placeholder="example@demo.test" placeholderTextColor="#819b8b" keyboardType="email-address" autoCapitalize="none" autoCorrect={false} value={savedCustomerEmail} onChangeText={setSavedCustomerEmail} maxLength={254}/>
+              <Text style={styles.label}>Sample notes (optional)</Text>
+              <TextInput accessibilityLabel="Sample customer notes" style={[styles.input,{minHeight:84,textAlignVertical:'top'}]} placeholder="Fictional access note" placeholderTextColor="#819b8b" value={savedCustomerNotes} onChangeText={setSavedCustomerNotes} multiline maxLength={2000}/>
+              {!!savedDayError&&<Text accessibilityLiveRegion="polite" style={styles.muted}>{savedDayError}</Text>}
+              <Pressable accessibilityRole="button" style={styles.primary} disabled={loadingSaved} onPress={()=>void saveCustomer()}><Text style={styles.primaryText}>{loadingSaved?'Saving sample…':'Save sample customer'}</Text></Pressable>
+              <Pressable accessibilityRole="button" style={[styles.primary,{backgroundColor:'#f0f5ef'}]} onPress={closePreviewModal}><Text style={styles.primaryText}>Cancel</Text></Pressable>
+            </ScrollView>
+          </View>
+        </View>
+      </Modal>
+      <Modal visible={previewMode&&demoModal==='location'} transparent animationType="slide" onRequestClose={closePreviewModal}>
+        <View style={styles.modalBackdrop}>
+          <View style={styles.modalCard} accessibilityViewIsModal>
+            <View style={styles.modalHeader}>
+              <Text style={styles.cardHeading}>Add sample service address</Text>
+              <Pressable accessibilityRole="button" accessibilityLabel="Back to customers" onPress={closePreviewModal}><Text style={styles.modalBack}>Back</Text></Pressable>
+            </View>
+            <Text style={styles.muted}>Enter a fictional demo address only. Location access is not requested in preview mode.</Text>
+            <ScrollView style={styles.modalFields} contentContainerStyle={{gap:10}} keyboardShouldPersistTaps="handled">
+              <Text style={styles.label}>Service address *</Text>
+              <TextInput accessibilityLabel="Sample service address" style={styles.input} placeholder="Sample address, Demo City, FL" placeholderTextColor="#819b8b" value={locationAddress} onChangeText={setLocationAddress} maxLength={500}/>
+              <Text style={styles.label}>Sample access note (optional)</Text>
+              <TextInput accessibilityLabel="Sample service address note" style={[styles.input,{minHeight:84,textAlignVertical:'top'}]} placeholder="Fictional parking or gate note" placeholderTextColor="#819b8b" value={locationPreferences} onChangeText={setLocationPreferences} multiline maxLength={2000}/>
+              {!!locationError&&<Text accessibilityLiveRegion="polite" style={styles.muted}>{locationError}</Text>}
+              <Pressable accessibilityRole="button" style={styles.primary} disabled={locationLoading} onPress={()=>void saveLocation()}><Text style={styles.primaryText}>{locationLoading?'Saving sample…':'Save sample address'}</Text></Pressable>
+              <Pressable accessibilityRole="button" style={[styles.primary,{backgroundColor:'#f0f5ef'}]} onPress={closePreviewModal}><Text style={styles.primaryText}>Cancel</Text></Pressable>
+            </ScrollView>
+          </View>
+        </View>
+      </Modal>
+      <Modal visible={previewMode&&demoModal==='agreement'} transparent animationType="slide" onRequestClose={closePreviewModal}>
+        <View style={styles.modalBackdrop}>
+          <View style={styles.modalCard} accessibilityViewIsModal>
+            <View style={styles.modalHeader}>
+              <Text style={styles.cardHeading}>Schedule sample recurring job</Text>
+              <Pressable accessibilityRole="button" accessibilityLabel="Back to customers" onPress={closePreviewModal}><Text style={styles.modalBack}>Back</Text></Pressable>
+            </View>
+            <Text style={styles.muted}>The schedule is saved in this browser only. It creates sample due dates; it does not assign a worker or contact a customer.</Text>
+            <ScrollView style={styles.modalFields} contentContainerStyle={{gap:10}} keyboardShouldPersistTaps="handled">
+              <Text style={styles.label}>Service name *</Text>
+              <TextInput accessibilityLabel="Sample service name" style={styles.input} placeholder="Exterior maintenance" placeholderTextColor="#819b8b" value={agreementName} onChangeText={setAgreementName} maxLength={160}/>
+              <Text style={styles.label}>Sample rate per visit (USD) *</Text>
+              <TextInput accessibilityLabel="Sample service rate" style={styles.input} placeholder="65.00" placeholderTextColor="#819b8b" keyboardType="decimal-pad" value={agreementPrice} onChangeText={setAgreementPrice}/>
+              <Text style={styles.label}>Estimated service minutes *</Text>
+              <TextInput accessibilityLabel="Sample service duration" style={styles.input} keyboardType="number-pad" value={agreementMinutes} onChangeText={setAgreementMinutes}/>
+              <Text style={styles.label}>Appointment times (optional, 24-hour local time)</Text>
+              <TextInput accessibilityLabel="Sample earliest start" style={styles.input} placeholder="Earliest start · 09:00" placeholderTextColor="#819b8b" value={agreementEarliest} onChangeText={setAgreementEarliest} maxLength={5} autoCapitalize="none" autoCorrect={false}/>
+              <TextInput accessibilityLabel="Sample latest finish" style={styles.input} placeholder="Latest finish · 12:00" placeholderTextColor="#819b8b" value={agreementLatest} onChangeText={setAgreementLatest} maxLength={5} autoCapitalize="none" autoCorrect={false}/>
+              <TextInput accessibilityLabel="Sample fixed start" style={styles.input} placeholder="Fixed start · 10:30" placeholderTextColor="#819b8b" value={agreementFixed} onChangeText={setAgreementFixed} maxLength={5} autoCapitalize="none" autoCorrect={false}/>
+              <Text style={styles.label}>Start date *</Text>
+              <TextInput accessibilityLabel="Sample schedule start date" style={styles.input} value={agreementStart} onChangeText={setAgreementStart} maxLength={10} autoCapitalize="none" autoCorrect={false}/>
+              <Text style={styles.label}>End date (optional)</Text>
+              <TextInput accessibilityLabel="Sample schedule end date" style={styles.input} placeholder="YYYY-MM-DD" placeholderTextColor="#819b8b" value={agreementEnd} onChangeText={setAgreementEnd} maxLength={10} autoCapitalize="none" autoCorrect={false}/>
+              <Text style={styles.label}>Repeat</Text>
+              {([['daily','Daily'],['weekly','Weekly'],['biweekly','Every 2 weeks'],['monthly','Monthly'],['custom','Custom interval']] as const).map(([value,label])=><Pressable key={value} accessibilityRole="button" accessibilityState={{selected:value===agreementFrequency}} style={[styles.primary,{backgroundColor:value===agreementFrequency?pale:'#f0f5ef'}]} disabled={agreementLoading} onPress={()=>setAgreementFrequency(value)}><Text style={styles.primaryText}>{value===agreementFrequency?'Selected: ':''}{label}</Text></Pressable>)}
+              {agreementFrequency==='custom'&&<>
+                <Text style={styles.label}>Days between visits (1–366)</Text>
+                <TextInput accessibilityLabel="Sample recurrence interval in days" style={styles.input} keyboardType="number-pad" value={agreementInterval} onChangeText={setAgreementInterval}/>
+              </>}
+              {!!agreementError&&<Text accessibilityLiveRegion="polite" style={styles.muted}>{agreementError}</Text>}
+              <Pressable accessibilityRole="button" style={styles.primary} disabled={agreementLoading} onPress={()=>void saveAgreement()}><Text style={styles.primaryText}>{agreementLoading?'Saving sample…':'Save sample schedule'}</Text></Pressable>
+              <Pressable accessibilityRole="button" style={[styles.primary,{backgroundColor:'#f0f5ef'}]} onPress={closePreviewModal}><Text style={styles.primaryText}>Cancel</Text></Pressable>
+            </ScrollView>
+          </View>
+        </View>
+      </Modal>
+      <Modal visible={previewMode&&demoModal==='reset'} transparent animationType="fade" onRequestClose={closePreviewModal}>
+        <View style={styles.modalBackdrop}>
+          <View style={[styles.modalCard,styles.modalCardCompact]} accessibilityViewIsModal>
+            <Text style={styles.cardHeading}>Reset sample workspace?</Text>
+            <Text style={styles.muted}>This clears the customers, addresses, and schedules you added to this browser’s preview workspace and restores the fictional examples. It does not affect any GreenCollar account or server data.</Text>
+            <Pressable accessibilityRole="button" style={styles.primary} onPress={restoreDemoWorkspace}><Text style={styles.primaryText}>Restore sample workspace</Text></Pressable>
+            <Pressable accessibilityRole="button" style={[styles.primary,{backgroundColor:'#f0f5ef'}]} onPress={closePreviewModal}><Text style={styles.primaryText}>Keep editing</Text></Pressable>
+          </View>
+        </View>
+      </Modal>
     </SafeAreaView>
   );
 }
@@ -1662,6 +1944,12 @@ const styles = StyleSheet.create({
   page: { flex: 1, backgroundColor: '#0e261b' },
   previewBanner: { borderWidth: 1, borderColor: '#d5f48b', backgroundColor: '#294a35', padding: 13, borderRadius: 12, gap: 5 },
   previewTitle: { color: '#d5f48b', fontSize: 11, fontWeight: '900', letterSpacing: 1 },
+  modalBackdrop: { flex: 1, backgroundColor: 'rgba(0,0,0,0.72)', justifyContent: 'center', paddingHorizontal: 12, paddingVertical: 14 },
+  modalCard: { width: '100%', maxWidth: 600, maxHeight: '92%', alignSelf: 'center', backgroundColor: '#0e261b', borderColor: '#547562', borderWidth: 1, borderRadius: 18, padding: 16, gap: 12 },
+  modalCardCompact: { maxWidth: 480 },
+  modalHeader: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', gap: 12 },
+  modalBack: { color: pale, fontSize: 14, fontWeight: '800', padding: 8 },
+  modalFields: { maxHeight: 520, flexShrink: 1 },
   content: { padding: 20, paddingBottom: 50, gap: 12, maxWidth: 680, width: '100%', alignSelf: 'center' },
   logo: { color: pale, fontSize: 34, fontWeight: '900', marginTop: 14 },
   subtitle: { color: '#c4d9cc', fontSize: 14, marginBottom: 12 },

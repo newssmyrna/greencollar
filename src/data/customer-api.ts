@@ -12,6 +12,23 @@ function auth(token:string):Record<string,string>{
   if(!token)throw new Error('Sign in first');
   return {Authorization:'Bearer '+token};
 }
+export function customerDetailsInput(value:unknown):CustomerDetails{
+  if(!value||typeof value!=='object'||Array.isArray(value))throw new Error('Enter customer details');
+  const customer=value as Record<string,unknown>;
+  if(typeof customer.name!=='string'||!customer.name.trim())throw new Error('Customer name is required');
+  const limits:Record<'name'|'phone'|'email'|'notes',number>={name:160,phone:50,email:254,notes:2000};
+  for(const field of Object.keys(limits) as Array<keyof typeof limits>){
+    const entry=customer[field];
+    if(entry!==undefined&&(typeof entry!=='string'||entry.length>limits[field]))
+      throw new Error('Customer '+field+' is too long');
+  }
+  return {
+    name:customer.name.trim(),
+    ...(typeof customer.phone==='string'&&customer.phone.trim()?{phone:customer.phone.trim()}:{}),
+    ...(typeof customer.email==='string'&&customer.email.trim()?{email:customer.email.trim()}:{}),
+    ...(typeof customer.notes==='string'&&customer.notes.trim()?{notes:customer.notes.trim()}:{}),
+  };
+}
 export async function listSavedCustomers(apiUrl:string,businessId:string,token:string):Promise<SavedCustomer[]>{
   const response=await fetch(endpoint(apiUrl,businessId),{headers:auth(token)});
   if(!response.ok)throw new Error('Customer lookup failed ('+response.status+')');
@@ -20,19 +37,7 @@ export async function listSavedCustomers(apiUrl:string,businessId:string,token:s
   return body.customers;
 }
 export async function createSavedCustomer(apiUrl:string,businessId:string,token:string,customer:CustomerDetails):Promise<{id:string;name:string}>{
-  if(!customer.name?.trim())throw new Error('Customer name is required');
-  const limits:Record<keyof CustomerDetails,number>={name:160,phone:50,email:254,notes:2000};
-  for(const field of Object.keys(limits) as (keyof CustomerDetails)[]){
-    const value=customer[field];
-    if(value!==undefined&&(typeof value!=='string'||value.length>limits[field]))
-      throw new Error('Customer '+field+' is too long');
-  }
-  const details:CustomerDetails={
-    name:customer.name.trim(),
-    ...(customer.phone?.trim()?{phone:customer.phone.trim()}:{}),
-    ...(customer.email?.trim()?{email:customer.email.trim()}:{}),
-    ...(customer.notes?.trim()?{notes:customer.notes.trim()}:{}),
-  };
+  const details=customerDetailsInput(customer);
   const response=await fetch(endpoint(apiUrl,businessId),{
     method:'POST',headers:{...auth(token),'content-type':'application/json'},
     body:JSON.stringify(details)
