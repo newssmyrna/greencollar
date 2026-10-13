@@ -1,5 +1,5 @@
-import type {WorkdayWindowInput} from './workday-window';
-export type SavedQueueWorkloadLimits=WorkdayWindowInput&{hours:string;maxJobs:string};
+import type {WorkdayTimingInput} from './workday-break';
+export type SavedQueueWorkloadLimits=WorkdayTimingInput&{hours:string;maxJobs:string};
 export type SavedQueueWorkloadAssessment={
   status:'needs_limits'|'invalid_hours'|'invalid_job_cap'|'invalid_visits'|'within_limits'|'over_limits';
   availableMinutes:number|null;

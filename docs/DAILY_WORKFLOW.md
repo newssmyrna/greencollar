@@ -181,3 +181,37 @@ Paths: `App.tsx`, `src/domain/workday-window.ts`, `src/domain/saved-queue-worklo
 Impact: planned Today work settings, appointment warnings and approval dialog; planned device settings/approval compatibility; testing-only synthetic fixtures and regressions; documentation-only handoff. No live pages/posts, production records, API/schema changes, remote migration, provider calls, messages or billing changes.
 
 Next owner/action: reviewer checks optional-versus-partial windows, the earlier finish bound, old-record readback and exact approval binding. Device tester verifies iOS/Android time entry, field labels, restart/readback, failed saves, changes with an open approval dialog, date/operator switches, and long queue readability. SWITCH coordinates the stacked PR chain and release gates. Native acceptance, independent review, actual road travel/break handling, timezone conversion and deployment remain pending. The operator must update the remaining-work start as the day progresses; this phase does not follow the device clock automatically.
+
+## Saved planned workday break
+
+Task: GC-SAVED-WORKDAY-BREAK-20261013. Owner: Codex implementation, self-review and documentation; independent reviewer/device tester pending assignment. Source base: PR #62 at `489a5e3a5c204c5155b1dfa0018d1d7bb1fd4abb`. Branch: `codex/phase-saved-workday-break`. Source date: 2026-10-13 UTC. Work: REVIEW; delivery: PREPARED. The phase PR records the exact final source head, PR number, elapsed time and full CI evidence.
+
+Today work settings now support one optional planned break for the remaining workday. Enter its start and finish together on the same local 24-hour clock, with finish strictly after start. Only finish may be 24:00. When a work window is set, the entire break must fit inside it; otherwise the explicitly labeled 00:00–24:00 baseline applies. Moving the remaining-work start past a saved break requires updating or clearing that break. Leaving both fields blank means no planned break; no time is inferred from the device clock, appointments or older settings.
+
+Timing checks treat each service as uninterrupted. A flexible service that cannot finish before the break is checked from the break's finish. A service may finish exactly at break start or start exactly at break finish. Waiting that already spans the break does not count it again. Fixed appointments whose complete service interval overlaps the break receive an explicit warning. Delays carry forward through the manual queue and can expose a later fixed-start, customer-finish or workday-finish conflict. Current predicted service durations are used. The model does not change appointments, reorder visits, split services or control the running timer.
+
+The service-hour budget remains a separate budget of service minutes, and the visit cap is unchanged. Breaks affect the timing check rather than silently reducing that budget. Review copy names the configured interval, says services are uninterrupted and explains that travel and any other breaks remain excluded. There is no arrival forecast, actual-time integration, timezone conversion or support for multiple planned breaks in this phase.
+
+Device settings now write version 3 under the existing exact operator/business/date hashed key. Version 1 loads the original hours/cap; version 2 also loads its work window. Neither invents break fields or writes on read. The next explicit save writes version 3. Unexpected break fields in a version-1/2 record, partial/invalid/out-of-window breaks and unsupported versions reject without modifying saved bytes. Records retain the 512-character bound and contain no raw scope identities. Older clients that do not support version 3 must not silently downgrade it.
+
+Break-only edits mark settings unsaved and immediately invalidate approval readiness, including an already-open approval callback. Saving captures values before asynchronous storage; pending saves reject duplicate taps and edits. Uncertain writes require readback or explicit replacement. Late restore/save results cannot enter a different operator/business/date scope. Clearing both break fields is an explicit saved change. Restored order and settings are still required before timing results appear, and an unsaved preview remains labeled.
+
+Approval uses a new timing-policy version and binds the normalized break status/start/finish in addition to the existing work window, queue order, estimates, appointment fields and workload limits. Earlier approvals require review again. Invalid break settings cannot save or approve. Valid timing conflicts remain an explicit operator decision with a warning-labeled confirmation; approval records review and does not resolve the conflict.
+
+Acceptance: optional/canonical input; same-day and work-window validation; uninterrupted service checks; exact touching boundaries; flexible waiting without double counting; fixed-break and downstream timing warnings; learned-duration changes; normalized approval binding; version-1/2 read compatibility; version-3 scope isolation; corrupt-record preservation; edit/save/readback/context protections.
+
+Verification: 137 focused local tests passed, including 22 new tests. Node 24 ran temporary copies with explicit TypeScript import extensions. The new scheduling oracle enumerated feasible service start times independently across 400 bounded synthetic break/window cases; two existing oracles cover another 400 cases without breaks. Full CI counts and exact head evidence are recorded on the phase PR. This is source, automated regression and self-review evidence; native device testing and independent QA remain pending.
+
+| Feature/functionality | Implementation | Impact |
+| --- | --- | --- |
+| Optional planned break input and validation | Complete | Planned Today work settings |
+| Break-aware appointment checks | Complete | Planned Today review and per-visit warnings |
+| Durable break settings and legacy restoration | Complete | Planned device storage |
+| Break-bound approval and edit protection | Complete | Planned Today approval |
+| Native acceptance and deployment | Pending | No live change |
+
+Paths: `App.tsx`, `src/domain/workday-break.ts`, `src/domain/saved-queue-workload.ts`, `src/domain/saved-queue-appointments.ts`, `src/domain/saved-queue-review.ts`, `src/data/local-saved-queue-workload.ts`, `src/data/saved-queue-workload-settings.ts`, `src/data/local-saved-queue-approval.ts`, `tests/workday-break.test.ts`, `tests/workday-window.test.ts`, and this document.
+
+Impact: planned Today settings, appointment warnings and approval dialog; planned device settings compatibility; testing-only synthetic fixtures/regressions; documentation-only behavior and handoff. No live pages/posts, production records, API/schema changes, remote migrations, provider calls, messages or billing changes.
+
+Next owner/action: reviewer checks uninterrupted-service math, break-bound approval, version compatibility and stale-dialog guards. Device tester verifies iOS/Android input, labels and errors; break warnings in long queues; restore before review; restart/readback; clearing a passed break after moving the remaining-work start; failed saves; open-dialog changes; and date/operator switches. SWITCH coordinates the existing stacked PR chain and release gates. This phase does not merge or deploy that chain. Four completed implementation goals measure this phase only, not overall product readiness.
