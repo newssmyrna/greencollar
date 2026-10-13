@@ -65,7 +65,6 @@ export function hydrateSingleRouteDraft(
   const tasksByAgreement:Record<string,ScheduledTask[]>={};
   const suffix=':'+workDate;
   const stops=[...route.stops].sort((a,b)=>a.order-b.order);
-  const seenTaskIds=new Set<string>();
   if(stops.length===0)throw new Error('The saved route has no stops and remains read-only.');
   for(const stop of stops){
     if(!stop.visitId.endsWith(suffix))throw new Error('A saved stop belongs to a different workday; the draft remains read-only.');
@@ -73,12 +72,14 @@ export function hydrateSingleRouteDraft(
     if(!agreementId||!allowed.has(agreementId))throw new Error('A saved stop is no longer available in the loaded workday; the draft remains read-only.');
     if(seen.has(agreementId))throw new Error('The saved route contains a duplicate stop and remains read-only.');
     if(!Array.isArray(stop.tasks))throw new Error('A saved stop has invalid task data and remains read-only.');
+    const seenTaskIds=new Set<string>();
     for(const task of stop.tasks){
-      if(typeof task.taskId!=='string'||!task.taskId.trim()||seenTaskIds.has(task.taskId)||
-        typeof task.label!=='string'||!task.label.trim()||
+      if(typeof task.taskId!=='string'||!/^[a-zA-Z0-9_-]{1,100}$/.test(task.taskId)||seenTaskIds.has(task.taskId)||
+        typeof task.label!=='string'||!task.label.trim()||task.label.length>80||
         !Number.isInteger(task.estimatedMinutes)||task.estimatedMinutes<1||task.estimatedMinutes>1440||
         !Array.isArray(task.assignedSubjects)||task.assignedSubjects.length===0||
-        task.assignedSubjects.some(subject=>typeof subject!=='string'||!workerSet.has(subject)))
+        task.assignedSubjects.some(subject=>typeof subject!=='string'||!workerSet.has(subject))||
+        new Set(task.assignedSubjects).size!==task.assignedSubjects.length)
         throw new Error('A saved task has invalid data or an assignment outside this route crew; the draft remains read-only.');
       seenTaskIds.add(task.taskId);
     }
@@ -109,12 +110,19 @@ export function validateScheduleTasksForCrew(
   for(const agreementId of agreementIds){
     const tasks=tasksByAgreement[agreementId]??[];
     if(tasks.length===0)return 'Add at least one task to every selected stop.';
+    const taskIds=new Set<string>();
     for(const task of tasks){
+      if(typeof task.taskId!=='string'||!/^[a-zA-Z0-9_-]{1,100}$/.test(task.taskId)||taskIds.has(task.taskId))
+        return 'A task has an invalid or duplicate ID. Reload the draft before updating it.';
+      taskIds.add(task.taskId);
       if(typeof task.label!=='string'||!task.label.trim())return 'Give every task a name before updating the draft.';
+      if(task.label.length>80)return 'Task names must be 80 characters or fewer.';
       if(!Number.isInteger(task.estimatedMinutes)||task.estimatedMinutes<1||task.estimatedMinutes>1440)
         return 'Task estimates must be whole minutes from 1 to 1440.';
       if(!Array.isArray(task.assignedSubjects)||task.assignedSubjects.length===0)
         return 'Assign every task to at least one route crew member.';
+      if(new Set(task.assignedSubjects).size!==task.assignedSubjects.length)
+        return 'Remove duplicate worker assignments from each task.';
       if(task.assignedSubjects.some(subject=>!crew.has(subject)))
         return 'Reassign tasks to members of the current route crew before updating the draft.';
     }

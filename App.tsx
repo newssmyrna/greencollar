@@ -1140,7 +1140,7 @@ function GreenCollarDashboard() {
                 {!!tasks.length&&tasks.map(task=><View key={task.taskId} style={styles.card}>
                   <Text style={styles.label}>Edit saved task</Text>
                   <Text style={styles.label}>Task name</Text>
-                  <TextInput accessibilityLabel={'Task name for '+agreement.service_name+' task'} style={styles.input} value={task.label} editable={!scheduleBusy} onChangeText={label=>setScheduleTaskDrafts(current=>({...current,[agreement.id]:(current[agreement.id]??[]).map(item=>item.taskId===task.taskId?{...item,label}:item)}))} />
+                  <TextInput accessibilityLabel={'Task name for '+agreement.service_name+' task'} style={styles.input} value={task.label} maxLength={80} editable={!scheduleBusy} onChangeText={label=>setScheduleTaskDrafts(current=>({...current,[agreement.id]:(current[agreement.id]??[]).map(item=>item.taskId===task.taskId?{...item,label}:item)}))} />
                   <Text style={styles.label}>Assigned route crew</Text>
                   {!scheduleWorkerSubjects.length&&<Text style={styles.muted}>Select a route crew member before assigning this task.</Text>}
                   {task.assignedSubjects.filter(subject=>!scheduleWorkerSubjects.includes(subject)).map(subject=><View key={task.taskId+'-unassigned-'+subject} style={styles.card}>
@@ -1154,7 +1154,7 @@ function GreenCollarDashboard() {
                 </View>)}
                 {selected&&<View style={styles.card}>
                   <Text style={styles.label}>Task name for this stop</Text>
-                  <TextInput accessibilityLabel={'Task name '+agreement.service_name} style={styles.input} value={scheduleTaskLabel} onChangeText={setScheduleTaskLabel} />
+                  <TextInput accessibilityLabel={'Task name '+agreement.service_name} style={styles.input} value={scheduleTaskLabel} maxLength={80} onChangeText={setScheduleTaskLabel} />
                   <Text style={styles.label}>Assigned worker</Text>
                   {scheduleWorkerSubjects.map(subject=><Pressable key={subject} accessibilityRole="button" accessibilityState={{selected:scheduleTaskWorker===subject}} style={styles.primary} onPress={()=>setScheduleTaskWorker(subject)}><Text style={styles.primaryText}>{scheduleTaskWorker===subject?'✓ ':''}{subject}</Text></Pressable>)}
                   <Text style={styles.label}>Estimated task minutes</Text>

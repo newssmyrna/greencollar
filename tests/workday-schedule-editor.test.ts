@@ -66,12 +66,21 @@ test('requires every selected stop to keep a task and every task to have a name 
   assert.match(validateScheduleTasksForCrew(['agreement-a'],{
     'agreement-a':[{taskId:'task-a',label:'Mow',assignedSubjects:['worker-a'],estimatedMinutes:1441}]
   },['worker-a'])??'',/whole minutes/);
+  assert.match(validateScheduleTasksForCrew(['agreement-a'],{
+    'agreement-a':[{taskId:'task-a',label:'x'.repeat(81),assignedSubjects:['worker-a'],estimatedMinutes:45}]
+  },['worker-a'])??'',/80 characters/);
 });
 
 test('requires task assignment to at least one worker on the selected route',()=>{
   assert.match(validateScheduleTasksForCrew(['agreement-a'],{
     'agreement-a':[{taskId:'task-a',label:'Mow',assignedSubjects:[],estimatedMinutes:45}]
   },['worker-a'])??'',/at least one route crew member/);
+});
+
+test('rejects duplicate worker assignments within one task',()=>{
+  assert.match(validateScheduleTasksForCrew(['agreement-a'],{
+    'agreement-a':[{taskId:'task-a',label:'Mow',assignedSubjects:['worker-a','worker-a'],estimatedMinutes:45}]
+  },['worker-a'])??'',/duplicate worker assignments/);
 });
 
 test('blocks a task still assigned to a worker removed from the selected route crew',()=>{
@@ -93,8 +102,8 @@ test('keeps saved tasks read-only when task identity, name, estimate, or assignm
   }
 });
 
-test('keeps saved tasks read-only when task IDs are duplicated across stops',()=>{
+test('keeps saved tasks read-only when task IDs are duplicated within a stop',()=>{
   const schedule=sampleSchedule();
-  schedule.routes[0].stops[0].tasks[0].taskId=schedule.routes[0].stops[1].tasks[0].taskId;
+  schedule.routes[0].stops[0].tasks.push({...schedule.routes[0].stops[0].tasks[0],taskId:schedule.routes[0].stops[0].tasks[0].taskId});
   assert.throws(()=>hydrateSingleRouteDraft(schedule,'business-a',workDate,['agreement-a','agreement-b']),/saved task has invalid data/);
 });
