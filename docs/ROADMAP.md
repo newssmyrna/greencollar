@@ -82,5 +82,5 @@ Keep every change narrowly scoped and tested; never silently remove agreed featu
 - Allow an optional lunch interval on each worker assignment, separate from route and truck hours.
 - Validate each interval is ordered, within the worker shift, non-overlapping, and limited to three blocks per worker.
 - Show separate lunch start/end inputs for each selected worker in the owner/admin draft editor.
-- Preserve lunch blocks in saved and loaded drafts; they reduce that worker's available labor time.
+- Preserve lunch blocks in saved and loaded drafts for later capacity and route timing calculations.
 - Stop arrival times and route feasibility remain unmodeled until travel and stop time windows are available.
