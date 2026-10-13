@@ -8,7 +8,7 @@
 **Branch:** `codex/phase-edit-saved-schedule-tasks`  
 **Base:** `codex/phase-single-route-draft-edit` at `d05eb11686933bab7c5d03caa16369cadf346089`  
 **Implementation commit:** `bd4a038dceeceaa369a9d976d3306db9d8b2d19c`  
-**CI:** run [#269](https://github.com/newssmyrna/greencollar/actions/runs/38425457244) is queued for the implementation commit. Run #268 passed the initial task editor and validation changes before the API-alignment follow-up.
+**Handoff update commit:** `eb8367357e4e671e94eabdd0c8d2e7a0db5ec7a2`
 
 ## Scope and acceptance criteria
 
@@ -29,10 +29,12 @@ The current schedule API's task constraints are mirrored by the editor. Saving r
 ## Checks and limits
 
 - Added focused domain tests for valid tasks, missing tasks, field limits, crew assignment, duplicate assignments, malformed saved records, and duplicate task IDs within a stop.
-- The final code commit's GitHub Actions run is pending; no check is reported as passed for that commit yet.
+- Run #268 passed the initial task-editor implementation at commit `9c1aa21ea1349280da778fc04d52e2e400bfa5bd`, before the final API-alignment checks.
+- Run [#269](https://github.com/newssmyrna/greencollar/actions/runs/38425457244) was cancelled when the branch advanced. Its typecheck and scheduling-test steps and Cloudflare job reported success before cancellation, but the run itself is not counted as a pass.
+- Run #270 was in progress on the handoff update commit as this correction was prepared; the new handoff commit will trigger a fresh run for the latest branch.
 - No independent QA, phone-device acceptance, staging deployment, hosted data write, route publication, or customer communication was performed.
 
 ## Next owner and action
 
 **Next owner:** PROOF / independent reviewer.  
-**Exact next action:** after run #269 passes, review PR #83 for task-field editing, task-ID preservation, crew-change recovery, and save validation. Then SWITCH can coordinate merge approval. Keep multi-route drafts read-only until the editor supports their complete shape.
+**Exact next action:** after the latest GitHub Actions run passes, review PR #83 for task-field editing, task-ID preservation, crew-change recovery, and save validation. Then SWITCH can coordinate merge approval. Keep multi-route drafts read-only until the editor supports their complete shape.
