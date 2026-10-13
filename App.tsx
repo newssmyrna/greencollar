@@ -1080,11 +1080,19 @@ function GreenCollarDashboard() {
             }}><Text style={styles.primaryText}>{scheduleRosterBusy?'Loading crew…':'Load business crew'}</Text></Pressable>
             {!scheduleMembers.length?<Text style={styles.muted}>Load the verified owner/admin/worker roster, then select everyone assigned to this route.</Text>:scheduleMembers.map(member=>{
               const selected=scheduleWorkerSubjects.includes(member.subject);
-              return <Pressable key={member.subject} accessibilityRole="button" accessibilityState={{selected}} style={styles.primary} onPress={()=>{
-                setScheduleWorkerSubjects(current=>selected?current.filter(subject=>subject!==member.subject):[...current,member.subject]);
-                if(selected&&scheduleTaskWorker===member.subject)setScheduleTaskWorker('');
-                else if(!selected&&!scheduleTaskWorker)setScheduleTaskWorker(member.subject);
-              }}><Text style={styles.primaryText}>{selected?'✓ ':''}{member.role} · {member.subject}</Text></Pressable>;
+              return <View key={member.subject} style={styles.card}>
+                <Pressable accessibilityRole="button" accessibilityState={{selected}} style={styles.primary} onPress={()=>{
+                  setScheduleWorkerSubjects(current=>selected?current.filter(subject=>subject!==member.subject):[...current,member.subject]);
+                  if(selected&&scheduleTaskWorker===member.subject)setScheduleTaskWorker('');
+                  else if(!selected&&!scheduleTaskWorker)setScheduleTaskWorker(member.subject);
+                }}><Text style={styles.primaryText}>{selected?'✓ ':''}{member.role} · {member.subject}</Text></Pressable>
+                {selected&&<View style={styles.card}>
+                  <Text style={styles.label}>Lunch start (optional, 24 hour time)</Text>
+                  <TextInput accessibilityLabel={'Lunch start for '+member.subject} style={styles.input} value={scheduleLunchStart[member.subject]??''} onChangeText={value=>setScheduleLunchStart(current=>({...current,[member.subject]:value}))} placeholder="12:00" />
+                  <Text style={styles.label}>Lunch end</Text>
+                  <TextInput accessibilityLabel={'Lunch end for '+member.subject} style={styles.input} value={scheduleLunchEnd[member.subject]??''} onChangeText={value=>setScheduleLunchEnd(current=>({...current,[member.subject]:value}))} placeholder="12:30" />
+                </View>}
+              </View>;
             })}
             <Text style={styles.muted}>Roster access is owner/admin only. Names are not stored in the membership table, so verified account IDs and roles are shown.</Text>
           </View>
