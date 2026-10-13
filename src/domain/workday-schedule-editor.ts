@@ -55,6 +55,8 @@ function hydrateOneRouteDraft(
     const rawBreaks=worker.breaks??[];
     if(!Array.isArray(rawBreaks)||rawBreaks.length>3)
       throw new Error('The saved route has more than three lunch blocks for a worker and remains read-only.');
+    if(rawBreaks.some(block=>!block||!validMinute(block.startMinute)||!validMinute(block.endMinute)))
+      throw new Error('The saved route has invalid or overlapping lunch blocks and remains read-only.');
     const breaks=[...rawBreaks].sort((a,b)=>a.startMinute-b.startMinute);
     let previousEnd=route.startMinute;
     for(const block of breaks){

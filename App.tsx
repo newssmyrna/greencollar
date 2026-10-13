@@ -1275,7 +1275,7 @@ function GreenCollarDashboard() {
               setScheduleNotice((expectedVersion?(saved.routes.length>1?'Selected route updated.':'Draft updated'):'Draft saved')+'. It is not published to a live route or GPS device.');
             }catch(error){setScheduleError(error instanceof Error?error.message:'Could not save schedule draft.');}
             finally{setScheduleBusy(false);}
-          }}><Text style={styles.primaryText}>{scheduleBusy?'Saving…':scheduleDraftLoadedForEdit&&workdaySchedule?.routes.length>1?'Update selected route':scheduleDraftLoadedForEdit?'Update workday draft':'Save workday draft'}</Text></Pressable>
+          }}><Text style={styles.primaryText}>{scheduleBusy?'Saving…':scheduleDraftLoadedForEdit&&workdaySchedule&&workdaySchedule.routes.length>1?'Update selected route':scheduleDraftLoadedForEdit?'Update workday draft':'Save workday draft'}</Text></Pressable>
           <Pressable accessibilityRole="button" style={styles.primary} disabled={scheduleBusy||!savedDay} onPress={async()=>{
             if(!savedDay||!connectedBusiness)return;
             if(!scheduleMembers.length){setScheduleError('Load the verified business crew first, then load a saved draft for editing.');return;}
