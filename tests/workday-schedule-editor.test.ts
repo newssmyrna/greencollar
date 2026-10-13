@@ -19,7 +19,7 @@ function sampleSchedule():WorkdaySchedule{
 }
 
 test('hydrates an editable single-route draft without losing route, worker, stop, task, or break data',()=>{
-  const result=hydrateSingleRouteDraft(sampleSchedule(),workDate,['agreement-a','agreement-b']);
+  const result=hydrateSingleRouteDraft(sampleSchedule(),'business-a',workDate,['agreement-a','agreement-b']);
   assert.deepEqual(result,{
     routeId:'route-west',truckId:'truck-2',start:'08:00',end:'17:00',
     workerSubjects:['worker-a'],
@@ -32,18 +32,22 @@ test('hydrates an editable single-route draft without losing route, worker, stop
   });
 });
 
+test('keeps a draft read-only when its business scope does not match',()=>{
+  assert.throws(()=>hydrateSingleRouteDraft(sampleSchedule(),'business-b',workDate,['agreement-a','agreement-b']),/different business/);
+});
+
 test('keeps multi-route drafts read-only instead of dropping routes',()=>{
   const schedule=sampleSchedule();
   schedule.routes.push({...schedule.routes[0],routeId:'route-east'});
-  assert.throws(()=>hydrateSingleRouteDraft(schedule,workDate,['agreement-a','agreement-b']),/single-route/);
+  assert.throws(()=>hydrateSingleRouteDraft(schedule,'business-a',workDate,['agreement-a','agreement-b']),/single-route/);
 });
 
 test('keeps a draft read-only when a saved stop is no longer in the loaded workday',()=>{
-  assert.throws(()=>hydrateSingleRouteDraft(sampleSchedule(),workDate,['agreement-a']),/no longer available/);
+  assert.throws(()=>hydrateSingleRouteDraft(sampleSchedule(),'business-a',workDate,['agreement-a']),/no longer available/);
 });
 
 test('keeps a draft read-only when worker shift hours cannot be represented',()=>{
   const schedule=sampleSchedule();
   schedule.routes[0].workers[0].endMinute=960;
-  assert.throws(()=>hydrateSingleRouteDraft(schedule,workDate,['agreement-a','agreement-b']),/different shift hours/);
+  assert.throws(()=>hydrateSingleRouteDraft(schedule,'business-a',workDate,['agreement-a','agreement-b']),/different shift hours/);
 });

@@ -1165,6 +1165,7 @@ function GreenCollarDashboard() {
             setScheduleBusy(true);setScheduleError('');setScheduleNotice('');
             try{const token=await getToken({template:'greencollar-api'});if(!token)throw new Error('Sign in first.');
               const loaded=await getWorkdaySchedule(api,connectedBusiness.id,savedDay.date,token).catch(error=>{if(error instanceof Error&&error.message.includes('404'))return null;throw error;});
+              if(loaded&&(loaded.businessId!==connectedBusiness.id||loaded.workDate!==savedDay.date))throw new Error('The returned draft does not match the selected business and workday; no changes were saved.');
               if(loaded&&!scheduleDraftLoadedForEdit){
                 setWorkdaySchedule(loaded);
                 throw new Error('A saved draft already exists. Load it into the editor before saving; no changes were saved.');
@@ -1211,9 +1212,10 @@ function GreenCollarDashboard() {
               const token=await getToken({template:'greencollar-api'});if(!token)throw new Error('Sign in first.');
               const saved=await getWorkdaySchedule(api,connectedBusiness.id,savedDay.date,token);
               if(request!==scheduleRosterRequest.current)return;
+              if(saved.businessId!==connectedBusiness.id||saved.workDate!==savedDay.date)throw new Error('The returned draft does not match the selected business and workday.');
               setWorkdaySchedule(saved);setScheduleDraftLoadedForEdit(false);
               const activeAgreementIds=savedDay.agreements.filter(a=>a.active===1&&a.starts_on<=savedDay.date&&(!a.ends_on||a.ends_on>=savedDay.date)).map(a=>a.id);
-              const draft=hydrateSingleRouteDraft(saved,savedDay.date,activeAgreementIds);
+              const draft=hydrateSingleRouteDraft(saved,connectedBusiness.id,savedDay.date,activeAgreementIds);
               const rosterSubjects=new Set(scheduleMembers.map(member=>member.subject));
               if(draft.workerSubjects.some(subject=>!rosterSubjects.has(subject)))
                 throw new Error('This draft includes a worker who is not on the current verified roster; it remains read-only.');

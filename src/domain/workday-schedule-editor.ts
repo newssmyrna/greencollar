@@ -24,9 +24,11 @@ function clock(value:number):string{
 /** Hydrates only the complete single-route shape supported by the current editor. */
 export function hydrateSingleRouteDraft(
   schedule:WorkdaySchedule,
+  businessId:string,
   workDate:string,
   activeAgreementIds:readonly string[]
 ):SingleRouteScheduleDraft{
+  if(schedule.businessId!==businessId)throw new Error('The saved draft belongs to a different business.');
   if(schedule.workDate!==workDate)throw new Error('The saved draft belongs to a different workday.');
   if(schedule.routes.length!==1)throw new Error('This editor can only edit a single-route draft. Other drafts remain read-only.');
   const route=schedule.routes[0];
