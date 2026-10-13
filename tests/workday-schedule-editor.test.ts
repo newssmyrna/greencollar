@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import {hydrateSingleRouteDraft,validateScheduleTasksForCrew} from '../src/domain/workday-schedule-editor';
+import {hydrateScheduleRouteDrafts,hydrateSingleRouteDraft,replaceScheduleRouteAtIndex,validateScheduleTasksForCrew} from '../src/domain/workday-schedule-editor';
 import type {WorkdaySchedule} from '../src/data/workday-schedules';
 
 const workDate='2026-10-13';
@@ -118,4 +118,67 @@ test('keeps saved stops read-only when they exceed the task count limit',()=>{
   const schedule=sampleSchedule();
   schedule.routes[0].stops[0].tasks=Array.from({length:21},(_,index)=>({taskId:'task-'+index,label:'Mow',assignedSubjects:['worker-a'],estimatedMinutes:45}));
   assert.throws(()=>hydrateSingleRouteDraft(schedule,'business-a',workDate,['agreement-a','agreement-b']),/saved stop has invalid task data/);
+});
+
+function addSecondRoute(schedule:WorkdaySchedule):WorkdaySchedule{
+  schedule.routes.push({
+    routeId:'route-east',truckId:'truck-3',startMinute:600,endMinute:900,
+    workers:[{subject:'worker-b',startMinute:600,endMinute:900}],
+    stops:[{visitId:'agreement-c:'+workDate,order:1,tasks:[{taskId:'task-c',label:'Cleanup',assignedSubjects:['worker-b'],estimatedMinutes:35}]}]
+  });
+  return schedule;
+}
+
+test('hydrates every route in a multi-route draft without losing route-specific crew, stops, tasks, or breaks',()=>{
+  const schedule=addSecondRoute(sampleSchedule());
+  const result=hydrateScheduleRouteDrafts(schedule,'business-a',workDate,['agreement-a','agreement-b','agreement-c']);
+  assert.equal(result.length,2);
+  assert.deepEqual(result[0],hydrateSingleRouteDraft({...schedule,routes:[schedule.routes[0]]},'business-a',workDate,['agreement-a','agreement-b','agreement-c']));
+  assert.deepEqual(result[1],{
+    routeId:'route-east',truckId:'truck-3',start:'10:00',end:'15:00',
+    workerSubjects:['worker-b'],lunchBlocks:{'worker-b':[]},
+    agreementIds:['agreement-c'],
+    tasksByAgreement:{'agreement-c':[{taskId:'task-c',label:'Cleanup',assignedSubjects:['worker-b'],estimatedMinutes:35}]}
+  });
+});
+
+test('keeps a multi-route draft read-only when route IDs or visits are duplicated',()=>{
+  const duplicateRoute=addSecondRoute(sampleSchedule());
+  duplicateRoute.routes[1].routeId=duplicateRoute.routes[0].routeId;
+  assert.throws(()=>hydrateScheduleRouteDrafts(duplicateRoute,'business-a',workDate,['agreement-a','agreement-b','agreement-c']),/duplicate route/);
+  const duplicateVisit=addSecondRoute(sampleSchedule());
+  duplicateVisit.routes[1].stops[0].visitId='agreement-a:'+workDate;
+  assert.throws(()=>hydrateScheduleRouteDrafts(duplicateVisit,'business-a',workDate,['agreement-a','agreement-b','agreement-c']),/more than one saved route/);
+});
+
+test('keeps a multi-route draft read-only when trucks or workers overlap',()=>{
+  const sharedTruck=addSecondRoute(sampleSchedule());
+  sharedTruck.routes[1].truckId='truck-2';
+  sharedTruck.routes[1].startMinute=600;
+  sharedTruck.routes[1].endMinute=900;
+  sharedTruck.routes[1].workers[0].startMinute=600;
+  sharedTruck.routes[1].workers[0].endMinute=900;
+  assert.throws(()=>hydrateScheduleRouteDrafts(sharedTruck,'business-a',workDate,['agreement-a','agreement-b','agreement-c']),/same truck/);
+  const sharedWorker=addSecondRoute(sampleSchedule());
+  sharedWorker.routes[1].workers[0].subject='worker-a';
+  assert.throws(()=>hydrateScheduleRouteDrafts(sharedWorker,'business-a',workDate,['agreement-a','agreement-b','agreement-c']),/overlapping saved routes/);
+});
+
+test('validates every route before enabling edits to any route',()=>{
+  const malformed=addSecondRoute(sampleSchedule());
+  malformed.routes[1].stops[0].tasks[0].assignedSubjects=['worker-a'];
+  assert.throws(()=>hydrateScheduleRouteDrafts(malformed,'business-a',workDate,['agreement-a','agreement-b','agreement-c']),/outside this route crew/);
+});
+
+test('replaces only the selected saved route and preserves all other routes and schedule metadata',()=>{
+  const schedule=addSecondRoute(sampleSchedule());
+  const otherRoute=schedule.routes[0];
+  const replacement={...schedule.routes[1],truckId:'truck-4',stops:[{...schedule.routes[1].stops[0],order:2}]};
+  const updated=replaceScheduleRouteAtIndex(schedule,1,replacement);
+  assert.equal(updated.version,schedule.version);
+  assert.equal(updated.updatedBy,schedule.updatedBy);
+  assert.deepEqual(updated.routes[0],otherRoute);
+  assert.deepEqual(updated.routes[1],replacement);
+  assert.deepEqual(schedule.routes[1].truckId,'truck-3');
+  assert.throws(()=>replaceScheduleRouteAtIndex(schedule,2,replacement),/Select a saved route/);
 });

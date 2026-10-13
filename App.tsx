@@ -9,7 +9,7 @@ import { reportWeatherInterruption, listWeatherInterruptions, type WeatherInterr
 import { getWorkdaySchedule, saveWorkdaySchedule, listWorkdayMembers, type WorkdaySchedule, type ScheduledTask, type BusinessMember } from './src/data/workday-schedules';
 import { listAvailability, type CrewAvailability } from './src/data/availability';
 import { reportedLunchBlocks } from './src/domain/workday-availability';
-import { hydrateSingleRouteDraft, validateScheduleTasksForCrew } from './src/domain/workday-schedule-editor';
+import { hydrateScheduleRouteDrafts, replaceScheduleRouteAtIndex, validateScheduleTasksForCrew, type SingleRouteScheduleDraft } from './src/domain/workday-schedule-editor';
 import { businessRoleCapabilities } from './src/domain/weather-replan';
 import { prepareTruckPreview, type PreviewTruck, type TruckPreviewRoute } from './src/domain/truck-preview';
 import { summarizeSavedDay } from './src/data/saved-day';
@@ -251,8 +251,8 @@ function GreenCollarDashboard() {
   const [weatherInbox,setWeatherInbox]=useState<{scope:string;items:WeatherInterruption[]}|null>(null);
   const [weatherInboxBusy,setWeatherInboxBusy]=useState(false);
   const [weatherInboxError,setWeatherInboxError]=useState('');
-  useEffect(()=>{setAgreementEarliest('');setAgreementLatest('');setAgreementFixed('');setScheduleMembers([]);setScheduleWorkerSubjects([]);setScheduleLunchBlocks({});setScheduleAvailability([]);setScheduleTaskWorker('');setWorkdaySchedule(null);setScheduleDraftLoadedForEdit(false);setScheduleRouteId('route-1');},[userId,connectedBusiness?.id]);
-  useEffect(()=>{scheduleRosterRequest.current++;setScheduleRosterBusy(false);setScheduleLunchBlocks({});setScheduleAvailability([]);setWorkdaySchedule(null);setScheduleDraftLoadedForEdit(false);setScheduleRouteId('route-1');},[userId,connectedBusiness?.id,savedDay?.date]);
+  useEffect(()=>{setAgreementEarliest('');setAgreementLatest('');setAgreementFixed('');setScheduleMembers([]);setScheduleWorkerSubjects([]);setScheduleLunchBlocks({});setScheduleAvailability([]);setScheduleTaskWorker('');setWorkdaySchedule(null);setScheduleDraftLoadedForEdit(false);setScheduleActiveRouteIndex(0);setScheduleRouteId('route-1');},[userId,connectedBusiness?.id]);
+  useEffect(()=>{scheduleRosterRequest.current++;setScheduleRosterBusy(false);setScheduleLunchBlocks({});setScheduleAvailability([]);setWorkdaySchedule(null);setScheduleDraftLoadedForEdit(false);setScheduleActiveRouteIndex(0);setScheduleRouteId('route-1');},[userId,connectedBusiness?.id,savedDay?.date]);
   useEffect(()=>{
     routingSettingsRequest.current++;
     routingSettingsBusyRef.current=false;
@@ -444,6 +444,7 @@ function GreenCollarDashboard() {
   const [tab, setTab] = useState<'today' | 'customers' | 'planner' | 'invoices' | 'schedule'>('today');
   const [workdaySchedule,setWorkdaySchedule]=useState<WorkdaySchedule|null>(null);
   const [scheduleDraftLoadedForEdit,setScheduleDraftLoadedForEdit]=useState(false);
+  const [scheduleActiveRouteIndex,setScheduleActiveRouteIndex]=useState(0);
   const [scheduleBusy,setScheduleBusy]=useState(false);
   const [scheduleError,setScheduleError]=useState('');
   const [scheduleNotice,setScheduleNotice]=useState('');
@@ -986,6 +987,45 @@ function GreenCollarDashboard() {
   const workloadPreview=planned?assessServiceWorkload(customers.map(customer=>({id:String(customer.id),minutes:customer.minutes})),hours,maxJobs):null;
   const visibleServerLocationConfirmations=filterLocationConfirmations(serverLocationConfirmations,serverAuditKindFilter,serverAuditSourceFilter);
 
+  function verifyScheduleRouteRoster(draft:SingleRouteScheduleDraft):void{
+    const rosterSubjects=new Set(scheduleMembers.map(member=>member.subject));
+    if(draft.workerSubjects.some(subject=>!rosterSubjects.has(subject)))
+      throw new Error('This draft includes a worker who is not on the current verified roster; it remains read-only.');
+    const taskSubjects=Object.values(draft.tasksByAgreement).flat().flatMap(task=>task.assignedSubjects);
+    if(taskSubjects.some(subject=>!rosterSubjects.has(subject)))
+      throw new Error('A saved task references a worker who is not on the current verified roster; it remains read-only.');
+  }
+  function applyScheduleRouteDraft(draft:SingleRouteScheduleDraft,index:number):void{
+    setScheduleActiveRouteIndex(index);
+    setScheduleRouteId(draft.routeId);
+    setScheduleTruckId(draft.truckId);
+    setScheduleStart(draft.start);
+    setScheduleEnd(draft.end);
+    setScheduleWorkerSubjects(draft.workerSubjects);
+    setScheduleLunchBlocks(draft.lunchBlocks);
+    setScheduleSelectedAgreementIds(draft.agreementIds);
+    setScheduleTaskDrafts(draft.tasksByAgreement);
+    setScheduleTaskWorker(draft.workerSubjects[0]??'');
+  }
+  function selectScheduleRoute(index:number):void{
+    if(!workdaySchedule||!savedDay||!connectedBusiness||index===scheduleActiveRouteIndex||scheduleBusy)return;
+    Alert.alert('Switch saved route?','Unsaved changes in the current route form will be discarded. The saved draft remains unchanged until you save.',[
+      {text:'Keep editing',style:'cancel'},
+      {text:'Load route',onPress:()=>{
+        try{
+          const activeAgreementIds=savedDay.agreements.filter(a=>a.active===1&&a.starts_on<=savedDay.date&&(!a.ends_on||a.ends_on>=savedDay.date)).map(a=>a.id);
+          const drafts=hydrateScheduleRouteDrafts(workdaySchedule,connectedBusiness.id,savedDay.date,activeAgreementIds);
+          const draft=drafts[index];
+          if(!draft)throw new Error('Select a saved route before editing the draft.');
+          verifyScheduleRouteRoster(draft);
+          applyScheduleRouteDraft(draft,index);
+          setScheduleError('');
+          setScheduleNotice('Route '+(index+1)+' loaded. Saving updates only this route and preserves the others.');
+        }catch(error){setScheduleError(error instanceof Error?error.message:'Could not load the selected route.');}
+      }}
+    ]);
+  }
+
   function requestRoadPreview(route:TruckPreviewRoute){
     if(!connectedBusiness||roadPreviewBusy)return;
     const plan=prepareTruckPreview(savedQueueVisits,roadTruckAssignments);
@@ -1068,8 +1108,15 @@ function GreenCollarDashboard() {
 
         {tab === 'schedule' && connectedBusiness && businessRoleCapabilities(connectedBusiness.role).manageSchedule && <>
           <Text style={styles.heading}>Workday schedule draft</Text>
-          <Text style={styles.muted}>Build one truck route for the loaded workday. Add crew members, order stops, and create or edit stop tasks assigned to route workers. Saved single-route drafts can be updated after loading; multi-route drafts remain read-only. Workers can view only routes they are assigned to.</Text>
+          <Text style={styles.muted}>Build a truck route for the loaded workday. Add crew members, order stops, and create or edit stop tasks assigned to route workers. Saved multi-route drafts can be edited one route at a time; saving preserves the other routes. Workers can view only routes they are assigned to.</Text>
           {!savedDay && <Text style={styles.muted}>Load today’s saved workday from the Today tab first so eligible service stops are available.</Text>}
+          {scheduleDraftLoadedForEdit&&workdaySchedule&&workdaySchedule.routes.length>1&&<View style={styles.card}>
+            <Text style={styles.cardHeading}>Saved routes · editing {scheduleActiveRouteIndex+1} of {workdaySchedule.routes.length}</Text>
+            <Text style={styles.muted}>Select a route to edit it. Switching routes discards unsaved form changes; each save updates only the selected route.</Text>
+            {workdaySchedule.routes.map((route,index)=><Pressable key={route.routeId} accessibilityRole="button" accessibilityState={{selected:index===scheduleActiveRouteIndex}} accessibilityLabel={'Load route '+(index+1)+', '+route.routeId+', truck '+route.truckId+', '+route.stops.length+' stops'} style={styles.primary} disabled={scheduleBusy} onPress={()=>selectScheduleRoute(index)}>
+              <Text style={styles.primaryText}>{index===scheduleActiveRouteIndex?'✓ ':''}{index+1}. {route.routeId} · {route.truckId} · {route.stops.length} stops</Text>
+            </Pressable>)}
+          </View>}
           <View style={styles.card}>
             <Text style={styles.cardHeading}>Route and crew</Text>
             <Text style={styles.label}>Truck ID</Text>
@@ -1210,15 +1257,25 @@ function GreenCollarDashboard() {
               });
               const selected=scheduleSelectedAgreementIds;
               if(!selected.length)throw new Error('Select at least one stop.');
-              const routes=[{routeId:scheduleRouteId,truckId:scheduleTruckId.trim(),startMinute,endMinute,workers:scheduledWorkers,stops:selected.map((id,index)=>({visitId:id+':'+savedDay.date,order:index+1,tasks:scheduleTaskDrafts[id]??[]}))}];
+              const editedRoute={routeId:scheduleRouteId,truckId:scheduleTruckId.trim(),startMinute,endMinute,workers:scheduledWorkers,stops:selected.map((id,index)=>({visitId:id+':'+savedDay.date,order:index+1,tasks:scheduleTaskDrafts[id]??[]}))};
               const taskError=validateScheduleTasksForCrew(selected,scheduleTaskDrafts,workers);
               if(taskError)throw new Error(taskError);
+              if(scheduleDraftLoadedForEdit&&(!workdaySchedule||!workdaySchedule.routes[scheduleActiveRouteIndex]))
+                throw new Error('Select a saved route before updating the draft.');
+              const routes=scheduleDraftLoadedForEdit&&workdaySchedule
+                ?replaceScheduleRouteAtIndex(workdaySchedule,scheduleActiveRouteIndex,editedRoute).routes
+                :[editedRoute];
+              if(scheduleDraftLoadedForEdit&&workdaySchedule){
+                const activeAgreementIds=savedDay.agreements.filter(a=>a.active===1&&a.starts_on<=savedDay.date&&(!a.ends_on||a.ends_on>=savedDay.date)).map(a=>a.id);
+                hydrateScheduleRouteDrafts({...workdaySchedule,routes},connectedBusiness.id,savedDay.date,activeAgreementIds).forEach(verifyScheduleRouteRoster);
+              }
               const expectedVersion=scheduleDraftLoadedForEdit&&workdaySchedule?workdaySchedule.version:0;
               const saved=await saveWorkdaySchedule(api,token,{businessId:connectedBusiness.id,workDate:savedDay.date,expectedVersion,routes});
-              setWorkdaySchedule(saved);setScheduleDraftLoadedForEdit(true);setScheduleNotice((expectedVersion?'Draft updated':'Draft saved')+'. It is not published to a live route or GPS device.');
+              setWorkdaySchedule(saved);setScheduleDraftLoadedForEdit(true);
+              setScheduleNotice((expectedVersion?(saved.routes.length>1?'Selected route updated.':'Draft updated'):'Draft saved')+'. It is not published to a live route or GPS device.');
             }catch(error){setScheduleError(error instanceof Error?error.message:'Could not save schedule draft.');}
             finally{setScheduleBusy(false);}
-          }}><Text style={styles.primaryText}>{scheduleBusy?'Saving…':scheduleDraftLoadedForEdit?'Update workday draft':'Save workday draft'}</Text></Pressable>
+          }}><Text style={styles.primaryText}>{scheduleBusy?'Saving…':scheduleDraftLoadedForEdit&&workdaySchedule?.routes.length>1?'Update selected route':scheduleDraftLoadedForEdit?'Update workday draft':'Save workday draft'}</Text></Pressable>
           <Pressable accessibilityRole="button" style={styles.primary} disabled={scheduleBusy||!savedDay} onPress={async()=>{
             if(!savedDay||!connectedBusiness)return;
             if(!scheduleMembers.length){setScheduleError('Load the verified business crew first, then load a saved draft for editing.');return;}
@@ -1232,24 +1289,13 @@ function GreenCollarDashboard() {
               if(saved.businessId!==connectedBusiness.id||saved.workDate!==savedDay.date)throw new Error('The returned draft does not match the selected business and workday.');
               setWorkdaySchedule(saved);setScheduleDraftLoadedForEdit(false);
               const activeAgreementIds=savedDay.agreements.filter(a=>a.active===1&&a.starts_on<=savedDay.date&&(!a.ends_on||a.ends_on>=savedDay.date)).map(a=>a.id);
-              const draft=hydrateSingleRouteDraft(saved,connectedBusiness.id,savedDay.date,activeAgreementIds);
-              const rosterSubjects=new Set(scheduleMembers.map(member=>member.subject));
-              if(draft.workerSubjects.some(subject=>!rosterSubjects.has(subject)))
-                throw new Error('This draft includes a worker who is not on the current verified roster; it remains read-only.');
-              const taskSubjects=Object.values(draft.tasksByAgreement).flat().flatMap(task=>task.assignedSubjects);
-              if(taskSubjects.some(subject=>!rosterSubjects.has(subject)))
-                throw new Error('A saved task references a worker who is not on the current verified roster; it remains read-only.');
-              setScheduleRouteId(draft.routeId);
-              setScheduleTruckId(draft.truckId);
-              setScheduleStart(draft.start);
-              setScheduleEnd(draft.end);
-              setScheduleWorkerSubjects(draft.workerSubjects);
-              setScheduleLunchBlocks(draft.lunchBlocks);
-              setScheduleSelectedAgreementIds(draft.agreementIds);
-              setScheduleTaskDrafts(draft.tasksByAgreement);
-              setScheduleTaskWorker(draft.workerSubjects[0]??'');
+              const drafts=hydrateScheduleRouteDrafts(saved,connectedBusiness.id,savedDay.date,activeAgreementIds);
+              drafts.forEach(verifyScheduleRouteRoster);
+              applyScheduleRouteDraft(drafts[0],0);
               setScheduleDraftLoadedForEdit(true);
-              setScheduleNotice('Single-route draft loaded for editing. Version '+saved.version+' will be checked when you save.');
+              setScheduleNotice(saved.routes.length>1
+                ?'Multi-route draft loaded. Select a route to edit; saves update only that route and preserve the others. Version '+saved.version+' will be checked.'
+                :'Single-route draft loaded for editing. Version '+saved.version+' will be checked when you save.');
             }
             catch(error){if(request===scheduleRosterRequest.current)setScheduleError(error instanceof Error?error.message:'Could not load schedule draft.');}
             finally{setScheduleBusy(false);}
