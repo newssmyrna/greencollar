@@ -948,6 +948,32 @@ function GreenCollarDashboard() {
   const workloadPreview=planned?assessServiceWorkload(customers.map(customer=>({id:String(customer.id),minutes:customer.minutes})),hours,maxJobs):null;
   const visibleServerLocationConfirmations=filterLocationConfirmations(serverLocationConfirmations,serverAuditKindFilter,serverAuditSourceFilter);
 
+  function requestRoadPreview(route:TruckPreviewRoute){
+    if(!connectedBusiness||roadPreviewBusy)return;
+    const plan=prepareTruckPreview(savedQueueVisits,roadTruckAssignments);
+    if(plan.status!=='ready'){Alert.alert('Truck assignment incomplete','Assign every due stop and confirm each saved coordinate before requesting a preview.');return;}
+    const scope=truckPreviewScope;
+    Alert.alert('Send stop coordinates to Google?',
+      `Truck has ${route.stops.length} stops; the matrix contains ${route.elementCount} elements. Only saved coordinates are sent. Usage is billed if routing is enabled; the server monthly budget can reject the request. No names, notes, contacts, employee data, or device GPS are sent.`,
+      [{text:'Cancel',style:'cancel'},{text:'Send and calculate',onPress:()=>{void (async()=>{
+        const request=++roadPreviewRequest.current;setRoadPreviewBusy(true);
+        try{
+          const api=process.env.EXPO_PUBLIC_GREENCOLLAR_API_URL;
+          if(!api)throw new Error('Configure the API URL first.');
+          const token=await getToken({template:'greencollar-api'});
+          if(!token)throw new Error('Sign in first.');
+          const settings=await fetchRoutingSettings(api,connectedBusiness.id,token);
+          if(!settings.available||!settings.enabled||!settings.businessEnabled||!settings.noticeAcknowledged)
+            throw new Error('Routing is not currently enabled for this business and operator. Manual estimates remain available.');
+          const points=route.stops.map((stop,index)=>({id:'p'+(index+1),lat:stop.lat,lon:stop.lon}));
+          const result=await requestRoutingMatrix(api,connectedBusiness.id,token,points);
+          if(request!==roadPreviewRequest.current||scope!==JSON.stringify([savedQueueScope, savedQueueVisitIds]))return;
+          const legs=route.stops.slice(0,-1).map((_,index)=>({from:index,to:index+1,minutes:result.durations[index][index+1]===null?null:Math.ceil((result.durations[index][index+1] as number)/60)}));
+          setRoadPreview({scope,truck:route.truck,legs,attribution:result.attribution});
+        }catch(error){if(request===roadPreviewRequest.current)Alert.alert('Drive-time preview unavailable',error instanceof Error?error.message:'Manual estimates remain available.');}
+        finally{if(request===roadPreviewRequest.current)setRoadPreviewBusy(false);}
+      })();}}]);
+  }
   return (
     <SafeAreaView style={styles.page}>
       <StatusBar barStyle="light-content" />
@@ -1325,33 +1351,7 @@ function AuthGate() {
   const { startHostedAuth } = useHostedAuth();
   const { signOut } = useClerk();
   const [authError, setAuthError] = useState('');
-  if (!isLoaded)   function requestRoadPreview(route:TruckPreviewRoute){
-    if(!connectedBusiness||roadPreviewBusy)return;
-    const plan=prepareTruckPreview(savedQueueVisits,roadTruckAssignments);
-    if(plan.status!=='ready'){Alert.alert('Truck assignment incomplete','Assign every due stop and confirm each saved coordinate before requesting a preview.');return;}
-    const scope=truckPreviewScope;
-    Alert.alert('Send stop coordinates to Google?',
-      `Truck has ${route.stops.length} stops; the matrix contains ${route.elementCount} elements. Only saved coordinates are sent. Usage is billed if routing is enabled; the server monthly budget can reject the request. No names, notes, contacts, employee data, or device GPS are sent.`,
-      [{text:'Cancel',style:'cancel'},{text:'Send and calculate',onPress:()=>{void (async()=>{
-        const request=++roadPreviewRequest.current;setRoadPreviewBusy(true);
-        try{
-          const api=process.env.EXPO_PUBLIC_GREENCOLLAR_API_URL;
-          if(!api)throw new Error('Configure the API URL first.');
-          const token=await getToken({template:'greencollar-api'});
-          if(!token)throw new Error('Sign in first.');
-          const settings=await fetchRoutingSettings(api,connectedBusiness.id,token);
-          if(!settings.available||!settings.enabled||!settings.businessEnabled||!settings.noticeAcknowledged)
-            throw new Error('Routing is not currently enabled for this business and operator. Manual estimates remain available.');
-          const points=route.stops.map((stop,index)=>({id:'p'+(index+1),lat:stop.lat,lon:stop.lon}));
-          const result=await requestRoutingMatrix(api,connectedBusiness.id,token,points);
-          if(request!==roadPreviewRequest.current||scope!==JSON.stringify([savedQueueScope, savedQueueVisitIds]))return;
-          const legs=route.stops.slice(0,-1).map((_,index)=>({from:index,to:index+1,minutes:result.durations[index][index+1]===null?null:Math.ceil((result.durations[index][index+1] as number)/60)}));
-          setRoadPreview({scope,truck:route.truck,legs,attribution:result.attribution});
-        }catch(error){if(request===roadPreviewRequest.current)Alert.alert('Drive-time preview unavailable',error instanceof Error?error.message:'Manual estimates remain available.');}
-        finally{if(request===roadPreviewRequest.current)setRoadPreviewBusy(false);}
-      })();}}]);
-  }
-return <SafeAreaView style={styles.page}><Text style={styles.logo}>greencollar.</Text><Text style={styles.muted}>Loading secure sign-in...</Text></SafeAreaView>;
+  if (!isLoaded) return <SafeAreaView style={styles.page}><Text style={styles.logo}>greencollar.</Text><Text style={styles.muted}>Loading secure sign-in...</Text></SafeAreaView>;
   if (isSignedIn) return <><GreenCollarDashboard/><Pressable accessibilityRole="button" style={{backgroundColor:'#183d2b',padding:10,alignItems:'center'}} onPress={() => void signOut()}><Text style={{color:'#d5f48b'}}>Sign out</Text></Pressable></>;
   return (
     <SafeAreaView style={[styles.page,{justifyContent:'center',padding:24,gap:16}]}>
