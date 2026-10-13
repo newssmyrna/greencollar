@@ -46,7 +46,8 @@ export function createWeatherInterruptionApi(subjectFor:(request:Request,env:Env
    const report=parseReport(input);if(!report)return json({error:'invalid_report'},400);
    const role=await businessAccess(env,subject,report.businessId);if(!role)return json({error:'forbidden'},403);
    if(role!=='owner'&&role!=='worker')return json({error:'field_work_required'},403);
-   const agreementIds=[...new Set([...report.completedVisitIds,...report.remainingVisitIds].map(id=>validVisitId(id,report.workDate)!))];
+   const visitIds:string[]=[...report.completedVisitIds,...report.remainingVisitIds];
+   const agreementIds=[...new Set(visitIds.map(id=>validVisitId(id,report.workDate)!))];
    const placeholders=agreementIds.map(()=>'?').join(',');
    const agreements=await env.DB.prepare(
     'SELECT id FROM service_agreements WHERE business_id=? AND active=1 AND starts_on<=? AND (ends_on IS NULL OR ends_on>=?) AND id IN ('+placeholders+')'
