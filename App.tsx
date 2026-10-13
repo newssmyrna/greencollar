@@ -6,6 +6,7 @@ import { tokenCache } from '@clerk/expo/token-cache';
 import { fetchDayData, type DayData } from './src/data/greencollar-api';
 import { fetchRoutingSettings, acknowledgeRoutingNotice, setBusinessRoutingEnabled, requestRoutingMatrix, type RoutingSettings } from './src/data/routing-api';
 import { reportWeatherInterruption, listWeatherInterruptions, type WeatherInterruption, type WeatherInterruptionReason } from './src/data/weather-interruptions';
+import { getWorkdaySchedule, saveWorkdaySchedule, type WorkdaySchedule, type ScheduledTask } from './src/data/workday-schedules';
 import { businessRoleCapabilities } from './src/domain/weather-replan';
 import { prepareTruckPreview, type PreviewTruck, type TruckPreviewRoute } from './src/domain/truck-preview';
 import { summarizeSavedDay } from './src/data/saved-day';
@@ -64,6 +65,7 @@ const seed: Customer[] = [
 const green = '#183d2b';
 const pale = '#d5f48b';
 
+function scheduleClockMinute(value:string):number|null{const m=/^(\d{1,2}):(\d{2})$/.exec(value.trim());if(!m)return null;const h=Number(m[1]),minute=Number(m[2]);return h<=23&&minute<=59?h*60+minute:null;}
 function savedQueueTravelKey(fromVisitId:string|null,toVisitId:string):string{
   return JSON.stringify([fromVisitId,toVisitId]);
 }
@@ -434,7 +436,20 @@ function GreenCollarDashboard() {
     try{await Linking.openURL(url);}
     catch{setRoutingSettingsError('Could not open the policy page. Manual travel estimates remain active.');}
   }
-  const [tab, setTab] = useState<'today' | 'customers' | 'planner' | 'invoices'>('today');
+  const [tab, setTab] = useState<'today' | 'customers' | 'planner' | 'invoices' | 'schedule'>('today');
+  const [workdaySchedule,setWorkdaySchedule]=useState<WorkdaySchedule|null>(null);
+  const [scheduleBusy,setScheduleBusy]=useState(false);
+  const [scheduleError,setScheduleError]=useState('');
+  const [scheduleNotice,setScheduleNotice]=useState('');
+  const [scheduleTruckId,setScheduleTruckId]=useState('truck-1');
+  const [scheduleStart,setScheduleStart]=useState('08:00');
+  const [scheduleEnd,setScheduleEnd]=useState('17:00');
+  const [scheduleWorkerText,setScheduleWorkerText]=useState(userId??'');
+  const [scheduleSelectedAgreementIds,setScheduleSelectedAgreementIds]=useState<string[]>([]);
+  const [scheduleTaskDrafts,setScheduleTaskDrafts]=useState<Record<string,ScheduledTask[]>>({});
+  const [scheduleTaskLabel,setScheduleTaskLabel]=useState('Mowing');
+  const [scheduleTaskMinutes,setScheduleTaskMinutes]=useState('45');
+  const [scheduleTaskWorker,setScheduleTaskWorker]=useState('');
   const [customers, setCustomers] = useState<Customer[]>(seed);
   const [name, setName] = useState('');
   const [address, setAddress] = useState('');
@@ -1032,13 +1047,86 @@ function GreenCollarDashboard() {
         <Text style={styles.logo}>greencollar.</Text>
         <Text style={styles.subtitle}>Your business. On autopilot.</Text>
         <View style={styles.tabs}>
-          {(['today', 'customers', 'planner', 'invoices'] as const).map(t => (
+          {(['today', 'customers', 'planner', 'invoices', ...(connectedBusiness&&businessRoleCapabilities(connectedBusiness.role).manageSchedule?['schedule' as const]:[])] as const).map(t => (
             <Pressable key={t} style={[styles.tab, tab === t && styles.activeTab]} onPress={() => setTab(t)}>
               <Text style={[styles.tabText, tab === t && styles.activeTabText]}>{t.toUpperCase()}</Text>
             </Pressable>
           ))}
         </View>
 
+        {tab === 'schedule' && connectedBusiness && businessRoleCapabilities(connectedBusiness.role).manageSchedule && <>
+          <Text style={styles.heading}>Workday schedule draft</Text>
+          <Text style={styles.muted}>Build one truck route for the loaded workday. Add multiple crew members, order stops, and assign separate tasks to individual workers. Saving creates a draft only when none exists for this workday. Existing drafts can be inspected but this first editor does not yet hydrate them for editing. Workers can view only routes they are assigned to.</Text>
+          {!savedDay && <Text style={styles.muted}>Load today’s saved workday from the Today tab first so eligible service stops are available.</Text>}
+          <View style={styles.card}>
+            <Text style={styles.cardHeading}>Route and crew</Text>
+            <Text style={styles.label}>Truck ID</Text>
+            <TextInput accessibilityLabel="Truck ID" style={styles.input} value={scheduleTruckId} onChangeText={setScheduleTruckId} autoCapitalize="none" />
+            <Text style={styles.label}>Route start (24 hour time)</Text>
+            <TextInput accessibilityLabel="Route start time" style={styles.input} value={scheduleStart} onChangeText={setScheduleStart} placeholder="08:00" />
+            <Text style={styles.label}>Route end (24 hour time)</Text>
+            <TextInput accessibilityLabel="Route end time" style={styles.input} value={scheduleEnd} onChangeText={setScheduleEnd} placeholder="17:00" />
+            <Text style={styles.label}>Crew member IDs, one per line</Text>
+            <TextInput accessibilityLabel="Crew member IDs" style={styles.input} value={scheduleWorkerText} onChangeText={setScheduleWorkerText} multiline autoCapitalize="none" />
+            <Text style={styles.muted}>Enter verified business member IDs. The API checks membership on save. Worker roster selection is not connected yet.</Text>
+          </View>
+          <View style={styles.card}>
+            <Text style={styles.cardHeading}>Stops and tasks {savedDay ? '· '+savedDay.date : ''}</Text>
+            {!savedDay?.agreements.length && <Text style={styles.muted}>No service agreements loaded for this workday.</Text>}
+            {savedDay?.agreements.filter(a=>a.active===1&&a.starts_on<=savedDay.date&&(!a.ends_on||a.ends_on>=savedDay.date)).map((agreement,index)=>{
+              const selected=scheduleSelectedAgreementIds.includes(agreement.id);
+              const tasks=scheduleTaskDrafts[agreement.id]??[];
+              return <View key={agreement.id} style={styles.card}>
+                <Pressable accessibilityRole="button" accessibilityState={{selected}} onPress={()=>setScheduleSelectedAgreementIds(current=>selected?current.filter(id=>id!==agreement.id):[...current,agreement.id])}>
+                  <Text style={styles.body}>{selected?'☑':'□'} {selected?(scheduleSelectedAgreementIds.indexOf(agreement.id)+1)+'. ':''}{agreement.service_name} · {agreement.address}</Text>
+                </Pressable>
+                {!!tasks.length&&tasks.map(task=><Text key={task.taskId} style={styles.muted}>• {task.label} · {task.estimatedMinutes} min · {task.assignedSubjects.join(', ')}</Text>)}
+                {selected&&<View style={styles.card}>
+                  <Text style={styles.label}>Task name for this stop</Text>
+                  <TextInput accessibilityLabel={'Task name '+agreement.service_name} style={styles.input} value={scheduleTaskLabel} onChangeText={setScheduleTaskLabel} />
+                  <Text style={styles.label}>Assigned worker</Text>
+                  {scheduleWorkerText.split(/\n|,/).map(v=>v.trim()).filter(Boolean).map(subject=><Pressable key={subject} accessibilityRole="button" accessibilityState={{selected:scheduleTaskWorker===subject}} style={styles.primary} onPress={()=>setScheduleTaskWorker(subject)}><Text style={styles.primaryText}>{scheduleTaskWorker===subject?'✓ ':''}{subject}</Text></Pressable>)}
+                  <Text style={styles.label}>Estimated task minutes</Text>
+                  <TextInput accessibilityLabel="Estimated task minutes" keyboardType="numeric" style={styles.input} value={scheduleTaskMinutes} onChangeText={setScheduleTaskMinutes} />
+                  <Pressable accessibilityRole="button" style={styles.primary} onPress={()=>{
+                    const minutes=Number(scheduleTaskMinutes),worker=scheduleTaskWorker||scheduleWorkerText.split(/\n|,/).map(v=>v.trim()).filter(Boolean)[0];
+                    if(!worker||!Number.isInteger(minutes)||minutes<1||minutes>1440){setScheduleError('Choose a crew member and enter task minutes from 1 to 1440.');return;}
+                    setScheduleError('');
+                    setScheduleTaskDrafts(current=>({...current,[agreement.id]:[...(current[agreement.id]??[]),{taskId:'task-'+Date.now()+'-'+(current[agreement.id]??[]).length,label:scheduleTaskLabel.trim()||agreement.service_name,assignedSubjects:[worker],estimatedMinutes:minutes}]}));
+                    setScheduleTaskLabel('Weed whacking');
+                  }}><Text style={styles.primaryText}>Add task to this stop</Text></Pressable>
+                </View>}
+              </View>;
+            })}
+          </View>
+          {!!workdaySchedule&&<View style={styles.card}><Text style={styles.cardHeading}>Saved draft · version {workdaySchedule.version}</Text><Text style={styles.muted}>{workdaySchedule.routes.length} route(s) · last updated {new Date(workdaySchedule.updatedAt).toLocaleString()}</Text></View>}
+          {!!scheduleError&&<Text accessibilityLiveRegion="polite" style={styles.muted}>{scheduleError}</Text>}
+          {!!scheduleNotice&&<Text accessibilityLiveRegion="polite" style={styles.muted}>{scheduleNotice}</Text>}
+          <Pressable accessibilityRole="button" style={styles.primary} disabled={scheduleBusy||!savedDay} onPress={async()=>{
+            if(!savedDay||!connectedBusiness)return;
+            const api=process.env.EXPO_PUBLIC_GREENCOLLAR_API_URL;if(!api){setScheduleError('API URL is not configured.');return;}
+            setScheduleBusy(true);setScheduleError('');setScheduleNotice('');
+            try{const token=await getToken({template:'greencollar-api'});if(!token)throw new Error('Sign in first.');
+              const loaded=await getWorkdaySchedule(api,connectedBusiness.id,savedDay.date,token).catch(error=>{if(error instanceof Error&&error.message.includes('404'))return null;throw error;});
+              if(loaded){setWorkdaySchedule(loaded);setScheduleNotice('A saved draft exists. This first editor can inspect it but cannot safely overwrite it yet; no changes were made.');return;}
+              const workers=[...new Set(scheduleWorkerText.split(/\n|,/).map(v=>v.trim()).filter(Boolean))];
+              const startMinute=scheduleClockMinute(scheduleStart),endMinute=scheduleClockMinute(scheduleEnd);
+              if(!scheduleTruckId.trim()||!workers.length||startMinute===null||endMinute===null||startMinute>=endMinute)throw new Error('Enter a truck, at least one crew member, and a valid start/end time.');
+              const selected=scheduleSelectedAgreementIds;
+              if(!selected.length)throw new Error('Select at least one stop.');
+              const routes=[{routeId:'route-1',truckId:scheduleTruckId.trim(),startMinute,endMinute,workers:workers.map(subject=>({subject,startMinute,endMinute})),stops:selected.map((id,index)=>({visitId:id+':'+savedDay.date,order:index+1,tasks:scheduleTaskDrafts[id]??[]}))}];
+              if(routes[0].stops.some(stop=>!stop.tasks.length))throw new Error('Add at least one task to every selected stop.');
+              const saved=await saveWorkdaySchedule(api,token,{businessId:connectedBusiness.id,workDate:savedDay.date,expectedVersion:0,routes});
+              setWorkdaySchedule(saved);setScheduleNotice('Draft saved. It is not published to a live route or GPS device.');
+            }catch(error){setScheduleError(error instanceof Error?error.message:'Could not save schedule draft.');}
+            finally{setScheduleBusy(false);}
+          }}><Text style={styles.primaryText}>{scheduleBusy?'Saving…':'Save workday draft'}</Text></Pressable>
+          <Pressable accessibilityRole="button" style={styles.primary} disabled={scheduleBusy||!savedDay} onPress={async()=>{
+            if(!savedDay||!connectedBusiness)return;const api=process.env.EXPO_PUBLIC_GREENCOLLAR_API_URL;if(!api){setScheduleError('API URL is not configured.');return;}
+            setScheduleBusy(true);setScheduleError('');try{const token=await getToken({template:'greencollar-api'});if(!token)throw new Error('Sign in first.');const saved=await getWorkdaySchedule(api,connectedBusiness.id,savedDay.date,token);setWorkdaySchedule(saved);setScheduleNotice('Loaded saved draft. Review the version and current form before saving.');}
+            catch(error){setScheduleError(error instanceof Error?error.message:'Could not load schedule draft.');}finally{setScheduleBusy(false);}
+          }}><Text style={styles.primaryText}>Load saved draft</Text></Pressable>
+        </>}
         {tab === 'today' && <>
           <Text style={styles.heading}>Today's overview</Text>
           <View style={styles.card}>
