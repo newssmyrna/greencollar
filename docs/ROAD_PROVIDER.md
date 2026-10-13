@@ -90,7 +90,7 @@ Provider selection, the pilot volume ceiling, and the privacy/spend policy are d
 | Public Terms/Privacy pages and operator-facing app flow | 0% | Planned; no domain yet |
 | Google account/key/billing, database apply, activation, and deployment | 0% | Not configured or performed |
 
-**Phase completion: 100% of server-side integration controls; 0% live routing.** Approximate implementation time: 45 minutes, excluding the prior provider selection phase.
+**Phase completion: 100% of server-side integration controls; 0% live routing.** Approximate active implementation and offline verification time: 15 minutes; CI wait excluded.
 
 Changed paths: Worker auth/router/provider/meter/API, `cloudflare/migrations/0010_routing_provider_controls.sql`, four routing tests, and this handoff plus `docs/DAILY_WORKFLOW.md`.
 

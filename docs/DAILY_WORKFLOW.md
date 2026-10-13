@@ -334,7 +334,7 @@ Next phase: implement the server-side Google adapter, atomic monthly element res
 
 ## Edgewater routing controls — Phase #68
 
-Delivery: server-side implementation staged for review; live routing remains disabled. Elapsed implementation time: approximately 45 minutes for adapter, spend/consent controls, and offline verification, excluding Phase #67 provider selection.
+Delivery: server-side implementation staged for review; live routing remains disabled. Elapsed active implementation time: approximately 15 minutes for adapter, spend/consent controls, and offline verification; CI wait and Phase #67 provider selection excluded.
 
 | Feature / functionality | Completion | Impact |
 |---|---:|---|
