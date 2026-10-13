@@ -63,3 +63,5 @@ export function createAvailabilityApi(subjectFor:(request:Request,env:Env)=>Prom
   return json({error:'method_not_allowed'},405);
  };
 }
+
+export const availabilityApi=createAvailabilityApi();
