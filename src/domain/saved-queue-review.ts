@@ -36,10 +36,10 @@ export function createSavedQueueReview(businessId:string,date:string,visits:Queu
   const workload=limits?assessSavedQueueWorkload(visits,limits):null;
   const appointments=assessSavedQueueAppointments(visits,limits??{});
   const snapshot=[businessId,date,visits.map(v=>[v.id,v.rateCents,v.estimatedMinutes,v.preferredStartMinute??null,v.preferredFinishMinute??null,v.fixedStartMinute??null])];
-  const approvalKey=JSON.stringify(['saved-queue-appointments-v3',...snapshot,
+  const approvalKey=JSON.stringify(['saved-queue-appointments-v4',...snapshot,
     limits?[workload?.status,workload?.availableMinutes,workload?.maxJobs]:null,
     [appointments.workdayWindow.status,appointments.workdayWindow.startMinute,appointments.workdayWindow.finishMinute],
-    [appointments.plannedBreak.status,appointments.plannedBreak.startMinute,appointments.plannedBreak.finishMinute]]);
+    [appointments.plannedBreak.status,appointments.plannedBreak.intervals.map(interval=>[interval.startMinute,interval.finishMinute])]]);
   return {
     businessId,date,visitIds:visits.map(v=>v.id),visitCount:visits.length,
     estimatedServiceMinutes:visits.reduce((total,v)=>total+v.estimatedMinutes,0),
