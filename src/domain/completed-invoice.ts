@@ -1,7 +1,7 @@
 import {createInvoiceDraft,type InvoiceDraft} from './invoice';
 /** Build a review-only invoice from immutable completed-visit billing snapshots. */
 export type CompletedServiceForBilling={
- businessId:string;customerId:string;customerName:string;agreementId:string;visitDate:string;
+ businessId:string;customerId:string;customerName:string;agreementId:string;visitId:string;visitDate:string;
  serviceName:string;rateCents:number;status:string;
 };
 export function invoiceFromCompletedService(input:CompletedServiceForBilling,invoiceId:string,dueOn:string):InvoiceDraft{
@@ -19,7 +19,7 @@ export function invoiceFromCompletedService(input:CompletedServiceForBilling,inv
 }
 type BillingDay={
  date:string;
- visits:Array<{agreement_id:string;status:string;scheduled_date:string;completed_customer_id?:string|null;
+ visits:Array<{id?:string;agreement_id:string;status:string;scheduled_date:string;completed_customer_id?:string|null;
   completed_customer_name?:string|null;completed_service_name?:string|null;completed_rate_cents?:number|null}>;
 };
 function hasBillingSnapshot(visit:BillingDay['visits'][number]):boolean{
@@ -33,10 +33,10 @@ function hasBillingSnapshot(visit:BillingDay['visits'][number]):boolean{
 export function billableCompletedServices(data:BillingDay,businessId:string):CompletedServiceForBilling[]{
  const unique=new Set<string>();const output:CompletedServiceForBilling[]=[];
  for(const visit of data.visits){
-  if(visit.status!=='completed'||visit.scheduled_date!==data.date||unique.has(visit.agreement_id)||!hasBillingSnapshot(visit))continue;
+  if(visit.status!=='completed'||visit.scheduled_date!==data.date||typeof visit.id!=='string'||!visit.id||unique.has(visit.agreement_id)||!hasBillingSnapshot(visit))continue;
   unique.add(visit.agreement_id);
   output.push({businessId,customerId:visit.completed_customer_id!,customerName:visit.completed_customer_name!,
-   agreementId:visit.agreement_id,visitDate:data.date,serviceName:visit.completed_service_name!,
+   agreementId:visit.agreement_id,visitId:visit.id!,visitDate:data.date,serviceName:visit.completed_service_name!,
    rateCents:visit.completed_rate_cents!,status:'completed'});
  }
  return output;

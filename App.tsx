@@ -16,8 +16,9 @@ import {canStartNextWork,startNextWork,hasSavedWorkCompletion,workSessionDate} f
 import {normalizeWorkNote,withWorkNote} from './src/domain/work-note';
 import {saveVisitCompletion} from './src/data/visit-completion';
 import {saveVisitSkip} from './src/data/visit-skip';
-import {billableCompletedServices,invoiceFromCompletedService,unbillableCompletedServiceCount} from './src/domain/completed-invoice';
-import {invoiceTotals,setInvoiceDueDays,setInvoiceTaxBasisPoints,type InvoiceDraft} from './src/domain/invoice';
+import {billableCompletedServices,unbillableCompletedServiceCount} from './src/domain/completed-invoice';
+import {invoiceTotals,setInvoiceDueDays,setInvoiceTaxBasisPoints} from './src/domain/invoice';
+import {listInvoiceDrafts,createPersistedInvoiceDraft,savePersistedInvoiceDraft,type PersistedInvoiceDraft} from './src/data/invoice-draft-api';
 import {timerDisplay,createForegroundTimerTicker} from './src/domain/timer-display';
 import {completionReviewKey,isCompletionReviewConfirmed} from './src/domain/completion-review';
 import {createDurableTimerTransition} from './src/domain/durable-timer-transition';
@@ -180,6 +181,7 @@ function GreenCollarDashboard() {
   const [loadingSaved,setLoadingSaved] = useState(false);
   const [businessName,setBusinessName] = useState('');
   const [connectedBusiness,setConnectedBusiness] = useState<{id:string;name:string}|null>(null);
+  useEffect(()=>{setInvoiceDrafts([]);invoiceDraftSnapshot.current.clear();setInvoiceError('');},[userId,connectedBusiness?.id]);
   async function saveCompletedService() {
     if(!connectedBusiness||!savedDay||!workSession||workSession.status!=='completed'||workSession.jobId==='demo-job')
       return;
@@ -353,22 +355,44 @@ function GreenCollarDashboard() {
   const [serverAuditSourceFilter,setServerAuditSourceFilter]=useState<LocationConfirmationSourceFilter>('all');
   const serverAuditRequest=useRef(0);
   const [locationConfirmError,setLocationConfirmError]=useState('');
-  const [invoiceDrafts,setInvoiceDrafts]=useState<InvoiceDraft[]>([]);
+  const [invoiceDrafts,setInvoiceDrafts]=useState<PersistedInvoiceDraft[]>([]);
   const [invoiceError,setInvoiceError]=useState('');
-  function prepareInvoiceDrafts(){
-    if(!savedDay||!connectedBusiness){setInvoiceError('Load a saved workday and business first');return;}
-    try {
-      const jobs=billableCompletedServices(savedDay,connectedBusiness.id);
-      setInvoiceDrafts(previous=>{
-        const prior=new Map(previous.map(d=>[d.id,d]));
-        for(const j of jobs){
-          const id='draft:'+j.businessId+':'+j.agreementId+':'+j.visitDate;
-          if(!prior.has(id))prior.set(id,invoiceFromCompletedService(j,id,j.visitDate));
-        }
-        return [...prior.values()];
-      });
-      setInvoiceError('');
-    }catch(e){setInvoiceError(e instanceof Error?e.message:'Could not prepare drafts');}
+  const [invoiceBusy,setInvoiceBusy]=useState(false);
+  const [invoiceSavingId,setInvoiceSavingId]=useState<string|null>(null);
+  const invoiceDraftSnapshot=useRef(new Map<string,string>());
+  const invoiceRevision=(d:PersistedInvoiceDraft)=>JSON.stringify({dueOn:d.dueOn,unitPriceCents:d.lines[0]?.unitPriceCents,taxBasisPoints:d.taxBasisPoints});
+  async function prepareInvoiceDrafts(){
+    const api=process.env.EXPO_PUBLIC_GREENCOLLAR_API_URL;
+    if(!savedDay||!connectedBusiness||!api){setInvoiceError('Load a saved workday, business, and API connection first');return;}
+    setInvoiceBusy(true);setInvoiceError('');
+    try{
+      const token=await getToken({template:'greencollar-api'});if(!token)throw new Error('Sign in first');
+      const existing=await listInvoiceDrafts(api,connectedBusiness.id,token);
+      const byVisit=new Map(existing.invoiceDrafts.map(d=>[d.serviceVisitId,d]));
+      for(const job of billableCompletedServices(savedDay,connectedBusiness.id)){
+        const current=byVisit.get(job.visitId);
+        const saved=current??await createPersistedInvoiceDraft(api,token,connectedBusiness.id,job.visitId,job.visitDate);
+        byVisit.set(saved.serviceVisitId,saved);
+      }
+      const drafts=[...byVisit.values()];
+      setInvoiceDrafts(drafts);
+      invoiceDraftSnapshot.current=new Map(drafts.map(d=>[d.id,invoiceRevision(d)]));
+      setInvoiceError(existing.hasMore?'Showing the newest 200 drafts; additional saved drafts exist.':'');
+    }catch(e){setInvoiceError(e instanceof Error?e.message:'Could not load or prepare saved drafts');}
+    finally{setInvoiceBusy(false);}
+  }
+  async function saveInvoiceDraft(id:string){
+    const api=process.env.EXPO_PUBLIC_GREENCOLLAR_API_URL,draft=invoiceDrafts.find(d=>d.id===id);
+    if(!api||!draft){setInvoiceError('Load this saved draft before saving changes');return;}
+    if(invoiceSavingId)return;
+    setInvoiceSavingId(id);setInvoiceError('');
+    try{
+      const token=await getToken({template:'greencollar-api'});if(!token)throw new Error('Sign in first');
+      const saved=await savePersistedInvoiceDraft(api,token,draft);
+      setInvoiceDrafts(previous=>previous.map(d=>d.id===id?saved:d));
+      invoiceDraftSnapshot.current.set(id,invoiceRevision(saved));
+    }catch(e){setInvoiceError(e instanceof Error?e.message:'Could not save invoice draft');}
+    finally{setInvoiceSavingId(null);}
   }
   function editDraftPrice(id:string,value:string){
     if(!/^\d+(\.\d{0,2})?$/.test(value))return;
@@ -381,10 +405,10 @@ function GreenCollarDashboard() {
     if(!/^\d{1,3}(\.\d{0,2})?$/.test(value))return;
     const percent=Number(value);if(!Number.isFinite(percent)||percent>100)return;
     const basisPoints=Math.round(percent*100);
-    setInvoiceDrafts(prev=>prev.map(d=>d.id===id&&d.status==='draft'?setInvoiceTaxBasisPoints(d,basisPoints):d));
+    setInvoiceDrafts(prev=>prev.map(d=>d.id===id&&d.status==='draft'?{...setInvoiceTaxBasisPoints(d,basisPoints),serviceVisitId:d.serviceVisitId}:d));
   }
   function editDraftDueDays(id:string,days:number){
-    setInvoiceDrafts(prev=>prev.map(d=>d.id===id&&d.status==='draft'?setInvoiceDueDays(d,days):d));
+    setInvoiceDrafts(prev=>prev.map(d=>d.id===id&&d.status==='draft'?{...setInvoiceDueDays(d,days),serviceVisitId:d.serviceVisitId}:d));
   }
   const timerNeedsRestore=useRef(true);
   const [timerRestored,setTimerRestored]=useState(false);
@@ -910,8 +934,8 @@ function GreenCollarDashboard() {
 
         {tab === 'invoices' && <>
           <Text style={styles.heading}>Invoices · Draft review</Text>
-          <Text style={styles.muted}>These are local previews. No invoice has been saved, sent, charged, or marked paid.</Text>
-          <Pressable style={styles.primary} disabled={!savedDay||!connectedBusiness} onPress={prepareInvoiceDrafts}><Text style={styles.primaryText}>Prepare drafts from completed visits</Text></Pressable>
+          <Text style={styles.muted}>Drafts save to the business when you tap Save draft changes. No invoice is issued, sent, charged, or marked paid.</Text>
+          <Pressable style={styles.primary} disabled={!savedDay||!connectedBusiness||invoiceBusy} onPress={()=>void prepareInvoiceDrafts()}><Text style={styles.primaryText}>{invoiceBusy?'Loading saved drafts…':'Load or prepare drafts from completed visits'}</Text></Pressable>
           {!!savedDay && unbillableCompletedServiceCount(savedDay)>0 && <Text style={styles.muted}>{unbillableCompletedServiceCount(savedDay)} older completed visit(s) need manual billing review because no historical price snapshot exists.</Text>}
           {!!invoiceError && <Text style={styles.muted}>{invoiceError}</Text>}
           {invoiceDrafts.map(d=><View key={d.id} style={styles.card}>
@@ -925,7 +949,8 @@ function GreenCollarDashboard() {
             <Text style={styles.label}>Business-confirmed tax rate (%)</Text>
             <TextInput accessibilityLabel="Business-confirmed tax rate percent" style={styles.input} keyboardType="decimal-pad" value={(d.taxBasisPoints/100).toFixed(2)} onChangeText={v=>editDraftTaxRate(d.id,v)}/>
             <Text style={styles.body}>Draft total: ${(invoiceTotals(d.lines,d.taxBasisPoints).totalCents/100).toFixed(2)}</Text>
-            <Text style={styles.muted}>Tax starts at 0.00%. Enter a rate confirmed for this business; GreenCollar does not determine taxability. Draft edits are in memory only. Nothing is saved, issued, sent, charged, or marked paid.</Text>
+            <Pressable accessibilityRole="button" style={styles.primary} disabled={invoiceSavingId===d.id||invoiceRevision(d)===invoiceDraftSnapshot.current.get(d.id)} onPress={()=>void saveInvoiceDraft(d.id)}><Text style={styles.primaryText}>{invoiceSavingId===d.id?'Saving draft…':'Save draft changes'}</Text></Pressable>
+            <Text style={styles.muted}>Tax starts at 0.00%. Enter a rate confirmed for this business; GreenCollar does not determine taxability. Review drafts are not issued, sent, charged, or marked paid.</Text>
           </View>)}
           {!invoiceDrafts.length && <Text style={styles.muted}>No drafts prepared. Load a workday with completed visits on Today first.</Text>}
         </>}
