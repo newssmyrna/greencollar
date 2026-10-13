@@ -88,9 +88,17 @@ export function createWorkdayScheduleApi(subjectFor:(request:Request,env:Env)=>P
    return json({schedule:{businessId:body.businessId,workDate:body.workDate,version:expected+1,updatedBy:subject,updatedAt:now,routes}},201);
   }
   if(request.method==='GET'){
-   const businessId=url.searchParams.get('business_id'),workDate=url.searchParams.get('date');
-   if(!safeId(businessId)||!dateOk(workDate))return json({error:'invalid_query'},400);
+   const businessId=url.searchParams.get('business_id');
+   if(!safeId(businessId))return json({error:'invalid_query'},400);
    const role=await businessAccess(env,subject,businessId);if(!role)return json({error:'forbidden'},403);
+   if(url.searchParams.get('members')==='1'){
+    if(role!=='owner'&&role!=='admin')return json({error:'manager_required'},403);
+    const rows=await env.DB.prepare('SELECT subject,role FROM business_memberships WHERE business_id=? ORDER BY role,subject LIMIT 100').bind(businessId).all<{subject:string;role:string}>();
+    const members=(rows.results??[]).filter(row=>safeSubject(row.subject)&&(row.role==='owner'||row.role==='admin'||row.role==='worker')).map(row=>({subject:row.subject,role:row.role}));
+    return json({members});
+   }
+   const workDate=url.searchParams.get('date');
+   if(!dateOk(workDate))return json({error:'invalid_query'},400);
    const row=await env.DB.prepare('SELECT * FROM workday_schedule_drafts WHERE business_id=? AND work_date=?').bind(businessId,workDate).first<Record<string,unknown>>();
    if(!row)return json({error:'schedule_not_found'},404);
    const schedule=parseStored(row);if(!schedule)return json({error:'invalid_saved_schedule'},500);
