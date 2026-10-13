@@ -215,3 +215,33 @@ Paths: `App.tsx`, `src/domain/workday-break.ts`, `src/domain/saved-queue-workloa
 Impact: planned Today settings, appointment warnings and approval dialog; planned device settings compatibility; testing-only synthetic fixtures/regressions; documentation-only behavior and handoff. No live pages/posts, production records, API/schema changes, remote migrations, provider calls, messages or billing changes.
 
 Next owner/action: reviewer checks uninterrupted-service math, break-bound approval, version compatibility and stale-dialog guards. Device tester verifies iOS/Android input, labels and errors; break warnings in long queues; restore before review; restart/readback; clearing a passed break after moving the remaining-work start; failed saves; open-dialog changes; and date/operator switches. SWITCH coordinates the existing stacked PR chain and release gates. This phase does not merge or deploy that chain. Four completed implementation goals measure this phase only, not overall product readiness.
+
+## Multiple planned workday breaks
+
+Task: GC-SAVED-WORKDAY-BREAKS-20261013. Owner: Codex implementation, self-review and documentation; independent reviewer/device tester pending assignment. Source base: PR #63 at `690888d7aa86597d6979c172895c97d98d41a552`. Branch: `codex/phase-saved-workday-breaks`. Source date: 2026-10-13 UTC. Work: REVIEW; delivery: PREPARED. The phase PR records exact source head, PR, elapsed time and final CI evidence.
+
+Today work settings now accept up to eight planned break intervals, entered one per line as `HH:MM-HH:MM`. The list is optional and blank lines are ignored. Times use the same local clock as the workday; finish is after start and only finish can be 24:00. Intervals sort chronologically when saved, may touch at their edges, cannot overlap, and must all fit the planned work window when one is set. Malformed, partial, oversized and out-of-window lists block saving and approval. The interface explicitly says other breaks and travel remain excluded.
+
+Timing checks keep each service uninterrupted. If a flexible service overlaps one or more intervals, its earliest possible start moves past each affected interval. A service may finish exactly at a break start or begin exactly at a break finish. Fixed appointments that overlap configured intervals receive a warning naming the affected times. Waiting that already covers an interval is not counted twice. Later jobs retain the delay, and the earlier customer/workday finish can still warn. The service-hour budget stays separate. Checks still do not reorder visits, alter appointment times, forecast arrivals, or control timers.
+
+Device settings now write version 4. Version 1 restores the original workload limits, version 2 restores its work window, and version 3 restores its single optional break as a one-line list. Reading older versions never adds a break or rewrites stored bytes. An explicit save writes version 4. Unexpected, malformed or partially present legacy break fields and unsupported versions fail closed without replacing original bytes. Scope identity remains hashed and records stay under the 512-character limit. Clients that do not recognize version 4 must not silently downgrade it.
+
+Approval uses a new policy version and binds the normalized set of break intervals alongside the existing queue, work window, visit estimates, appointment times and workload limits. Reordering or changing any interval requires a fresh review. Existing load-before-check, dirty-edit, pending-save, uncertain-write, changed-context and current-dialog protections remain in force.
+
+Acceptance: up to eight intervals; sorting, blank lines and canonical clocks; partial/malformed/overlap/window validation; touching boundaries; uninterrupted service movement across multiple breaks; explicit fixed-overlap warnings; waiting-time behavior; learned durations; workday/customer finish limits; approval binding; version-1/2/3 compatibility; corrupt-byte preservation; exact-scope restore and async save protections.
+
+Verification: 142 focused local tests passed, including 27 tests for multiple intervals. A separate exhaustive scheduling oracle agreed across 400 bounded synthetic workdays with two breaks. The existing 200-case work-window oracle and 200-case baseline appointment oracle remain in the suite. Full CI evidence and total regression counts are on the phase PR. This is automated source verification and self-review, not independent QA or device acceptance.
+
+| Feature/functionality | Implementation | Impact |
+| --- | --- | --- |
+| Multi-interval Today input and validation | Complete | Planned Today settings |
+| Appointment checks across all intervals | Complete | Planned Today review and warnings |
+| Version-4 persistence with legacy readback | Complete | Planned device settings |
+| Approval binding and edit protections | Complete | Planned Today approval |
+| Native acceptance and deployment | Pending | No live change |
+
+Paths: `App.tsx`, `src/domain/workday-break.ts`, `src/domain/saved-queue-workload.ts`, `src/domain/saved-queue-appointments.ts`, `src/domain/saved-queue-review.ts`, `src/data/local-saved-queue-workload.ts`, `src/data/saved-queue-workload-settings.ts`, `src/data/local-saved-queue-approval.ts`, `tests/workday-break.test.ts`, `tests/workday-window.test.ts`, and this document.
+
+Impact: planned Today settings, per-visit warnings and approval; planned device-settings migration; testing-only synthetic fixtures; documentation-only handoff. No live pages/posts, production records, API/schema changes, remote migrations, provider calls, messages or billing changes.
+
+Next owner/action: reviewer checks multi-interval schedule math, version-3 migration and approval binding. Device tester checks multiline entry, keyboard behavior, labels/errors, restored interval display, long queues, restart/readback, break-list edits during approval and workday-scope changes. SWITCH coordinates the existing stacked PR chain and release gates. No merge or deployment is included in this phase. Four implementation goals measure phase delivery only, not overall product readiness.
