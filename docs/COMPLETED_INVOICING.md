@@ -2,7 +2,7 @@
 
 The pure `src/domain/completed-invoice.ts` adapter takes business-scoped day data and builds a **review-only** invoice draft for a completed service, retaining the agreed service price and customer identifier.
 
-Review-only invoice draft storage and its additive D1 migration are prepared in PR #55. They are not deployed and the migration has not been applied. No invoice is issued, sent, charged, or marked paid, and no payment is verified. Drafts use a unique business/service-visit key to prevent duplicates.
+Review-only invoice draft storage is prepared in PR #55 and the visit-integrity follow-up is in PR #56. Neither is deployed and neither migration has been applied. Migration 0009 rebuilds the draft table with a composite business/visit foreign key, preserves valid drafts, and fails closed if a draft has no matching visit. SQLite migration tests verify preservation, cross-business rejection, and protection from deleting a linked visit. No invoice is issued, sent, charged, or marked paid, and no payment is verified. Drafts use a unique business/service-visit key to prevent duplicates.
 
 Only completed visits are included. Skipped/due/unknown visits are excluded. Duplicate completed visits in the input are deduplicated. Tax defaults to 0 and must be explicitly configured by the business before issuing.
 
