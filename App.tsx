@@ -25,13 +25,13 @@ import {createSavedQueueWorkloadSettings,workloadSettingsHaveUnsavedChanges,work
 import {localSavedQueueApproval} from './src/data/local-saved-queue-approval-native';
 import { getBusinesses, createBusiness, type OwnedBusiness } from './src/data/business-api';
 import { listSavedCustomers, createSavedCustomer, customerDetailsInput, type SavedCustomer } from './src/data/customer-api';
-import { pauseWork, resumeWork, completeWork, completionRecord, type WorkSession } from './src/domain/work-session';
+import { startWork, pauseWork, resumeWork, completeWork, completionRecord, type WorkSession } from './src/domain/work-session';
 import {canStartNextWork,startNextWork,hasSavedWorkCompletion,workSessionDate} from './src/domain/work-handoff';
 import {normalizeWorkNote,withWorkNote} from './src/domain/work-note';
 import {saveVisitCompletion} from './src/data/visit-completion';
 import {saveVisitSkip} from './src/data/visit-skip';
 import {billableCompletedServices,unbillableCompletedServiceCount} from './src/domain/completed-invoice';
-import {invoiceTotals,setInvoiceDueDays,setInvoiceTaxBasisPoints} from './src/domain/invoice';
+import {createInvoiceDraft,invoiceTotals,setInvoiceDueDays,setInvoiceTaxBasisPoints} from './src/domain/invoice';
 import {listInvoiceDrafts,createPersistedInvoiceDraft,savePersistedInvoiceDraft,type PersistedInvoiceDraft} from './src/data/invoice-draft-api';
 import {timerDisplay,createForegroundTimerTicker} from './src/domain/timer-display';
 import {completionReviewKey,isCompletionReviewConfirmed} from './src/domain/completion-review';
@@ -47,7 +47,8 @@ import {assessProximity,createLocationConfirmation,type ProximityAssessment,type
 import {loadLocationConfirmations,saveLocationConfirmation,markLocationConfirmationSynced,pendingLocationConfirmations,type StoredLocationConfirmation} from './src/data/local-location-confirmations';
 import {listLocationConfirmations,syncLocationConfirmation,type ServerLocationConfirmation} from './src/data/location-confirmation-api';
 import {filterLocationConfirmations,type LocationConfirmationKindFilter,type LocationConfirmationSourceFilter} from './src/domain/location-confirmation-filter';
-import {clearLocalDemoWorkspace,createDemoRecordId,createInitialDemoWorkspace,demoCustomerFixtures,demoDayForDate,loadLocalDemoWorkspace,saveLocalDemoWorkspace,type LocalDemoWorkspace} from './src/demo/local-demo-store';
+import {clearLocalDemoWorkspace,createDemoRecordId,createDemoVisitId,createEmptyDemoWorkday,createInitialDemoWorkspace,demoCustomerFixtures,demoDayForDate,loadLocalDemoWorkspace,saveLocalDemoWorkspace,type LocalDemoWorkspace,type LocalDemoWorkday} from './src/demo/local-demo-store';
+import {buildLocalDemoPlan,prepareLocalDemoInvoiceDrafts} from './src/demo/local-demo-workday';
 import {
   SafeAreaView, ScrollView, View, Text, TextInput, AppState,
   Pressable, StyleSheet, StatusBar, Alert, Linking, Modal
@@ -66,6 +67,7 @@ type Customer = {
 const seed: Customer[] = demoCustomerFixtures.map((fixture,index)=>({id:index+1,...fixture}));
 const green = '#183d2b';
 const pale = '#d5f48b';
+const PREVIEW_OPERATOR_ID = 'preview-operator';
 
 function scheduleClockMinute(value:string):number|null{const m=/^(\d{1,2}):(\d{2})$/.exec(value.trim());if(!m)return null;const h=Number(m[1]),minute=Number(m[2]);return h<=23&&minute<=59?h*60+minute:null;}
 function scheduleMinuteClock(value:number):string{return String(Math.floor(value/60)).padStart(2,'0')+':'+String(value%60).padStart(2,'0');}
@@ -114,6 +116,8 @@ function GreenCollarDashboard({getToken,userId,previewMode=false}:GreenCollarDas
   const [demoPersistence,setDemoPersistence]=useState<'browser'|'session'>(demoBootstrap.persistence);
   const [demoPersistenceNotice,setDemoPersistenceNotice]=useState(demoBootstrap.notice??'');
   const [demoModal,setDemoModal]=useState<'customer'|'location'|'agreement'|'reset'|null>(null);
+  const [demoApprovalOpen,setDemoApprovalOpen]=useState(false);
+  const [demoPlanError,setDemoPlanError]=useState('');
   const [demoScheduleDate,setDemoScheduleDate]=useState(()=>localCalendarDate());
   const [savedDay,setSavedDay] = useState<DayData|null>(()=>previewMode?demoDayForDate(demoBootstrap.workspace,localCalendarDate()):null);
   const [savedCustomers,setSavedCustomers] = useState<SavedCustomer[]>(()=>previewMode?demoBootstrap.workspace.customers:[]);
@@ -323,6 +327,11 @@ function GreenCollarDashboard({getToken,userId,previewMode=false}:GreenCollarDas
   const [weatherInboxBusy,setWeatherInboxBusy]=useState(false);
   const [weatherInboxError,setWeatherInboxError]=useState('');
   useEffect(()=>{setAgreementEarliest('');setAgreementLatest('');setAgreementFixed('');setScheduleMembers([]);setScheduleWorkerSubjects([]);setScheduleLunchBlocks({});setScheduleAvailability([]);setScheduleTaskWorker('');setWorkdaySchedule(null);setScheduleDraftLoadedForEdit(false);setScheduleActiveRouteIndex(0);setScheduleRouteId('route-1');},[userId,connectedBusiness?.id]);
+  useEffect(()=>{
+    if(!previewMode)return;
+    const current=demoWorkspaceRef.current.workdays.find(day=>day.date===(savedDay?.date??localCalendarDate()));
+    setHours(current?.hours??'8');setMaxJobs(current?.maxJobs??'6');
+  },[previewMode,savedDay?.date]);
   useEffect(()=>{scheduleRosterRequest.current++;setScheduleRosterBusy(false);setScheduleLunchBlocks({});setScheduleAvailability([]);setWorkdaySchedule(null);setScheduleDraftLoadedForEdit(false);setScheduleActiveRouteIndex(0);setScheduleRouteId('route-1');},[userId,connectedBusiness?.id,savedDay?.date]);
   useEffect(()=>{
     routingSettingsRequest.current++;
@@ -333,9 +342,35 @@ function GreenCollarDashboard({getToken,userId,previewMode=false}:GreenCollarDas
   async function saveCompletedService() {
     if(!connectedBusiness||!savedDay||!workSession||workSession.status!=='completed'||workSession.jobId==='demo-job')
       return;
-    const reviewKey=completionReviewKey(userId,workSession,savedDay.date);
+    const operator=previewMode?PREVIEW_OPERATOR_ID:userId;
+    const reviewKey=completionReviewKey(operator,workSession,savedDay.date);
     if(!isCompletionReviewConfirmed(reviewKey,completionReviewConfirmedKey)){
       setTimerError('Review and confirm the recorded duration before saving this visit.');return;
+    }
+    if(previewMode){
+      if(submitting.current||timerSaved||!timerReady||timerNeedsRestore.current||timerTransition.current.busy)return;
+      submitting.current=true;setLoadingSaved(true);setTimerError('');
+      try{
+        const agreementId=workSession.jobId.slice(0,-(savedDay.date.length+1));
+        if(!agreementId||!workSession.jobId.endsWith(':'+savedDay.date))throw new Error('Invalid scheduled sample visit');
+        const agreement=savedDay.agreements.find(item=>item.id===agreementId);
+        const customer=savedDay.customers.find(item=>item.id===agreement?.customer_id);
+        if(!agreement||!customer)throw new Error('The sample visit no longer matches its saved customer and service.');
+        const record=completionRecord(workSession);
+        const visit:DayData['visits'][number]={
+          id:createDemoVisitId(agreementId,savedDay.date),agreement_id:agreementId,scheduled_date:savedDay.date,status:'completed',
+          actual_minutes:record.actualMinutes,work_note:workSession.note??'',
+          completed_customer_id:customer.id,completed_customer_name:customer.name,
+          completed_service_name:agreement.service_name,completed_rate_cents:agreement.rate_cents,
+        };
+        updateLocalDemoWorkday(savedDay.date,day=>({
+          ...day,approvedQueueKey:null,
+          visits:[...day.visits.filter(item=>item.agreement_id!==agreementId),visit],
+        }));
+        setTimerSaved(true);
+      }catch(error){setTimerError(error instanceof Error?error.message:'Unable to save sample completion locally');}
+      finally{submitting.current=false;setLoadingSaved(false);}
+      return;
     }
     const api=process.env.EXPO_PUBLIC_GREENCOLLAR_API_URL;
     if(!api){setTimerError('API URL not configured');return;}
@@ -356,7 +391,7 @@ function GreenCollarDashboard({getToken,userId,previewMode=false}:GreenCollarDas
   }
   async function saveWorkNote(){
     if(timerTransition.current.busy){setWorkNoteError('Wait for the current timer save to finish.');return;}
-    const operator=userId,current=workSessionCurrent.current;
+    const operator=previewMode?PREVIEW_OPERATOR_ID:userId,current=workSessionCurrent.current;
     if(!operator||!current||current.jobId==='demo-job'||!timerReady||timerNeedsRestore.current){
       setWorkNoteError('Restore a saved job timer before saving its note.');return;
     }
@@ -367,6 +402,10 @@ function GreenCollarDashboard({getToken,userId,previewMode=false}:GreenCollarDas
     try{
       const next=withWorkNote(current,workNoteDraft);
       if(next.note===(current.note??'')){setWorkNoteError('');return;}
+      if(previewMode){
+        updateLocalDemoWorkday(savedDay?.date??localCalendarDate(),day=>({...day,workSession:next}));
+        workSessionCurrent.current=next;setWorkSession(next);setWorkNoteError('');return;
+      }
       writing=true;setTimerTransitionBusy(true);setWorkNoteError('');
       const applied=await timerTransition.current.run(next,snapshot=>saveWorkSession(operator,snapshot),
         ()=>timerOperator.current===operator&&workSessionCurrent.current===current,
@@ -399,6 +438,13 @@ function GreenCollarDashboard({getToken,userId,previewMode=false}:GreenCollarDas
     finally{setVisitSkipBusy('');}
   }
   async function persistSavedQueueApproval(review:NonNullable<typeof savedQueueReview>){
+    if(previewMode){
+      if(!demoQueueReview||demoQueueReview.approvalKey!==review.approvalKey||!canApproveSavedQueueReview(demoQueueReview)){
+        setSavedQueueApprovalError('The sample work queue changed. Review it again before approving.');return;
+      }
+      updateLocalDemoWorkday(review.date,day=>({...day,approvedQueueKey:review.approvalKey}));
+      setSavedQueueApprovalError('');setDemoApprovalOpen(false);return;
+    }
     if(!userId){setSavedQueueApprovalError('Sign in to approve this saved work queue.');return;}
     if(!currentSavedQueueContext.current.canApprove||currentSavedQueueContext.current.userId!==userId||currentSavedQueueContext.current.approvalKey!==review.approvalKey){setSavedQueueApprovalError('The work queue changed. Review it again before approving.');return;}
     setSavedQueueApprovalBusy(true);setSavedQueueApprovalError('');
@@ -411,6 +457,12 @@ function GreenCollarDashboard({getToken,userId,previewMode=false}:GreenCollarDas
     }finally{setSavedQueueApprovalBusy(false);}
   }
   function requestSavedQueueApproval(){
+    if(previewMode){
+      if(!demoQueueReview||!canApproveSavedQueueReview(demoQueueReview)||savedQueueApprovalChecking||savedQueueApprovalBusy){
+        setSavedQueueApprovalError('Build a sample workday with at least one planned visit before approval.');return;
+      }
+      setSavedQueueApprovalError('');setDemoApprovalOpen(true);return;
+    }
     if(!savedQueueReview||!currentSavedQueueContext.current.canApprove||savedQueueApprovalChecking||savedQueueApprovalBusy)return;
     const review=savedQueueReview;
     const workloadDetails=review.workload?describeSavedQueueWorkload(review.workload)+' All visits remain in this queue. Workload totals exclude travel and breaks.\n\n':'';
@@ -545,11 +597,13 @@ function GreenCollarDashboard({getToken,userId,previewMode=false}:GreenCollarDas
   const [hours, setHours] = useState('8');
   const [maxJobs, setMaxJobs] = useState('6');
   const [planned, setPlanned] = useState(false);
-  const [workSession,setWorkSession]=useState<WorkSession|null>(null);
+  const [workSession,setWorkSession]=useState<WorkSession|null>(()=>previewMode
+    ?demoBootstrap.workspace.workdays.find(day=>day.date===localCalendarDate())?.workSession??null
+    :null);
   const workSessionCurrent=useRef<WorkSession|null>(null);
   workSessionCurrent.current=workSession;
-  const timerOperator=useRef<string|null|undefined>(userId);
-  timerOperator.current=userId;
+  const timerOperator=useRef<string|null|undefined>(previewMode?PREVIEW_OPERATOR_ID:userId);
+  timerOperator.current=previewMode?PREVIEW_OPERATOR_ID:userId;
   const [timerNow,setTimerNow]=useState(Date.now());
   const displayedTimer=timerDisplay(workSession,timerNow);
   const [timerError,setTimerError]=useState('');
@@ -609,7 +663,18 @@ function GreenCollarDashboard({getToken,userId,previewMode=false}:GreenCollarDas
   const invoiceDraftSnapshot=useRef(new Map<string,string>());
   const invoiceRevision=(d:PersistedInvoiceDraft)=>JSON.stringify({dueOn:d.dueOn,unitPriceCents:d.lines[0]?.unitPriceCents,taxBasisPoints:d.taxBasisPoints});
   async function prepareInvoiceDrafts(){
-    if(previewMode){setInvoiceError('Invoice draft storage needs the authenticated Cloudflare API and is unavailable in this preview.');return;}
+    if(previewMode){
+      if(!savedDay||!connectedBusiness){setInvoiceError('Load a sample workday first.');return;}
+      setInvoiceBusy(true);setInvoiceError('');
+      try{
+        const existing=demoWorkspaceRef.current.workdays.find(day=>day.date===savedDay.date)?.invoiceDrafts??[];
+        const drafts=prepareLocalDemoInvoiceDrafts(savedDay,connectedBusiness.id,existing);
+        updateLocalDemoWorkday(savedDay.date,day=>({...day,invoiceDrafts:drafts}));
+        setInvoiceDrafts(drafts);invoiceDraftSnapshot.current=new Map(drafts.map(draft=>[draft.id,invoiceRevision(draft)]));
+      }catch(error){setInvoiceError(error instanceof Error?error.message:'Could not prepare sample invoice drafts.');}
+      finally{setInvoiceBusy(false);}
+      return;
+    }
     const api=process.env.EXPO_PUBLIC_GREENCOLLAR_API_URL;
     if(!savedDay||!connectedBusiness||!api){setInvoiceError('Load a saved workday, business, and API connection first');return;}
     setInvoiceBusy(true);setInvoiceError('');
@@ -631,8 +696,19 @@ function GreenCollarDashboard({getToken,userId,previewMode=false}:GreenCollarDas
   }
   async function saveInvoiceDraft(id:string){
     const api=process.env.EXPO_PUBLIC_GREENCOLLAR_API_URL,draft=invoiceDrafts.find(d=>d.id===id);
-    if(!api||!draft){setInvoiceError('Load this saved draft before saving changes');return;}
+    if(!draft||(!previewMode&&!api)){setInvoiceError('Load this saved draft before saving changes');return;}
     if(invoiceSavingId)return;
+    if(previewMode){
+      setInvoiceSavingId(id);setInvoiceError('');
+      try{
+        const checked={...createInvoiceDraft(draft),serviceVisitId:draft.serviceVisitId};
+        updateLocalDemoWorkday(draft.issuedOn,day=>({...day,invoiceDrafts:day.invoiceDrafts.map(item=>item.id===id?checked:item)}));
+        setInvoiceDrafts(previous=>previous.map(item=>item.id===id?checked:item));
+        invoiceDraftSnapshot.current.set(id,invoiceRevision(checked));
+      }catch(error){setInvoiceError(error instanceof Error?error.message:'Could not save this sample draft locally.');}
+      finally{setInvoiceSavingId(null);}
+      return;
+    }
     setInvoiceSavingId(id);setInvoiceError('');
     try{
       const token=await getToken({template:'greencollar-api'});if(!token)throw new Error('Sign in first');
@@ -665,13 +741,19 @@ function GreenCollarDashboard({getToken,userId,previewMode=false}:GreenCollarDas
   const [timerRestoreRetry,setTimerRestoreRetry]=useState(0);
   const timerTransition=useRef(createDurableTimerTransition());
   const [timerTransitionBusy,setTimerTransitionBusy]=useState(false);
-  const timerReady=timerRestored&&timerReadyUser===userId&&!timerTransitionBusy;
+  const timerReady=timerRestored&&timerReadyUser===(previewMode?PREVIEW_OPERATOR_ID:userId)&&!timerTransitionBusy;
   const submitting=useRef(false);
   useEffect(()=>{
     let active=true;
     timerNeedsRestore.current=true;
     setTimerRestored(false);setTimerReadyUser(null);setTimerSaved(false);setTimerError('');
     setWorkSession(null);workSessionCurrent.current=null;
+    if(previewMode){
+      const restored=demoWorkspaceRef.current.workdays.find(day=>day.date===(savedDay?.date??localCalendarDate()))?.workSession??null;
+      timerNeedsRestore.current=false;workSessionCurrent.current=restored;setWorkSession(restored);
+      setTimerReadyUser(PREVIEW_OPERATOR_ID);setTimerRestored(true);setTimerRestoreBusy(false);
+      return ()=>{active=false;};
+    }
     if(!userId){setTimerRestoreBusy(false);return ()=>{active=false;};}
     setTimerRestoreBusy(true);
     void loadWorkSession(userId).then(saved=>{
@@ -679,7 +761,7 @@ function GreenCollarDashboard({getToken,userId,previewMode=false}:GreenCollarDas
     }).catch(error=>{if(active)setTimerError('Could not restore job timer. '+(error instanceof Error?error.message:'Storage is unavailable')+'. Retry before starting work; the saved timer has not been replaced.');})
       .finally(()=>{if(active)setTimerRestoreBusy(false);});
     return ()=>{active=false;};
-  },[userId,timerRestoreRetry]);
+  },[userId,timerRestoreRetry,previewMode,savedDay?.date]);
   useEffect(()=>{
     let active=true;
     setLocationConfirmations([]);
@@ -708,7 +790,7 @@ function GreenCollarDashboard({getToken,userId,previewMode=false}:GreenCollarDas
   },[userId,connectedBusiness?.id]);
   async function timerAction(action:'start'|'pause'|'resume'|'complete', jobId='demo-job') {
     if(timerTransition.current.busy)return;
-    const operator=userId;
+    const operator=previewMode?PREVIEW_OPERATOR_ID:userId;
     let saving=false;
     try {
       if(!operator||!timerReady||timerNeedsRestore.current)throw new Error('Restore the job timer before starting work');
@@ -717,6 +799,18 @@ function GreenCollarDashboard({getToken,userId,previewMode=false}:GreenCollarDas
       const current=workSessionCurrent.current;
       if(action==='complete'&&current&&current.jobId!=='demo-job'&&normalizeWorkNote(workNoteDraft)!==(current.note??''))
         throw new Error('Save the work note before completing this visit.');
+      if(previewMode){
+        if(action==='start'&&jobId!=='demo-job'&&(!demoQueueApproved||!demoPlannedQueue.some(visit=>visit.id===jobId)))
+          throw new Error('Review and approve the current sample work queue before starting this service.');
+        const next=action==='start'
+          ?startNextWork(jobId,now,current,timerSaved||hasSavedWorkCompletion(current,savedDay?.visits??[]))
+          :!current?(()=>{throw new Error('Start a job first');})()
+            :action==='pause'?pauseWork(current,now):action==='resume'?resumeWork(current,now):completeWork(current,now);
+        updateLocalDemoWorkday(savedDay?.date??localCalendarDate(),day=>({...day,workSession:next}));
+        workSessionCurrent.current=next;setWorkSession(next);
+        if(action==='start')setTimerSaved(false);
+        return;
+      }
       let next:WorkSession;
       if(action==='start'){
         if(jobId!=='demo-job'&&(!currentSavedQueueContext.current.canApprove
@@ -939,6 +1033,21 @@ function GreenCollarDashboard({getToken,userId,previewMode=false}:GreenCollarDas
     setSavedDay(demoDayForDate(next,date));
     return persisted;
   }
+  function updateLocalDemoWorkday(date:string,update:(day:LocalDemoWorkday)=>LocalDemoWorkday):boolean{
+    const workspace=demoWorkspaceRef.current;
+    const current=workspace.workdays.find(day=>day.date===date)??createEmptyDemoWorkday(date,hours,maxJobs);
+    const workday=update(current);
+    const next:LocalDemoWorkspace={...workspace,version:2,workdays:[...workspace.workdays.filter(day=>day.date!==date),workday]};
+    return commitDemoWorkspace(next,date);
+  }
+  function buildPreviewWorkday(){
+    if(!previewMode||!savedDay)return;
+    try{
+      const built=buildLocalDemoPlan(demoWorkspaceRef.current,savedDay.date,hours,maxJobs);
+      updateLocalDemoWorkday(savedDay.date,()=>built.workday);
+      setDemoPlanError('');setTab('today');
+    }catch(error){setDemoPlanError(error instanceof Error?error.message:'Could not build the sample workday.');}
+  }
   function closePreviewModal(){
     if(demoModal==='customer'){
       setSavedCustomerName('');setSavedCustomerPhone('');setSavedCustomerEmail('');setSavedCustomerNotes('');setSavedDayError('');
@@ -965,7 +1074,7 @@ function GreenCollarDashboard({getToken,userId,previewMode=false}:GreenCollarDas
   const savedDueSummary=savedDay?summarizeSavedDay(savedDay):null;
   const completedTimerSaved=timerSaved||hasSavedWorkCompletion(workSession,savedDay?.visits??[]);
   const completedTimerDate=workSessionDate(workSession);
-  const completedReviewKey=completionReviewKey(userId,workSession,savedDay?.date??null);
+  const completedReviewKey=completionReviewKey(previewMode?PREVIEW_OPERATOR_ID:userId,workSession,savedDay?.date??null);
   useEffect(()=>{
     setWorkNoteDraft(workSession?.note??'');setWorkNoteError('');
   },[userId,workSession?.jobId,workSession?.startedAt,workSession?.note]);
@@ -974,6 +1083,23 @@ function GreenCollarDashboard({getToken,userId,previewMode=false}:GreenCollarDas
     :null;
   useEffect(()=>{setCompletionReviewConfirmedKey('');},[completedReviewKey]);
   const timerCanStart=timerReady&&!timerTransitionBusy&&!loadingSaved&&canStartNextWork(workSession,completedTimerSaved);
+  const demoWorkday=previewMode&&savedDay
+    ?demoWorkspaceRef.current.workdays.find(day=>day.date===savedDay.date)??null
+    :null;
+  const demoPlannedQueue=previewMode&&demoWorkday&&savedDueSummary
+    ?demoWorkday.plannedVisitIds.flatMap(id=>{
+      const visit=savedDueSummary.due.find(item=>item.id===id);
+      return visit?[{...visit,travelMinutesBefore:0}]:[];
+    })
+    :[];
+  const demoQueueReview=previewMode&&savedDay&&connectedBusiness&&demoWorkday
+    ?createSavedQueueReview(connectedBusiness.id,savedDay.date,demoPlannedQueue,{
+      hours:demoWorkday.hours,maxJobs:demoWorkday.maxJobs,
+      workdayStart:scheduleMinuteClock(demoWorkday.startMinute),
+      workdayFinish:scheduleMinuteClock(demoWorkday.endMinute),
+    })
+    :null;
+  const demoQueueApproved=isSavedQueueApproved(demoQueueReview,demoWorkday?.approvedQueueKey??null);
   const savedQueueScope=JSON.stringify([userId,connectedBusiness?.id,savedDay?.date]);
   const weatherScope=JSON.stringify([userId,connectedBusiness?.id,savedDay?.date]);
   useEffect(()=>{setWeatherReportError('');setWeatherReportSent(false);weatherReportEventId.current='';setWeatherInbox(null);setWeatherInboxError('');},[weatherScope]);
@@ -1240,11 +1366,11 @@ function GreenCollarDashboard({getToken,userId,previewMode=false}:GreenCollarDas
         <Text style={styles.logo}>greencollar.</Text>
         <Text style={styles.subtitle}>Your business. On autopilot.</Text>
         {previewMode&&<View style={styles.previewBanner}>
-          <Text style={styles.previewTitle}>WORKING UI PREVIEW · FICTIONAL DATA ONLY</Text>
-          <Text style={styles.muted}>Create sample customers, service addresses, and recurring jobs. Edits stay in {demoPersistence==='browser'?'this browser’s local storage':'this open page'}; they are never sent to GreenCollar or a customer. Clearing browser storage removes them.</Text>
+          <Text style={styles.previewTitle}>NON-PRODUCTION UI PREVIEW · FICTIONAL DATA ONLY</Text>
+          <Text style={styles.muted}>Sample customers, service addresses, recurring jobs, workday plans, timer states, completion snapshots, and invoice drafts stay in {demoPersistence==='browser'?'this browser’s local storage':'this open page'}; edits are never sent to GreenCollar or a customer. Reset or clearing browser storage removes them.</Text>
           {!!demoPersistenceNotice&&<Text accessibilityLiveRegion="polite" style={styles.muted}>{demoPersistenceNotice}</Text>}
           <Pressable accessibilityRole="button" style={[styles.primary,{alignSelf:'flex-start',paddingVertical:10}]} onPress={()=>setDemoModal('reset')}><Text style={styles.primaryText}>Reset sample workspace</Text></Pressable>
-          <Text style={styles.muted}>Clerk, Cloudflare actions, live routing, and invoice saving are unavailable. Planner totals use sample service estimates only.</Text>
+          <Text style={styles.muted}>Clerk, Cloudflare writes, road routing, GPS, customer messages, and payment actions are unavailable. Invoice drafts remain local and are never issued or sent.</Text>
         </View>}
         <View style={styles.tabs}>
           {(['today', 'customers', 'planner', 'invoices', ...(connectedBusiness&&businessRoleCapabilities(connectedBusiness.role).manageSchedule?['schedule' as const]:[])] as const).map(t => (
@@ -1468,19 +1594,62 @@ function GreenCollarDashboard({getToken,userId,previewMode=false}:GreenCollarDas
           }}><Text style={styles.primaryText}>Load saved draft</Text></Pressable>
         </>}
         {tab === 'today' && previewMode && <>
-          <Text style={styles.heading}>Today · sample workspace</Text>
+          <Text style={styles.heading}>Today · sample workday</Text>
           <View style={styles.card}>
-            <Text style={styles.cardHeading}>Today's sample schedule · {savedDay?.date??localCalendarDate()}</Text>
-            <Text style={styles.body}>{savedDueSummary?.pendingCount??0} visits due · ${((savedDueSummary?.estimatedRevenueCents??0)/100).toFixed(2)} sample service value · {savedDueSummary?.estimatedServiceMinutes??0} estimated service minutes</Text>
-            {!savedDueSummary?.due.length&&<Text style={styles.muted}>No sample visits are due today. Add a recurring service from Customers to see it here.</Text>}
-            {savedDueSummary?.due.slice(0,8).map(visit=><View key={visit.id} style={{paddingVertical:8,borderBottomWidth:1,borderBottomColor:'#31533f'}}>
-              <Text style={styles.body}>{visit.customer} · {visit.service}</Text>
-              <Text style={styles.muted}>{visit.address} · {visit.estimatedMinutes} estimated service minutes</Text>
-            </View>)}
-            <Text style={styles.muted}>Sample work queue only. No one is assigned, notified, billed, or tracked; travel and route optimization are unavailable.</Text>
-            <Pressable accessibilityRole="button" style={styles.primary} onPress={()=>setTab('schedule')}><Text style={styles.primaryText}>Review schedule by date</Text></Pressable>
-            <Pressable accessibilityRole="button" style={[styles.primary,{backgroundColor:'#f0f5ef'}]} onPress={()=>setTab('customers')}><Text style={styles.primaryText}>Add a sample customer or job</Text></Pressable>
+            <Text style={styles.cardHeading}>Due work · {savedDay?.date??localCalendarDate()}</Text>
+            <Text style={styles.body}>{savedDueSummary?.pendingCount??0} visits still due · {savedDueSummary?.completedCount??0} completed · ${( ((savedDueSummary?.estimatedRevenueCents??0)/100)).toFixed(2)} pending sample value</Text>
+            {!savedDueSummary?.due.length&&<Text style={styles.muted}>No sample visits are due today. Add or schedule a fictional recurring job from Customers.</Text>}
+            <Text style={styles.muted}>This is a local preview using fictional sample records. Planning uses GreenCollar’s existing recurrence and baseline workday planner with zero-minute synthetic travel; it does not calculate roads, arrivals, assignments, or notifications.</Text>
+            <View style={{flexDirection:'row',gap:8,flexWrap:'wrap'}}>
+              <Pressable accessibilityRole="button" style={[styles.primary,{flexGrow:1}]} onPress={()=>setTab('planner')}><Text style={styles.primaryText}>{demoWorkday?'Adjust plan':'Plan the workday'}</Text></Pressable>
+              <Pressable accessibilityRole="button" style={[styles.primary,{backgroundColor:'#f0f5ef',flexGrow:1}]} onPress={()=>setTab('customers')}><Text style={styles.primaryText}>Set up sample customers and jobs</Text></Pressable>
+            </View>
           </View>
+          {!!demoWorkday&&<View style={styles.card}>
+            <Text style={styles.cardHeading}>Review planned work</Text>
+            <Text style={styles.body}>{demoPlannedQueue.length} of {demoPlannedQueue.length+demoWorkday.unscheduledVisitIds.length} due visits planned · {demoWorkday.hours} service hours · limit {demoWorkday.maxJobs} jobs</Text>
+            <Text style={styles.muted}>Work window {scheduleMinuteClock(demoWorkday.startMinute)}–{scheduleMinuteClock(demoWorkday.endMinute)}. Travel inputs are synthetic zero minutes. This is an ordered sample work queue, not an optimized road route.</Text>
+            {!demoPlannedQueue.length&&<Text style={styles.muted}>The current plan has no remaining visits. Build it again after adding a due service, or review completed visits below.</Text>}
+            {demoPlannedQueue.map((visit,index)=><View key={visit.id} style={{paddingVertical:9,borderBottomWidth:1,borderBottomColor:'#31533f',gap:5}}>
+              <Text style={styles.body}>{index+1}. {visit.customer} · {visit.service}</Text>
+              <Text style={styles.muted}>{visit.address} · {visit.estimatedMinutes} min · ${(visit.rateCents/100).toFixed(2)} sample rate</Text>
+              <Pressable accessibilityRole="button" accessibilityLabel={'Start '+visit.customer+' '+visit.service} style={styles.primary} disabled={!timerCanStart||!demoQueueApproved} onPress={()=>void timerAction('start',visit.id)}><Text style={styles.primaryText}>{demoQueueApproved?'Start this service':'Approve the workday first'}</Text></Pressable>
+            </View>)}
+            {!!demoWorkday.unscheduledVisitIds.length&&<Text style={styles.muted}>{demoWorkday.unscheduledVisitIds.length} due service(s) did not fit this plan’s time or job limit. Rebuild with different limits to review them.</Text>}
+            <Text style={styles.body}>Queue review: {demoQueueApproved?'Approved on this browser':'Approval needed'}</Text>
+            {!!demoQueueReview&&<Text style={styles.muted}>{demoQueueReview.visitCount} visits · {demoQueueReview.estimatedServiceMinutes} estimated service minutes · ${(demoQueueReview.expectedRevenueCents/100).toFixed(2)} sample value</Text>}
+            <Pressable accessibilityRole="button" style={styles.primary} disabled={!demoQueueReview||!canApproveSavedQueueReview(demoQueueReview)||savedQueueApprovalBusy} onPress={requestSavedQueueApproval}><Text style={styles.primaryText}>{demoQueueApproved?'Review approval again':'Review and approve this sample workday'}</Text></Pressable>
+            {!!savedQueueApprovalError&&<Text accessibilityLiveRegion="polite" style={styles.muted}>{savedQueueApprovalError}</Text>}
+          </View>}
+          {!!workSession&&<View style={styles.card}>
+            <Text style={styles.cardHeading}>{workSession.status==='completed'?'Review completed visit':'Active sample visit'}</Text>
+            <Text style={styles.body}>{savedDay?.agreements.find(item=>workSession.jobId===item.id+':'+savedDay.date)?.service_name??workSession.jobId} · {workSession.status}</Text>
+            <Text style={styles.big}>{displayedTimer.minutes===null?'—':displayedTimer.minutes} min</Text>
+            {!!displayedTimer.error&&<Text accessibilityLiveRegion="polite" style={styles.muted}>{displayedTimer.error}</Text>}
+            {workSession.status==='running'&&<Pressable accessibilityRole="button" style={styles.primary} disabled={!timerReady||timerTransitionBusy} onPress={()=>void timerAction('pause')}><Text style={styles.primaryText}>Pause timer</Text></Pressable>}
+            {workSession.status==='paused'&&<Pressable accessibilityRole="button" style={styles.primary} disabled={!timerReady||timerTransitionBusy} onPress={()=>void timerAction('resume')}><Text style={styles.primaryText}>Resume timer</Text></Pressable>}
+            {workSession.status!=='completed'&&<>
+              <Text style={styles.label}>Visit work note</Text>
+              <TextInput accessibilityLabel="Visit work note" style={[styles.input,{minHeight:84,textAlignVertical:'top'}]} placeholder="Record sample work completed or follow-up" placeholderTextColor="#819b8b" value={workNoteDraft} onChangeText={setWorkNoteDraft} multiline maxLength={1000} editable={!timerTransitionBusy}/>
+              <Pressable accessibilityRole="button" style={[styles.primary,{backgroundColor:'#f0f5ef'}]} disabled={!timerReady||timerTransitionBusy||loadingSaved} onPress={()=>void saveWorkNote()}><Text style={styles.primaryText}>Save work note locally</Text></Pressable>
+              <Pressable accessibilityRole="button" style={styles.primary} disabled={!timerReady||timerTransitionBusy||normalizeWorkNote(workNoteDraft)!==(workSession.note??'')} onPress={()=>void timerAction('complete')}><Text style={styles.primaryText}>Complete sample visit</Text></Pressable>
+              <Text style={styles.muted}>The timer and note stay in this browser preview. Reloading restores the last saved timer state; unsaved note edits must be saved before completing.</Text>
+            </>}
+            {workSession.status==='completed'&&<>
+              <Text style={styles.body}>Recorded actual: {completionRecord(workSession).actualMinutes} min</Text>
+              {!completedTimerSaved&&<>
+                <Pressable accessibilityRole="checkbox" accessibilityState={{checked:isCompletionReviewConfirmed(completedReviewKey,completionReviewConfirmedKey)}} style={styles.primary} onPress={()=>setCompletionReviewConfirmedKey(current=>isCompletionReviewConfirmed(completedReviewKey,current)?'':(completedReviewKey??''))}><Text style={styles.primaryText}>{isCompletionReviewConfirmed(completedReviewKey,completionReviewConfirmedKey)?'✓ Duration reviewed':'Confirm recorded duration'}</Text></Pressable>
+                <Pressable accessibilityRole="button" style={styles.primary} disabled={loadingSaved||!timerReady||!isCompletionReviewConfirmed(completedReviewKey,completionReviewConfirmedKey)} onPress={()=>void saveCompletedService()}><Text style={styles.primaryText}>{loadingSaved?'Saving locally…':'Save completed visit locally'}</Text></Pressable>
+              </>}
+              {completedTimerSaved&&<Text style={styles.body}>Completed visit and its billing snapshot are saved in this browser.</Text>}
+            </>}
+            {!!timerError&&<Text accessibilityLiveRegion="polite" style={styles.muted}>{timerError}</Text>}
+          </View>}
+          {!!savedDay?.visits.some(visit=>visit.status==='completed')&&<View style={styles.card}>
+            <Text style={styles.cardHeading}>Completed sample visits</Text>
+            {savedDay.visits.filter(visit=>visit.status==='completed').map(visit=><Text key={visit.id??visit.agreement_id} style={styles.body}>{visit.completed_customer_name} · {visit.completed_service_name} · {visit.actual_minutes} min</Text>)}
+            <Pressable accessibilityRole="button" style={styles.primary} onPress={()=>setTab('invoices')}><Text style={styles.primaryText}>Prepare invoice drafts</Text></Pressable>
+          </View>}
           {!!savedDayError&&<Text accessibilityLiveRegion="polite" style={styles.muted}>{savedDayError}</Text>}
           <Pressable accessibilityRole="button" style={styles.primary} disabled={loadingSaved} onPress={()=>void loadSavedDay(localCalendarDate())}><Text style={styles.primaryText}>{loadingSaved?'Refreshing sample day…':'Refresh sample day'}</Text></Pressable>
         </>}
@@ -1803,8 +1972,8 @@ function GreenCollarDashboard({getToken,userId,previewMode=false}:GreenCollarDas
 
         {tab === 'invoices' && <>
           <Text style={styles.heading}>Invoices · Draft review</Text>
-          <Text style={styles.muted}>{previewMode?'Invoice totals and drafts are not connected in this local sample workspace. No invoice is saved, issued, sent, or charged.':'Drafts save to the business when you tap Save draft changes. No invoice is issued, sent, charged, or marked paid.'}</Text>
-          <Pressable style={styles.primary} disabled={previewMode||!savedDay||!connectedBusiness||invoiceBusy} onPress={()=>void prepareInvoiceDrafts()}><Text style={styles.primaryText}>{previewMode?'Invoice storage unavailable in preview':invoiceBusy?'Loading saved drafts…':'Load or prepare drafts from completed visits'}</Text></Pressable>
+          <Text style={styles.muted}>{previewMode?'Drafts use the saved completion snapshot and stay in this browser. They are not issued, sent, charged, or synced to an account.':'Drafts save to the business when you tap Save draft changes. No invoice is issued, sent, charged, or marked paid.'}</Text>
+          <Pressable accessibilityRole="button" style={styles.primary} disabled={!savedDay||!connectedBusiness||invoiceBusy} onPress={()=>void prepareInvoiceDrafts()}><Text style={styles.primaryText}>{invoiceBusy?(previewMode?'Preparing local drafts…':'Loading saved drafts…'):previewMode?'Prepare or reload drafts from completed visits':'Load or prepare drafts from completed visits'}</Text></Pressable>
           {!!savedDay && unbillableCompletedServiceCount(savedDay)>0 && <Text style={styles.muted}>{unbillableCompletedServiceCount(savedDay)} older completed visit(s) need manual billing review because no historical price snapshot exists.</Text>}
           {!!invoiceError && <Text style={styles.muted}>{invoiceError}</Text>}
           {invoiceDrafts.map(d=><View key={d.id} style={styles.card}>
@@ -1818,18 +1987,19 @@ function GreenCollarDashboard({getToken,userId,previewMode=false}:GreenCollarDas
             <Text style={styles.label}>Business-confirmed tax rate (%)</Text>
             <TextInput accessibilityLabel="Business-confirmed tax rate percent" style={styles.input} keyboardType="decimal-pad" value={(d.taxBasisPoints/100).toFixed(2)} onChangeText={v=>editDraftTaxRate(d.id,v)}/>
             <Text style={styles.body}>Draft total: ${(invoiceTotals(d.lines,d.taxBasisPoints).totalCents/100).toFixed(2)}</Text>
-            <Pressable accessibilityRole="button" style={styles.primary} disabled={invoiceSavingId===d.id||invoiceRevision(d)===invoiceDraftSnapshot.current.get(d.id)} onPress={()=>void saveInvoiceDraft(d.id)}><Text style={styles.primaryText}>{invoiceSavingId===d.id?'Saving draft…':'Save draft changes'}</Text></Pressable>
+            <Pressable accessibilityRole="button" style={styles.primary} disabled={invoiceSavingId===d.id||invoiceRevision(d)===invoiceDraftSnapshot.current.get(d.id)} onPress={()=>void saveInvoiceDraft(d.id)}><Text style={styles.primaryText}>{invoiceSavingId===d.id?'Saving draft…':previewMode?'Save draft locally':'Save draft changes'}</Text></Pressable>
             <Text style={styles.muted}>Tax starts at 0.00%. Enter a rate confirmed for this business; GreenCollar does not determine taxability. Review drafts are not issued, sent, charged, or marked paid.</Text>
           </View>)}
-          {!invoiceDrafts.length && <Text style={styles.muted}>{previewMode?'Sample invoice drafts are not included in this preview.':'No drafts prepared. Load a workday with completed visits on Today first.'}</Text>}
+          {!invoiceDrafts.length && <Text style={styles.muted}>{previewMode?'Prepare or reload to show drafts for completed sample visits. If none appear, complete a sample visit on Today first.':'No drafts prepared. Load a workday with completed visits on Today first.'}</Text>}
         </>}
         {tab === 'planner' && <>
           <Text style={styles.heading}>Plan your day</Text>
+          {previewMode&&<Text style={styles.muted}>Set a service-time budget and job cap, then build today’s workday from the actual recurring agreements and planner. The sample baseline planner uses synthetic zero-minute travel and makes no road, arrival, or route-optimization claim.</Text>}
           <Text style={styles.label}>Hours available</Text>
           <TextInput keyboardType="numeric" style={styles.input} value={hours} onChangeText={v => { setHours(v); setPlanned(false); }} />
           <Text style={styles.label}>Maximum jobs</Text>
           <TextInput keyboardType="numeric" style={styles.input} value={maxJobs} onChangeText={v => { setMaxJobs(v); setPlanned(false); }} />
-          <Pressable style={styles.primary} onPress={() => setPlanned(true)}><Text style={styles.primaryText}>Preview workload</Text></Pressable>
+          <Pressable style={styles.primary} onPress={() => setPlanned(true)}><Text style={styles.primaryText}>{previewMode?'Preview fixture workload':'Preview workload'}</Text></Pressable>
           {planned && workloadPreview && <View style={styles.card}>
             <Text style={styles.cardHeading}>Workload preview</Text>
             {workloadPreview.status==='invalid_hours'?<Text accessibilityLiveRegion="polite" style={styles.muted}>Enter available hours from 0.25 to 24, using up to two decimal places.</Text>
@@ -1843,6 +2013,15 @@ function GreenCollarDashboard({getToken,userId,previewMode=false}:GreenCollarDas
                   :<Text style={styles.muted}>Service estimates fit within the available work time.</Text>}
                 <Text style={styles.muted}>Sample workload only. Travel, breaks, fixed appointments, customer time windows, and fuel are not included; this is not a route or feasibility guarantee.</Text>
               </>}
+          </View>}
+          {previewMode&&<View style={styles.card}>
+            <Text style={styles.cardHeading}>Build a workday from due sample jobs</Text>
+            <Text style={styles.muted}>Recurring schedules created under Customers supply the real due-work input. Estimate order and job fit use the existing GreenCollar baseline planner with zero-minute synthetic travel. No worker, GPS, customer message, or server record is created.</Text>
+            <Text style={styles.muted}>This workday starts at 08:00 and accepts 0.25–16 service hours to stay within the same local calendar day.</Text>
+            {!!demoPlanError&&<Text accessibilityLiveRegion="polite" style={styles.muted}>{demoPlanError}</Text>}
+            {demoWorkday&&<Text style={styles.body}>Current saved plan: {demoWorkday.plannedVisitIds.length} planned · {demoWorkday.unscheduledVisitIds.length} not included · {demoWorkday.hours} hours · {demoWorkday.maxJobs} job cap</Text>}
+            <Pressable accessibilityRole="button" style={styles.primary} disabled={!timerCanStart||!savedDay} onPress={buildPreviewWorkday}><Text style={styles.primaryText}>{demoWorkday?'Rebuild sample workday':'Build sample workday'}</Text></Pressable>
+            {!timerCanStart&&<Text style={styles.muted}>Finish and save the active sample visit before rebuilding its workday.</Text>}
           </View>}
         </>}
       </ScrollView>
@@ -1930,9 +2109,26 @@ function GreenCollarDashboard({getToken,userId,previewMode=false}:GreenCollarDas
         <View style={styles.modalBackdrop}>
           <View style={[styles.modalCard,styles.modalCardCompact]} accessibilityViewIsModal>
             <Text style={styles.cardHeading}>Reset sample workspace?</Text>
-            <Text style={styles.muted}>This clears the customers, addresses, and schedules you added to this browser’s preview workspace and restores the fictional examples. It does not affect any GreenCollar account or server data.</Text>
+            <Text style={styles.muted}>This clears customers, addresses, schedules, workday plans, timers, completions, and invoice drafts stored in this browser preview, then restores fictional examples. It does not affect any GreenCollar account or server data.</Text>
             <Pressable accessibilityRole="button" style={styles.primary} onPress={restoreDemoWorkspace}><Text style={styles.primaryText}>Restore sample workspace</Text></Pressable>
             <Pressable accessibilityRole="button" style={[styles.primary,{backgroundColor:'#f0f5ef'}]} onPress={closePreviewModal}><Text style={styles.primaryText}>Keep editing</Text></Pressable>
+          </View>
+        </View>
+      </Modal>
+      <Modal visible={previewMode&&demoApprovalOpen} transparent animationType="fade" onRequestClose={()=>setDemoApprovalOpen(false)}>
+        <View style={styles.modalBackdrop}>
+          <View style={[styles.modalCard,styles.modalCardCompact]} accessibilityViewIsModal>
+            <View style={styles.modalHeader}>
+              <Text style={styles.cardHeading}>Review today’s sample work</Text>
+              <Pressable accessibilityRole="button" accessibilityLabel="Back to workday review" onPress={()=>setDemoApprovalOpen(false)}><Text style={styles.modalBack}>Back</Text></Pressable>
+            </View>
+            <Text style={styles.body}>{demoQueueReview?.visitCount??0} planned visits · {demoQueueReview?.estimatedServiceMinutes??0} estimated service minutes · ${((demoQueueReview?.expectedRevenueCents??0)/100).toFixed(2)} sample value</Text>
+            <Text style={styles.muted}>This approval is a local demo acknowledgment bound to the current order and work limits. Zero-minute travel is synthetic. It does not authorize real work or write to a server.</Text>
+            <ScrollView style={styles.modalFields} contentContainerStyle={{gap:8}}>
+              {demoPlannedQueue.map((visit,index)=><Text key={visit.id} style={styles.body}>{index+1}. {visit.customer} · {visit.service} · {visit.estimatedMinutes} min</Text>)}
+            </ScrollView>
+            <Pressable accessibilityRole="button" style={styles.primary} disabled={!demoQueueReview||!canApproveSavedQueueReview(demoQueueReview)} onPress={()=>demoQueueReview&&void persistSavedQueueApproval(demoQueueReview)}><Text style={styles.primaryText}>Approve sample workday</Text></Pressable>
+            <Pressable accessibilityRole="button" style={[styles.primary,{backgroundColor:'#f0f5ef'}]} onPress={()=>setDemoApprovalOpen(false)}><Text style={styles.primaryText}>Keep reviewing</Text></Pressable>
           </View>
         </View>
       </Modal>
