@@ -61,6 +61,6 @@ test('integrity migration fails closed when a prepared draft has no matching vis
   try{
     assert.throws(()=>applyMigration(db,migration9));
     assert.equal(db.prepare('SELECT COUNT(*) AS count FROM invoice_drafts WHERE id=?').get('invoice-a').count,1);
-    assert.equal(db.prepare(\"SELECT COUNT(*) AS count FROM sqlite_master WHERE type='table' AND name='invoice_drafts_next'\").get().count,0);
+    assert.equal(db.prepare(`SELECT COUNT(*) AS count FROM sqlite_master WHERE type='table' AND name='invoice_drafts_next'`).get().count,0);
   }finally{db.close();}
 });
