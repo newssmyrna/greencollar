@@ -85,16 +85,15 @@ Keep every change narrowly scoped and tested; never silently remove agreed featu
 - Preserve lunch blocks in saved and loaded drafts for later capacity and route timing calculations.
 - Stop arrival times and route feasibility remain unmodeled until travel and stop time windows are available.
 
-## Phase 81 — Reported lunch events in schedule drafts
+## Phase 81 — Reported crew availability and lunch in schedule drafts
 - Load business/date-scoped availability alongside the verified crew roster.
-- Show break, sick, and unavailable events for each worker; prefill lunch blocks from reported break events.
+- Show break, sick, and unavailable events for each worker; prefill reported breaks into editable lunch blocks.
 - Let the owner/admin adjust, remove, or add worker-specific lunch intervals before saving.
-- Keep sick/unavailable overlap as a server-side hard conflict; never convert reported events into a published route automatically.
-- Test event-to-worker mapping and preserve date and business scope.
+- Clear cached availability when business or work date changes, ignore stale roster requests, and keep sick/unavailable overlap enforcement on the server.
+- A reported event never publishes or changes a route by itself.
 
-## Phase 81 — Reported crew availability in schedule editor
-- Load the selected workday's business-scoped availability with the verified crew roster.
-- Display each selected worker's break, sick, and unavailable intervals.
-- Prefill editable lunch blocks from reported breaks; preserve all reported intervals and allow manager corrections before draft save.
-- Clear cached availability when the business or work date changes, and ignore stale roster requests.
-- Keep sick/unavailable overlap enforcement on the server; a report never publishes or changes a route by itself.
+\n## Phase 82 — Edit saved single-route workday drafts safely
+- Hydrate existing single-route drafts into the current editor without dropping truck, worker, lunch, stop order, or task data.
+- Preserve multi-route, stale-stop, removed-worker, and unsupported shift drafts as read-only.
+- Update using the saved version and reject concurrent edits or deleted drafts.
+- Test hydration, preservation, and read-only cases; do not publish routes or contact customers.
