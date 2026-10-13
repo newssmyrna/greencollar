@@ -67,3 +67,22 @@ test('allows an admin disable request when the current notice version is unavail
  assert.equal(await setBusinessRoutingEnabled('https://api.example.test','business-a','jwt',false,false,''),false);
  assert.deepEqual(JSON.parse(String(request?.body)),{businessId:'business-a',enabled:false,noticeAcknowledged:false,noticeVersion:''});
 });
+
+
+test('matrix request sends only safe point IDs and saved coordinates and validates response',async()=>{
+ let url='',request:RequestInit|undefined;
+ globalThis.fetch=async(target,init)=>{url=String(target);request=init;return new Response(JSON.stringify({durations:[[0,125],[130,0]],attribution:'Powered by Google, © 2026'}),{status:200});};
+ const points=[{id:'p1',lat:29.0,lon:-80.9},{id:'p2',lat:29.1,lon:-80.8}];
+ assert.deepEqual(await (await import('../src/data/routing-api')).requestRoutingMatrix('https://api.example.test','business-a','jwt',points),{durations:[[0,125],[130,0]],attribution:'Powered by Google, © 2026'});
+ assert.equal(url,'https://api.example.test/v1/routing/matrix');
+ assert.equal(request?.method,'POST');
+ assert.deepEqual(JSON.parse(String(request?.body)),{businessId:'business-a',points});
+});
+
+test('matrix request rejects invalid points and malformed or oversized matrices',async()=>{
+ const {requestRoutingMatrix}=await import('../src/data/routing-api');
+ let called=0;globalThis.fetch=async()=>{called++;return new Response(JSON.stringify({durations:[[0]],attribution:'x'}),{status:200});};
+ await assert.rejects(()=>requestRoutingMatrix('https://api.example.test','business-a','jwt',[{id:'p1',lat:91,lon:0},{id:'p2',lat:0,lon:0}]),/Invalid routing matrix points/);
+ assert.equal(called,0);
+ await assert.rejects(()=>requestRoutingMatrix('https://api.example.test','business-a','jwt',[{id:'p1',lat:0,lon:0},{id:'p2',lat:0,lon:0}]),/Invalid routing matrix response/);
+});

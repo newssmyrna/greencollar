@@ -107,3 +107,28 @@ export async function setBusinessRoutingEnabled(
   throw new Error('Invalid business routing response');
  return enabled;
 }
+
+export type RoutingMatrixPoint={id:string;lat:number;lon:number};
+export type RoutingMatrix={durations:(number|null)[][];attribution:string};
+export async function requestRoutingMatrix(
+ apiUrl:string,businessId:string,token:string,points:readonly RoutingMatrixPoint[]
+):Promise<RoutingMatrix>{
+ validateRequest(businessId,token);
+ if(!Array.isArray(points)||points.length<2||points.length>25||
+  points.some(p=>!p||Object.keys(p).sort().join(',')!=='id,lat,lon'||
+   typeof p.id!=='string'||!safeId(p.id)||!Number.isFinite(p.lat)||!Number.isFinite(p.lon)||
+   p.lat < -90||p.lat > 90||p.lon < -180||p.lon > 180)||
+  new Set(points.map(p=>p.id)).size!==points.length)
+  throw new Error('Invalid routing matrix points');
+ const response=await fetch(endpoint(apiUrl,'/v1/routing/matrix'),{
+  method:'POST',headers:{Authorization:'Bearer '+token,'content-type':'application/json'},
+  body:JSON.stringify({businessId,points:points.map(p=>({id:p.id,lat:p.lat,lon:p.lon}))})
+ });
+ const value=await responseJson(response),row=objectValue(value);
+ if(!row||!Array.isArray(row.durations)||row.durations.length!==points.length||
+  row.durations.some(r=>!Array.isArray(r)||r.length!==points.length||
+   r.some(n=>n!==null&&(typeof n!=='number'||!Number.isFinite(n)||n<0)))||
+  typeof row.attribution!=='string'||!row.attribution.trim()||row.attribution.length>160)
+  throw new Error('Invalid routing matrix response');
+ return {durations:row.durations as (number|null)[][],attribution:row.attribution};
+}

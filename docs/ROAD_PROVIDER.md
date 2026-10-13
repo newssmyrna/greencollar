@@ -108,3 +108,10 @@ The Today screen can read the routing settings endpoint and display server-confi
 The readiness screen makes no matrix request and sends no coordinates. It leaves the operator-entered manual travel estimates and their device-local storage unchanged. The effective enabled state reports when both provider configuration and the business toggle pass; the stored business toggle is reported separately so an admin can disable it if provider configuration becomes unavailable. The notice acknowledgment is specific to the current operator. If settings cannot be read, the app keeps manual travel available and displays a fallback error.
 
 The mobile app still has no route-matrix action, no route result display, and no route-result persistence. Before adding those, define stop assignment across the six-person / three-truck pilot and clarify the stated 10 stops/day as a total or per-truck count. Confirm the per-request cost model against that stop allocation before enabling paid requests.
+
+
+## Phase 70 — temporary preview UX
+
+The mobile app stages a transient three-truck assignment and per-truck drive-time preview on Today. Every due stop must have an explicit truck assignment and valid saved coordinates. The UI displays the matrix element count before its confirmation step. Each request refetches settings; the Worker applies its independent monthly element and spend limits. Point IDs are ephemeral indexes, and the request contains only point IDs and saved coordinates. No customer or employee details are included.
+
+The result covers adjacent stops in the visible manually chosen order only. There is no depot leg, optimization, arrival-time projection, persistence, or connection to manual travel estimates or queue approval. Empty/single-stop trucks do not call the provider. This is staged in PR #70 and not deployed. Provider calls were not made in development or tests. Keep the integration disabled until the business signs up and the previously defined policy, provider, pricing, consent, and budget gates are deliberately configured.
