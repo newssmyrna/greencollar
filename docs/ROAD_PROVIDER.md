@@ -1,61 +1,79 @@
 # Routing provider integration (not live)
 `cloudflare/src/road-provider.ts` includes a network adapter for a server-configured OSRM-compatible **HTTPS** table service. It validates point count, geographic coordinates, response dimensions, returned durations, and 8-second timeout. Unreachable roads remain `null`.
 
-This is **not yet activated**. No provider hostname, subscription, key, or usage cost is configured. Do not call the adapter from an unauthenticated or unmetered endpoint. Before integration: select a provider with a suitable commercial use policy; assess location data disclosure/consent, provider rate limits, cost caps and caching policy; add authorization and per-account quotas; map response into the mobile planning workflow. Do not expose the provider's key in the mobile app.
+This is **not yet activated**. Google Routes API Compute Route Matrix Essentials is selected for the Edgewater pilot, but no Google project, billing account, key, provider call, or production usage is configured. Do not call the adapter until the public GreenCollar Terms of Use and Privacy Policy are available on the future domain, the coordinate notice and authorization gates are implemented, and the hard monthly element meter is tested. Keep Google's credential server-side; never put it in the mobile app.
 
 
-## Provider decision screen — 2026-10-13
+## Edgewater pilot provider decision — 2026-10-13
 
-**Decision status:** no provider selected; no provider account, hostname, credential, or API request is configured. This is a technical and commercial-readiness screen from current public vendor documentation. Recheck prices and terms before procurement.
+**Selected provider:** Google Routes API, **Compute Route Matrix Essentials**. Pilot use is limited to ordinary `DRIVE` mode with `TRAFFIC_UNAWARE` routing for transient travel-time estimates. This is a documented selection, not an active account or API integration.
 
-### Current GreenCollar integration seam
+The selection favors a published Essentials unit price that can be budgeted for this workload and avoids Mapbox's separate commercial vehicle-use license, which requires an annual subscription and may have a per-user/seat component. GreenCollar's existing OSRM-compatible helper cannot call Google directly: a server-side Google adapter and response mapper still need implementation. Before use, verify the current Google account agreement and price sheet.
 
-`cloudflare/src/road-provider.ts` is an optional server-side adapter for an OSRM-compatible HTTPS table endpoint. It accepts 2–25 unique latitude/longitude points and expects a square `durations` matrix in seconds, with `null` for unreachable pairs. It builds an OSRM `/table/v1/driving` URL and times out after eight seconds. The helper does not provide tenant authorization, consent, a provider credential, metering, or budget enforcement. No Worker route calls it.
+**Vehicle scope:** the selected route profile is a standard driving estimate. It does not model truck height, weight, axle, hazmat, or other commercial-vehicle restrictions. If any of the three trucks requires those constraints, keep that route manual and reassess the provider/SKU before activation.
 
-### Shortlist
+### Pilot operating assumptions
 
-| Path | Current fit | Usage and commercial gate | Adapter work |
-|---|---|---|---|
-| Keep the OSRM-compatible seam | Closest to the existing helper; still requires an operator-selected service or operated endpoint. The 25-point limit is GreenCollar's current adapter limit. | No service, price, commercial rights, coverage, retention, or support level has been chosen. | Configure only after provider/service selection; keep its URL and credential server-side. |
-| Google Routes Compute Route Matrix | Supports up to 625 elements for ordinary matrix requests; the limit is 100 elements for traffic-aware-optimal or transit requests. | Charged by origin × destination element and SKU. The current global price sheet lists a 10,000-element Essentials free usage cap and $5 per 1,000 elements in its first paid tier; Pro and Enterprise features have different rates. Requires billing and an API key or OAuth token. Daily API quotas are available. Most Routes content has caching restrictions, and map-displayed results must be displayed on a Google Map with attribution. | New adapter: Google returns per-element results that must be validated and assembled into GreenCollar's ordered square matrix. |
-| Mapbox Matrix API | Standard driving matrix supports 25 coordinates/625 elements; driving-traffic supports 10 coordinates/100 elements. It returns travel-time/distance matrices, not route geometry. | Billed by matrix element. The current public page lists up to 100,000 monthly elements free, then $2 per 1,000 in the first paid tier, with lower rates at higher tiers. Mapbox says a Commercial Application License is required for non-production and production vehicle usage; it includes an annual subscription and may include a per-user or seat component. Obtain written confirmation and a quote for GreenCollar's intended crew workflow. | The duration response resembles the current matrix shape, but the URL, token handling, provider-specific limits, and configuration require a distinct adapter. |
+- Service area: Edgewater, Florida.
+- Owner's stated expected work: 10 stops per operating day; 5 operating days per week; 6 people and 3 trucks (modeled as two people per truck).
+- For a conservative spend ceiling, size the meter for **up to 10 stops per truck per day (30 stops total)**. This is a budgeting ceiling, not a change to the stated 10-stop daily expectation.
+- Each truck plan includes a start and an end point. Actual depot coordinates are not yet set; this model counts two endpoint slots per truck.
+- One initial matrix per truck plus one complete rerun of all three trucks on each operating day.
+- Five workdays per week average about 22 operating days per month.
 
-Public references checked 2026-10-13:
+| Workload calculation | Elements |
+|---|---:|
+| One truck: 10 stops + start + end = 12 points; 12 × 12 | 144 |
+| Three truck plans per daily pass: 3 × 144 | 432/day |
+| One full rerun: 432 × 2 | 864/operating day |
+| Monthly ceiling forecast: 864 × 22 | 19,008/month |
+| Hard monthly allowance | **19,500 elements/month** |
+| Remaining model headroom | 492 elements/month |
+
+If the 10 stops/day are the total for all three trucks, actual use should fall below this ceiling. Additional plans, partial reruns, retries, or extra customer accounts all consume the same element allowance. The backend meter must count every requested origin × destination cell before dispatch, reserve it atomically, and conservatively keep the reservation for timeouts or ambiguous failures.
+
+### Monthly routing spend policy
+
+**Recommended hard boundary: $120 per calendar month for Google Routes matrix usage, before tax.** This is a pilot provider-usage limit, separate from Cloudflare hosting and other GreenCollar infrastructure. Keep the Google project dedicated to this route-matrix pilot. Do not enable other Google Maps APIs in that project.
+
+At the current published Essentials rate, the first paid tier is $5 per 1,000 elements after a 10,000-element free monthly usage cap. At the 19,500-element hard meter, the no-free-usage upper estimate is $97.50 before tax; if the free cap is available, charges may be lower. The $120 boundary leaves $22.50 of pre-tax headroom at the current Essentials rate. Google aggregates usage for a service across projects on the customer billing account, so do not assume this GreenCollar project receives all of the free allowance.
+
+**Enforcement policy:**
+
+1. Maintain a durable, atomic monthly ledger for the dedicated project. Before a provider call, reserve its origin × destination elements against the 19,500 monthly ceiling. Reject new calls at the ceiling or whenever the meter is unavailable.
+2. Count retries, timeouts, and incomplete/ambiguous calls conservatively. Do not refund reserved elements unless billing evidence confirms the request was not metered.
+3. At the limit, fall back to manual travel-time entry. No background retries or new calls after the monthly stop. Reset the ledger at the next calendar month after reconciling provider usage.
+4. Add Google Cloud Billing alert-only thresholds at $60 (50%), $96 (80%), and $120 (100%). Alerts are useful signals, not the hard cap: Google's current spend-cap eligibility list does not include the Routes API, and its alerts-only budgets do not automatically block usage.
+5. Keep the Routes API quota as a secondary traffic safeguard. The application ledger remains the spend gate. Reprice and reapprove before changing SKU/features or if published rates change; fail closed rather than silently use Pro or Enterprise.
+6. The selected meter is scoped to the Essentials SKU at the current $5/1,000 rate. It does not authorize traffic-aware features, truck-specific routing, route optimization, geocoding, map loads, or other billable APIs.
+
+### Location and provider-data policy
+
+This is an internal operating-policy draft for product implementation, not legal approval or a published GreenCollar notice.
+
+- **Purpose and trigger:** calculate estimated driving durations for a signed-in operator's workday plan. Make a provider request only after the operator deliberately selects “calculate/refresh drive times” and the business administrator has enabled routing and acknowledged the location-data notice. Do not continuously track a person, phone, or truck.
+- **Data sent:** send only the manually selected job coordinates and configured/selected dispatch start/end coordinates needed for the matrix. Do not send customer names, contact details, customer or job IDs, service notes, employee names/IDs, or device GPS.
+- **Notice and consent:** before the first request and when the notice changes, explain that selected coordinates are sent to Google for route-duration calculation. The public GreenCollar Privacy Policy must say this plainly and link Google's current Terms of Service and Privacy Policy. No public domain exists yet, so keep the provider disabled until those pages are publicly accessible.
+- **Authorization and credential:** require a signed-in authorized operator and tenant-scoped server endpoint. Keep the API key in a Cloudflare Worker secret, restrict it to the Routes API, and never return it to the app.
+- **Retention and caching:** do not log request coordinates, response bodies, coordinate-bearing URLs, or keys. Use the returned matrix in memory for the active planning request and discard it afterward. Do not persist/cache the raw matrix or derived Google durations in the database, device storage, queue approval snapshot, or analytics unless the then-current Google agreement expressly permits it. Existing saved approval data must exclude provider-derived route values before launch. Keep only aggregate monthly element counts for spend control; no coordinates in the meter.
+- **Display:** show Google Maps attribution with provider-derived durations. If a map is added, show Routes results on a Google Map and follow Google's attribution rules. If public terms, privacy notice, attribution, authorization, or coordinate notice is missing, do not call Google; offer the existing manual travel-time workflow instead.
+
+### Provider screen and references
+
+Google Routes Compute Route Matrix Essentials is the selected fit for a basic duration matrix: requests are billed by origin × destination element, ordinary non-transit requests support up to 625 elements, and the current global pricing list shows a 10,000 monthly free usage cap followed by $5 per 1,000 elements in the first paid tier. The Edgewater matrix size (144 elements per truck) is below the ordinary request maximum. Do not use `TRAFFIC_AWARE` or `TRAFFIC_AWARE_OPTIMAL` without a separate Pro-cost decision.
+
+Mapbox remains unselected. Its public terms require a separate commercial application license for vehicle use, with an annual subscription and possible user/seat component; obtain a written quote before reconsidering it.
+
+Official sources checked 2026-10-13:
 
 - [Google Routes API usage and billing](https://developers.google.com/maps/documentation/routes/usage-and-billing)
-- [Google Maps Platform pricing](https://developers.google.com/maps/billing-and-pricing/pricing)
-- [Google Routes API policies and attribution](https://developers.google.com/maps/documentation/routes/policies)
-- [Mapbox Matrix API](https://docs.mapbox.com/api/navigation/matrix/)
-- [Mapbox pricing](https://www.mapbox.com/pricing)
-- [Mapbox commercial application licensing](https://www.mapbox.com/pricing#licensing)
-- [Cloudflare Workers Rate Limiting](https://developers.cloudflare.com/workers/runtime-apis/bindings/rate-limit/)
+- [Google Routes matrix request limits](https://developers.google.com/maps/documentation/routes/compute_route_matrix)
+- [Google Maps Platform current global pricing list](https://developers.google.com/maps/billing-and-pricing/pricing)
+- [Google Routes API policies, public ToU/privacy and attribution](https://developers.google.com/maps/documentation/routes/policies)
+- [Google Cloud Billing budgets and alerts](https://cloud.google.com/billing/docs/how-to/budgets)
+- [Google Cloud spend-cap eligible services](https://cloud.google.com/billing/docs/how-to/budgets-spend-caps)
+- [Mapbox vehicle-use licensing and pricing](https://www.mapbox.com/pricing)
 
-### Usage estimate and activation gates
+### Phase #67 handoff
 
-For a full square matrix with `N` stops, billable elements are generally `N × N`; at GreenCollar's current 25-point limit, one full matrix is up to 625 elements. Estimate monthly volume by summing matrix elements across all planning sessions, businesses, refreshes, and retries. A per-request price alone is not a safe monthly budget.
-
-#### Edgewater pilot volume (owner input, 2026-10-13)
-
-Pilot area: Edgewater, Florida. Expected workload: 10 stops per day.
-
-| Matrix points included in one daily plan | Elements per full matrix | 22 planning days/month | 30 planning days/month | With one additional full rerun each day |
-|---|---:|---:|---:|---:|
-| 10 visit stops | 100 | 2,200 | 3,000 | 4,400 / 6,000 |
-| 10 visit stops plus start and end depots | 144 | 3,168 | 4,320 | 6,336 / 8,640 |
-
-Assumptions: one business/crew and one full square matrix per planning run; “22” and “30” are alternative operating-day counts, not a claim about the schedule. If the starting point or depot is not sent as a matrix node, use the 10-stop row. Additional crews, businesses, planning sessions, retries, or other API usage multiply the estimate. One distinct extra matrix node would make 11² = 121 elements per run.
-
-At 10 stop nodes and one run/day, the estimate is 2,200–3,000 monthly matrix elements. That is below the currently published 10,000-element Google Routes Essentials free usage cap and Mapbox's 100,000 monthly Matrix free tier, assuming no other usage shares the billing account and the request stays in those price categories. This does not establish a zero-dollar project cost: provider features/SKU, shared account usage, account-specific terms, and (for Mapbox vehicle use) the separate commercial license can change the bill. Recheck the rate sheet before enabling calls.
-
-Before enabling a provider:
-
-1. **Set the pilot scope:** initial service area, representative routes to validate, expected active businesses, routes planned per day, typical stop counts, and how often operators refresh or re-run planning.
-2. **Set the spend boundary:** monthly provider budget, allowed feature/SKU, expected matrix volume, and an operator who can disable routing spend.
-3. **Approve data handling:** decide which customer coordinates may leave GreenCollar, what operator/customer consent is needed, which provider terms apply, and whether any returned data may be cached and for how long.
-4. **Confirm the commercial fit:** written/contract terms, coverage, attribution/display rules, retention/caching permissions, service limits, and support expectations for the actual business use.
-5. **Add server-side controls:** authenticated tenant-scoped Worker endpoint, provider secret stored only in Cloudflare, durable per-tenant element/spend accounting with a hard deny at the agreed limit, plus rate limiting for bursts. Cloudflare's Worker rate-limiting binding is local to each Cloudflare location, eventually consistent, and explicitly not an accurate accounting system; it cannot alone enforce a global hard spending cap.
-6. **Integrate and verify:** provider-specific response mapping, bounded timeout/error behavior, synthetic matrix tests, staging calls with authorized test coordinates, and mobile acceptance for the planning/approval flow. Keep customer/provider calls disabled until those gates pass.
-
-### Phase handoff
-
-Phase #67 completes the provider-readiness screen only. It does not activate routing, settle licensing, approve coordinate disclosure, or change route estimates. The next provider-integration phase needs the pilot-volume, budget, data-handling, and vendor decision above.
+Provider selection, the pilot volume ceiling, and the privacy/spend policy are defined. The integration is still **inactive**: no Google account/project, API key, billing configuration, provider request, code integration, live public policy page, or deployment was created. The next implementation must deliver the secure adapter, atomic element meter, authorization/notice gates, response validation, tests, and mobile/manual fallback, then run acceptance on the actual Edgewater workflow.
