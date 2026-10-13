@@ -39,3 +39,41 @@ test('failed save remains explicit',async()=>{
  globalThis.fetch=async()=>new Response('{}',{status:403});
  await assert.rejects(()=>createServiceAgreement('https://api.example.test','business-a','customer-a','jwt',input),/403/);
 });
+
+test('appointment inputs persist through request and saved-day readback',async()=>{
+ const timed={...input,preferredStartMinute:540,preferredFinishMinute:660,fixedStartMinute:600};
+ let requests=0;
+ globalThis.fetch=async(_url,init)=>{
+  requests++;
+  assert.deepEqual(JSON.parse(String(init?.body)),timed);
+  return new Response(JSON.stringify({agreement:{
+   id:'agreement-a',customer_id:'customer-a',location_id:'location-a',service_name:timed.serviceName,
+   rate_cents:7500,estimated_minutes:45,starts_on:input.startsOn,ends_on:null,frequency:'weekly',interval_days:null,
+   days_of_week:null,preferred_start_minute:540,preferred_finish_minute:660,fixed_start_minute:600,active:1,
+   address:'Synthetic address',preferences:null,lat:null,lon:null
+  }}),{status:201});
+ };
+ const saved=await createServiceAgreement('https://api.example.test','business-a','customer-a','jwt',timed);
+ const due=summarizeSavedDay({date:input.startsOn,planningStatus:'source-data-only',roadOptimization:false,
+  customers:[{id:'customer-a',name:'Synthetic Customer',phone:null,notes:null}],agreements:[saved],visits:[],durationHistory:[]});
+ assert.equal(due.due[0].fixedStartMinute,600);
+ assert.equal(due.due[0].preferredStartMinute,540);
+ assert.equal(due.due[0].preferredFinishMinute,660);
+ assert.equal(requests,1);
+});
+
+test('ignored or altered appointment acknowledgments require reload without an automatic second write',async()=>{
+ let requests=0;
+ globalThis.fetch=async()=>{requests++;return new Response(JSON.stringify({agreement:{id:'agreement-a',fixed_start_minute:null}}),{status:201});};
+ await assert.rejects(()=>createServiceAgreement('https://api.example.test','business-a','customer-a','jwt',{...input,fixedStartMinute:0}),/may have been saved.*Reload/);
+ assert.equal(requests,1);
+});
+
+test('invalid appointment constraints never reach the network',async()=>{
+ let requests=0;
+ globalThis.fetch=async()=>{requests++;throw Error('unexpected request');};
+ await assert.rejects(()=>createServiceAgreement('https://api.example.test','business-a','customer-a','jwt',{
+  ...input,preferredStartMinute:600,preferredFinishMinute:620
+ }),/duration must fit/);
+ assert.equal(requests,0);
+});
