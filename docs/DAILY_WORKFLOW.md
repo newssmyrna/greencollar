@@ -245,3 +245,27 @@ Paths: `App.tsx`, `src/domain/workday-break.ts`, `src/domain/saved-queue-workloa
 Impact: planned Today settings, per-visit warnings and approval; planned device-settings migration; testing-only synthetic fixtures; documentation-only handoff. No live pages/posts, production records, API/schema changes, remote migrations, provider calls, messages or billing changes.
 
 Next owner/action: reviewer checks multi-interval schedule math, version-3 migration and approval binding. Device tester checks multiline entry, keyboard behavior, labels/errors, restored interval display, long queues, restart/readback, break-list edits during approval and workday-scope changes. SWITCH coordinates the existing stacked PR chain and release gates. No merge or deployment is included in this phase. Four implementation goals measure phase delivery only, not overall product readiness.
+
+## Manual travel estimates between saved stops
+
+Task: GC-SAVED-QUEUE-TRAVEL-ESTIMATES-20261013. Source base: PR #64 at `95c529ba83e6cd80c6f212a2f0760b449958e553`. Work: REVIEW; delivery: PREPARED. The phase PR records exact head, focused/full CI results and elapsed time.
+
+Today now accepts an optional manual whole-minute estimate from one adjacent saved stop to the next. Estimates are bound to that directed visit pair; reordering never silently applies an old estimate to a different leg. Values from 0 to 1,440 minutes are saved with the device-local queue order. The first stop has no inbound estimate because Today has no saved starting location. Legacy version-1 queue records continue to restore without estimates and are not rewritten on read. Raw visit IDs are not stored in the order record.
+
+Appointment checks include each entered leg before the destination service, propagate the lower-bound delay to later visits, and move a travel segment intact past a configured break if the segment would overlap it. A late arrival to a fixed start or an overrun of the customer/workday finish remains an explicit warning. The workload service-minute budget does not include travel. Changing an estimate or order changes the approval snapshot; unsaved travel edits block approval until saved. Approval can still record an operator's review of a conflict, but it does not resolve it.
+
+The interface labels these as manual estimates, not road-based route times or arrival predictions. Unentered travel, traffic, route geometry, and travel to the first stop are excluded. The OSRM-compatible provider is still inactive; provider selection, location privacy/consent, authorization, quota, caching and cost gates remain prerequisites to live routing.
+
+Acceptance: minute bounds and malformed values; estimates that change fixed-appointment and finish warnings; trip/break overlap; invalid first-stop input; approval invalidation; hashed local persistence; version-1 read compatibility; dropping estimates no longer adjacent after reload; storage failure preservation. Local focused and full repository checks, native acceptance, and independent review are reported separately on the phase PR.
+
+| Feature/functionality | Implementation | Impact |
+| --- | --- | --- |
+| Today per-leg manual estimate inputs | Complete | Planned Today queue |
+| Travel-aware same-order appointment checks | Complete | Planned Today timing warnings and approval dialog |
+| Hashed, device-local estimate persistence | Complete | Planned device work-order settings |
+| Legacy readback, changed-leg and approval protection | Complete | Testing-only synthetic storage and review regressions |
+| Native acceptance, independent QA and deployment | Pending | No live change |
+
+Paths: `App.tsx`, `src/domain/saved-queue-appointments.ts`, `src/domain/saved-queue-review.ts`, `src/domain/saved-queue-order.ts`, `src/data/local-saved-queue-order.ts`, `src/data/local-saved-queue-order-native.ts`, `tests/saved-queue-appointments.test.ts`, `tests/local-saved-queue-order.test.ts`, and this document.
+
+Impact: planned Today queue, warning summary and approval dialog; planned device-local work-order settings; testing-only synthetic records; documentation-only workflow handoff. No live pages/posts, customer records, API/schema changes, provider calls, messages, billing or production settings changed. Manual minutes are not a route optimizer or actual ETA.
