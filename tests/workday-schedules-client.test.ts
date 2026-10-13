@@ -1,0 +1,10 @@
+import test from 'node:test';
+import assert from 'node:assert/strict';
+import {afterEach} from 'node:test';
+import {saveWorkdaySchedule,getWorkdaySchedule} from '../src/data/workday-schedules';
+const originalFetch=globalThis.fetch;afterEach(()=>{globalThis.fetch=originalFetch;});
+const route={routeId:'r1',truckId:'t1',startMinute:480,endMinute:900,workers:[{subject:'w1',startMinute:480,endMinute:900},{subject:'w2',startMinute:480,endMinute:900}],stops:[{visitId:'a1:2026-10-13',order:1,tasks:[{taskId:'mow',label:'Mow',assignedSubjects:['w1'],estimatedMinutes:30},{taskId:'trim',label:'Trim',assignedSubjects:['w2'],estimatedMinutes:20}]}]};
+const schedule={businessId:'business-a',workDate:'2026-10-13',version:1,updatedBy:'owner',updatedAt:'2026-10-13T12:00:00Z',routes:[route]};
+test('saves a versioned draft schedule over HTTPS',async()=>{let url='',init:RequestInit|undefined;globalThis.fetch=async(u,i)=>{url=String(u);init=i;return new Response(JSON.stringify({schedule}),{status:201});};assert.deepEqual(await saveWorkdaySchedule('https://api.test','jwt',{businessId:'business-a',workDate:'2026-10-13',expectedVersion:0,routes:[route]}),schedule);assert.equal(url,'https://api.test/v1/workday-schedules');assert.equal(init?.method,'POST');});
+test('loads a scoped schedule without cache',async()=>{let init:RequestInit|undefined;globalThis.fetch=async(_u,i)=>{init=i;return new Response(JSON.stringify({schedule}),{status:200});};assert.deepEqual(await getWorkdaySchedule('https://api.test','business-a','2026-10-13','jwt'),schedule);assert.equal(init?.cache,'no-store');});
+test('rejects insecure base URL and malformed schedule',async()=>{await assert.rejects(()=>getWorkdaySchedule('http://api.test','business-a','2026-10-13','jwt'),/HTTPS/);globalThis.fetch=async()=>new Response(JSON.stringify({schedule:{version:'bad'}}),{status:200});await assert.rejects(()=>getWorkdaySchedule('https://api.test','business-a','2026-10-13','jwt'),/Invalid schedule/);});

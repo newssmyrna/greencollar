@@ -63,3 +63,10 @@ Keep every change narrowly scoped and tested; never silently remove agreed featu
 - Track labor capacity separately from route elapsed time and do not assume two workers double productivity.
 - Keep the pilot's 10-stop target scope (operation-wide or per truck) explicit and unresolved.
 - Draft/publish versioning and owner/admin recalibration control remain required; this phase is documentation only.
+
+
+## Phase 76 — Draft workday schedule persistence
+- Add a tenant-scoped, versioned draft endpoint for workday route, truck, crew, stop, and task assignments.
+- Validate worker membership, active scheduled agreements, stop uniqueness, same-day crew/truck conflicts, and task-to-crew assignments.
+- Permit owner/admin draft edits; workers can read only routes assigned to them.
+- Draft saves never publish or mutate service agreements; route UI, GPS, availability optimization, and publish remain future work.
