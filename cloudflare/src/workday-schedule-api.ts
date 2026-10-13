@@ -74,6 +74,14 @@ export function createWorkdayScheduleApi(subjectFor:(request:Request,env:Env)=>P
    const routes=parseRoutes(body.routes,body.workDate);if(!routes)return json({error:'invalid_schedule'},400);
    const workerIds=[...new Set(routes.flatMap(r=>r.workers.map(w=>w.subject)))];
    for(const worker of workerIds)if(!await businessAccess(env,worker,body.businessId))return json({error:'worker_not_found'},409);
+   for(const worker of workerIds){
+    const events=await env.DB.prepare('SELECT kind,start_minute,end_minute FROM crew_availability_events WHERE business_id=? AND work_date=? AND member_subject=?')
+     .bind(body.businessId,body.workDate,worker).all<{kind:string;start_minute:number;end_minute:number}>();
+    const shifts=routes.flatMap(route=>route.workers.filter(item=>item.subject===worker));
+    const unavailable=(events.results??[]).some(event=>(event.kind==='sick'||event.kind==='unavailable')&&
+     shifts.some(shift=>shift.startMinute<event.end_minute&&event.start_minute<shift.endMinute));
+    if(unavailable)return json({error:'worker_unavailable'},409);
+   }
    const agreementIds=[...new Set(routes.flatMap(r=>r.stops.map(s=>s.visitId.split(':')[0])))];
    if(agreementIds.length){
     const placeholders=agreementIds.map(()=>'?').join(',');
