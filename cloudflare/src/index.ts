@@ -10,6 +10,7 @@ import { invoiceDraftApi } from './invoice-draft-api';
 import { routingApi } from './routing-api';
 import { weatherInterruptionApi } from './weather-interruption-api';
 import { availabilityApi } from './availability-api';
+import { workdayScheduleApi } from './workday-schedule-api';
 import { authenticatedSubject } from './auth';
 import type { Env } from './auth';
 
@@ -41,6 +42,7 @@ export default {
     if(url.pathname==='/v1/invoice-drafts')return invoiceDraftApi(request,env,url);
     if(url.pathname==='/v1/weather-interruptions')return weatherInterruptionApi(request,env,url);
     if(url.pathname==='/v1/availability')return availabilityApi(request,env,url);
+    if(url.pathname==='/v1/workday-schedules')return workdayScheduleApi(request,env,url);
     if(url.pathname==='/v1/routing/settings'||url.pathname==='/v1/routing/notice'||url.pathname==='/v1/routing/matrix')return routingApi(request,env);
     return json({error:'not_found'},404);
   }
