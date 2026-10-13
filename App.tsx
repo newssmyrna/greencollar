@@ -1076,7 +1076,26 @@ function GreenCollarDashboard() {
             <Pressable accessibilityRole="button" style={styles.primary} disabled={scheduleRosterBusy} onPress={async()=>{
               const api=process.env.EXPO_PUBLIC_GREENCOLLAR_API_URL;if(!api||!connectedBusiness){setScheduleError('Load a business and configure the API URL first.');return;}
               setScheduleRosterBusy(true);setScheduleError('');
-              try{const token=await getToken({template:'greencollar-api'});if(!token)throw new Error('Sign in first.');const members=await listWorkdayMembers(api,connectedBusiness.id,token);setScheduleMembers(members);setScheduleWorkerSubjects(current=>current.filter(subject=>members.some(member=>member.subject===subject)));setScheduleNotice(members.length+' verified business member(s) loaded.');}
+              if(!savedDay){setScheduleError('Load a saved workday first so crew availability uses the correct date.');return;}
+              try{
+                const token=await getToken({template:'greencollar-api'});if(!token)throw new Error('Sign in first.');
+                const [members,availability]=await Promise.all([
+                  listWorkdayMembers(api,connectedBusiness.id,token),
+                  listAvailability(api,connectedBusiness.id,savedDay.date,token)
+                ]);
+                const reportedLunch=availability.filter(event=>event.kind==='break').reduce<Record<string,Array<{start:string;end:string}>>>((byWorker,event)=>{
+                  (byWorker[event.memberSubject]??=[]).push({start:scheduleMinuteClock(event.startMinute),end:scheduleMinuteClock(event.endMinute)});
+                  return byWorker;
+                },{});
+                setScheduleMembers(members);setScheduleAvailability(availability);
+                setScheduleWorkerSubjects(current=>current.filter(subject=>members.some(member=>member.subject===subject)));
+                setScheduleLunchBlocks(current=>{
+                  const next={...current};
+                  for(const member of members)if(next[member.subject]===undefined)next[member.subject]=reportedLunch[member.subject]??[];
+                  return next;
+                });
+                setScheduleNotice(members.length+' verified business member(s) and '+availability.length+' availability event(s) loaded for '+savedDay.date+'. Reported breaks are prefilled; review each shift before saving.');
+              }
               catch(error){setScheduleError(error instanceof Error?error.message:'Could not load business crew.');}
               finally{setScheduleRosterBusy(false);}
             }}><Text style={styles.primaryText}>{scheduleRosterBusy?'Loading crew…':'Load business crew'}</Text></Pressable>
