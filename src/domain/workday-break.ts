@@ -1,41 +1,54 @@
 import {parseServiceClock,formatServiceClock} from './service-time';
 import {assessWorkdayWindow,type WorkdayWindowInput} from './workday-window';
 
-export type WorkdayBreakInput={breakStart?:string;breakFinish?:string};
+export type WorkdayBreakInput={breaks?:string};
 export type WorkdayTimingInput=WorkdayWindowInput&WorkdayBreakInput;
+export type WorkdayBreakInterval={startMinute:number;finishMinute:number};
 export type WorkdayBreakAssessment=
-  |{status:'not_set';startMinute:null;finishMinute:null;error:''}
-  |{status:'set';startMinute:number;finishMinute:number;error:''}
-  |{status:'invalid';startMinute:null;finishMinute:null;error:string};
+  |{status:'not_set';intervals:[];error:''}
+  |{status:'set';intervals:WorkdayBreakInterval[];error:''}
+  |{status:'invalid';intervals:[];error:string};
+export const MAX_PLANNED_BREAKS=8;
 
-/** One planned unavailable interval on the same shared local clock as the workday. */
+/** A list of unavailable intervals in one shared local clock. One HH:MM-HH:MM pair per line. */
 export function assessWorkdayBreak(input:WorkdayTimingInput):WorkdayBreakAssessment{
   try{
-    for(const value of [input.breakStart,input.breakFinish])
-      if(value!==undefined&&(typeof value!=='string'||value.length>32))
-        throw new Error('Enter break times as 24-hour HH:MM.');
-    const startMinute=parseServiceClock(input.breakStart??'');
-    const finishMinute=parseServiceClock(input.breakFinish??'',true);
-    if(startMinute===undefined&&finishMinute===undefined)
-      return {status:'not_set',startMinute:null,finishMinute:null,error:''};
-    if(startMinute===undefined||finishMinute===undefined)
-      throw new Error('Enter both a break start and finish, or leave both blank.');
-    if(startMinute>=finishMinute)
-      throw new Error('Break finish must be after start on the same day.');
+    const value=input.breaks;
+    if(value!==undefined&&(typeof value!=='string'||value.length>128))
+      throw new Error('Enter up to eight break intervals, one HH:MM-HH:MM pair per line.');
+    const lines=(value??'').split(/\r?\n/).map(line=>line.trim()).filter(Boolean);
+    if(!lines.length)return {status:'not_set',intervals:[],error:''};
+    if(lines.length>MAX_PLANNED_BREAKS)
+      throw new Error('Enter no more than eight planned breaks.');
+    const intervals=lines.map((line,index)=>{
+      const times=line.split('-');
+      if(times.length!==2||times.some(time=>!time.trim()))
+        throw new Error('Break '+(index+1)+': enter a start and finish as HH:MM-HH:MM.');
+      const startMinute=parseServiceClock(times[0]);
+      const finishMinute=parseServiceClock(times[1],true);
+      if(startMinute===undefined||finishMinute===undefined||startMinute>=finishMinute)
+        throw new Error('Break '+(index+1)+': finish must be later than start on the same day.');
+      return {startMinute,finishMinute};
+    }).sort((a,b)=>a.startMinute-b.startMinute||a.finishMinute-b.finishMinute);
+    for(let index=1;index<intervals.length;index++)
+      if(intervals[index].startMinute<intervals[index-1].finishMinute)
+        throw new Error('Planned breaks cannot overlap.');
     const window=assessWorkdayWindow(input);
-    if(window.status==='invalid')throw new Error('Correct the workday window before setting a break.');
-    if(startMinute<window.startMinute||finishMinute>window.finishMinute)
-      throw new Error('Keep the planned break within the remaining work window, or clear both break times.');
-    return {status:'set',startMinute,finishMinute,error:''};
+    if(window.status==='invalid')throw new Error('Correct the workday window before setting breaks.');
+    if(intervals.some(interval=>interval.startMinute<window.startMinute||interval.finishMinute>window.finishMinute))
+      throw new Error('Keep every planned break within the remaining work window, or clear the break list.');
+    return {status:'set',intervals,error:''};
   }catch(error){
-    return {status:'invalid',startMinute:null,finishMinute:null,
-      error:error instanceof Error?error.message:'Enter a valid planned break.'};
+    return {status:'invalid',intervals:[],
+      error:error instanceof Error?error.message:'Enter valid planned breaks.'};
   }
 }
 export function normalizeWorkdayBreak(input:WorkdayTimingInput):WorkdayBreakInput{
-  const plannedBreak=assessWorkdayBreak(input);
-  if(plannedBreak.status==='invalid')throw new Error(plannedBreak.error);
-  return plannedBreak.status==='not_set'?{}:{
-    breakStart:formatServiceClock(plannedBreak.startMinute),breakFinish:formatServiceClock(plannedBreak.finishMinute)
+  const assessment=assessWorkdayBreak(input);
+  if(assessment.status==='invalid')throw new Error(assessment.error);
+  return assessment.status==='not_set'?{}:{
+    breaks:assessment.intervals.map(interval=>
+      formatServiceClock(interval.startMinute)+'-'+formatServiceClock(interval.finishMinute)
+    ).join('\n')
   };
 }
