@@ -1056,7 +1056,7 @@ function GreenCollarDashboard() {
 
         {tab === 'schedule' && connectedBusiness && businessRoleCapabilities(connectedBusiness.role).manageSchedule && <>
           <Text style={styles.heading}>Workday schedule draft</Text>
-          <Text style={styles.muted}>Build one truck route for the loaded workday. Add multiple crew members, order stops, and assign separate tasks to individual workers. Saving creates or replaces this day’s draft; workers can view only routes they are assigned to.</Text>
+          <Text style={styles.muted}>Build one truck route for the loaded workday. Add multiple crew members, order stops, and assign separate tasks to individual workers. Saving creates a draft only when none exists for this workday. Existing drafts can be inspected but this first editor does not yet hydrate them for editing. Workers can view only routes they are assigned to.</Text>
           {!savedDay && <Text style={styles.muted}>Load today’s saved workday from the Today tab first so eligible service stops are available.</Text>}
           <View style={styles.card}>
             <Text style={styles.cardHeading}>Route and crew</Text>
@@ -1108,6 +1108,7 @@ function GreenCollarDashboard() {
             setScheduleBusy(true);setScheduleError('');setScheduleNotice('');
             try{const token=await getToken({template:'greencollar-api'});if(!token)throw new Error('Sign in first.');
               const loaded=await getWorkdaySchedule(api,connectedBusiness.id,savedDay.date,token).catch(error=>{if(error instanceof Error&&error.message.includes('404'))return null;throw error;});
+              if(loaded){setWorkdaySchedule(loaded);setScheduleNotice('A saved draft exists. This first editor can inspect it but cannot safely overwrite it yet; no changes were made.');return;}
               const workers=[...new Set(scheduleWorkerText.split(/\n|,/).map(v=>v.trim()).filter(Boolean))];
               const startMinute=scheduleClockMinute(scheduleStart),endMinute=scheduleClockMinute(scheduleEnd);
               if(!scheduleTruckId.trim()||!workers.length||startMinute===null||endMinute===null||startMinute>=endMinute)throw new Error('Enter a truck, at least one crew member, and a valid start/end time.');
