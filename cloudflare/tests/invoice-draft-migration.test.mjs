@@ -26,6 +26,12 @@ function fixture({orphan=false}={}){
   return db;
 }
 
+function applyMigration(db,sql){
+  db.exec('BEGIN');
+  try{db.exec(sql);db.exec('COMMIT');}
+  catch(error){db.exec('ROLLBACK');throw error;}
+}
+
 function insertDraft(db,{id,businessId,visitId}){
   db.prepare(`INSERT INTO invoice_drafts(
     id,business_id,service_visit_id,customer_id,customer_name,issued_on,due_on,
@@ -39,7 +45,7 @@ function insertDraft(db,{id,businessId,visitId}){
 test('integrity migration preserves drafts and rejects cross-business or deleted visit links',()=>{
   const db=fixture();
   try{
-    db.exec(migration9);
+    applyMigration(db,migration9);
     const saved=db.prepare('SELECT id,business_id,service_visit_id,unit_price_cents FROM invoice_drafts').get();
     assert.deepEqual(saved,{id:'invoice-a',business_id:'business-a',service_visit_id:'visit-a',unit_price_cents:6500});
     assert.deepEqual(db.prepare('PRAGMA foreign_key_check').all(),[]);
@@ -53,7 +59,8 @@ test('integrity migration preserves drafts and rejects cross-business or deleted
 test('integrity migration fails closed when a prepared draft has no matching visit',()=>{
   const db=fixture({orphan:true});
   try{
-    assert.throws(()=>db.exec(migration9));
+    assert.throws(()=>applyMigration(db,migration9));
     assert.equal(db.prepare('SELECT COUNT(*) AS count FROM invoice_drafts WHERE id=?').get('invoice-a').count,1);
+    assert.equal(db.prepare(\"SELECT COUNT(*) AS count FROM sqlite_master WHERE type='table' AND name='invoice_drafts_next'\").get().count,0);
   }finally{db.close();}
 });
