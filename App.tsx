@@ -6,6 +6,7 @@ import { tokenCache } from '@clerk/expo/token-cache';
 import { fetchDayData, type DayData } from './src/data/greencollar-api';
 import { summarizeSavedDay } from './src/data/saved-day';
 import {createSavedQueueReview,isSavedQueueApproved} from './src/domain/saved-queue-review';
+import {assessServiceWorkload} from './src/domain/service-workload';
 import {orderSavedQueue,moveSavedQueueVisit,type SavedQueueOrder} from './src/domain/saved-queue-order';
 import {localSavedQueueOrder} from './src/data/local-saved-queue-order-native';
 import {localSavedQueueApproval} from './src/data/local-saved-queue-approval-native';
@@ -726,8 +727,7 @@ function GreenCollarDashboard() {
     });
     return ()=>{if(savedQueueApprovalRequest.current===request)savedQueueApprovalRequest.current++;};
   },[userId,connectedBusiness?.id,savedDay?.date,savedQueueReview?.approvalKey,savedQueueOrderReady]);
-  const visible = customers.slice(0, Math.max(0, parseInt(maxJobs, 10) || 0));
-  const estimatedMinutes = visible.reduce((total, c) => total + c.minutes, 0);
+  const workloadPreview=planned?assessServiceWorkload(customers.map(customer=>({id:String(customer.id),minutes:customer.minutes})),hours,maxJobs):null;
   const visibleServerLocationConfirmations=filterLocationConfirmations(serverLocationConfirmations,serverAuditKindFilter,serverAuditSourceFilter);
 
   return (
@@ -961,10 +961,19 @@ function GreenCollarDashboard() {
           <Text style={styles.label}>Maximum jobs</Text>
           <TextInput keyboardType="numeric" style={styles.input} value={maxJobs} onChangeText={v => { setMaxJobs(v); setPlanned(false); }} />
           <Pressable style={styles.primary} onPress={() => setPlanned(true)}><Text style={styles.primaryText}>Preview workload</Text></Pressable>
-          {planned && <View style={styles.card}>
+          {planned && workloadPreview && <View style={styles.card}>
             <Text style={styles.cardHeading}>Workload preview</Text>
-            <Text style={styles.body}>{visible.length} example jobs · {estimatedMinutes} min service time</Text>
-            <Text style={styles.muted}>Available: {hours || '0'} hours. This is NOT an optimized route: road travel, scheduling constraints, and fuel are not yet connected.</Text>
+            {workloadPreview.status==='invalid_hours'?<Text accessibilityLiveRegion="polite" style={styles.muted}>Enter available hours from 0.25 to 24, using up to two decimal places.</Text>
+              :workloadPreview.status==='invalid_job_cap'?<Text accessibilityLiveRegion="polite" style={styles.muted}>Enter a whole job cap from 1 to 200.</Text>
+              :workloadPreview.status==='invalid_jobs'?<Text accessibilityLiveRegion="polite" style={styles.muted}>The sample job list contains an invalid ID or service duration.</Text>
+              :<>
+                <Text style={styles.body}>{workloadPreview.selectedJobCount} example jobs · {workloadPreview.selectedMinutes} estimated service minutes</Text>
+                <Text style={styles.body}>Available: {workloadPreview.availableMinutes} service minutes · {workloadPreview.jobsOutsideCap} sample jobs outside the job cap</Text>
+                {workloadPreview.overtimeMinutes>0
+                  ?<Text accessibilityLiveRegion="polite" style={styles.muted}>Service estimates exceed the available work time by {workloadPreview.overtimeMinutes} minutes.</Text>
+                  :<Text style={styles.muted}>Service estimates fit within the available work time.</Text>}
+                <Text style={styles.muted}>Sample workload only. Travel, breaks, fixed appointments, customer time windows, and fuel are not included; this is not a route or feasibility guarantee.</Text>
+              </>}
           </View>}
         </>}
       </ScrollView>
