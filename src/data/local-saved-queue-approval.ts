@@ -39,7 +39,8 @@ export function createLocalSavedQueueApprovalStore(storage:KeyValueSecureStore,d
     async approve(subject:string,review:SavedQueueReview):Promise<void>{
       if(!subject)throw new Error('Signed-in operator is required');
       if(!review.visitCount)throw new Error('There are no visits to approve');
-      if(!canApproveSavedQueueReview(review))throw new Error(review.appointments?.status==='invalid_visits'
+      if(!canApproveSavedQueueReview(review))throw new Error(review.appointments?.status==='invalid_window'
+        ?'Enter a valid workday window before approving':review.appointments?.status==='invalid_visits'
         ?'Resolve invalid appointment data before approving':'Enter valid workload limits before approving');
       const [key,businessDigest,approvalDigest]=await Promise.all([
         keyFor(subject),
