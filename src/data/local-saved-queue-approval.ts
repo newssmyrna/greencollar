@@ -1,4 +1,4 @@
-import type {SavedQueueReview} from '../domain/saved-queue-review';
+import {canApproveSavedQueueReview,type SavedQueueReview} from '../domain/saved-queue-review';
 
 export type KeyValueSecureStore={
   getItemAsync(key:string):Promise<string|null>;
@@ -27,7 +27,7 @@ export function createLocalSavedQueueApprovalStore(storage:KeyValueSecureStore,d
   }
   return {
     async isApproved(subject:string,review:SavedQueueReview|null):Promise<boolean>{
-      if(!subject||!review||review.visitCount===0)return false;
+      if(!subject||!review||!canApproveSavedQueueReview(review))return false;
       const record=parseRecord(await storage.getItemAsync(await keyFor(subject)));
       if(!record||record.date!==review.date)return false;
       const [businessDigest,approvalDigest]=await Promise.all([
@@ -39,6 +39,7 @@ export function createLocalSavedQueueApprovalStore(storage:KeyValueSecureStore,d
     async approve(subject:string,review:SavedQueueReview):Promise<void>{
       if(!subject)throw new Error('Signed-in operator is required');
       if(!review.visitCount)throw new Error('There are no visits to approve');
+      if(!canApproveSavedQueueReview(review))throw new Error('Enter valid workload limits before approving');
       const [key,businessDigest,approvalDigest]=await Promise.all([
         keyFor(subject),
         digest('business:'+review.businessId),
