@@ -28,6 +28,7 @@ Public references checked 2026-10-13:
 - [Mapbox Matrix API](https://docs.mapbox.com/api/navigation/matrix/)
 - [Mapbox pricing](https://www.mapbox.com/pricing)
 - [Mapbox commercial application licensing](https://www.mapbox.com/pricing#licensing)
+- [Cloudflare Workers Rate Limiting](https://developers.cloudflare.com/workers/runtime-apis/bindings/rate-limit/)
 
 ### Usage estimate and activation gates
 
