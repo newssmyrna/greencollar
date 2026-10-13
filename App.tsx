@@ -1116,7 +1116,7 @@ function GreenCollarDashboard() {
               if(!selected.length)throw new Error('Select at least one stop.');
               const routes=[{routeId:'route-1',truckId:scheduleTruckId.trim(),startMinute,endMinute,workers:workers.map(subject=>({subject,startMinute,endMinute})),stops:selected.map((id,index)=>({visitId:id+':'+savedDay.date,order:index+1,tasks:scheduleTaskDrafts[id]??[]}))}];
               if(routes[0].stops.some(stop=>!stop.tasks.length))throw new Error('Add at least one task to every selected stop.');
-              const saved=await saveWorkdaySchedule(api,token,{businessId:connectedBusiness.id,workDate:savedDay.date,expectedVersion:loaded?.version??0,routes});
+              const saved=await saveWorkdaySchedule(api,token,{businessId:connectedBusiness.id,workDate:savedDay.date,expectedVersion:0,routes});
               setWorkdaySchedule(saved);setScheduleNotice('Draft saved. It is not published to a live route or GPS device.');
             }catch(error){setScheduleError(error instanceof Error?error.message:'Could not save schedule draft.');}
             finally{setScheduleBusy(false);}
