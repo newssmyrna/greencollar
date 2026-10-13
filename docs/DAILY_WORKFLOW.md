@@ -293,21 +293,40 @@ Paths: `App.tsx`, `src/domain/saved-queue-appointments.ts`, `src/domain/saved-qu
 Impact: planned Today input, warnings and approval; planned device-local work-order settings; testing-only synthetic records and regressions; documentation-only handoff. No live pages/posts, customer records, API/schema changes, production settings, provider calls, messages or billing changed. Phase completion measures this feature only, not overall product readiness.
 
 
-## Routing provider readiness screen — Phase #67
+## Edgewater routing provider decision — Phase #67
 
-Date: 2026-10-13. Delivery: prepared for review; documentation-only. Elapsed time: approximately 12 minutes including pilot sizing.
+Date: 2026-10-13. Delivery: review branch, documentation-only. Time: approximately 20 minutes for this selection/policy update; approximately 32 minutes cumulative for the Phase #67 readiness screen and decision.
 
 | Feature / functionality | Phase completion | Impact |
 |---|---:|---|
-| Existing road-adapter contract and activation boundary reviewed | 100% | Documentation only |
-| Google and Mapbox matrix pricing, limits, and commercial gates screened from current official docs | 100% | Documentation only |
-| Edgewater pilot volume modeled at 10 stops/day, including depot and rerun cases | 100% | Documentation only |
-| Privacy, authorization, tenant quota, and hard-spend activation gates recorded | 100% | Documentation only |
-| Provider/account selection and approved spend boundary | 0% | Planned; requires remaining owner inputs |
-| Provider-specific Worker integration and mobile planning flow | 0% | Planned; remains disabled |
+| Edgewater workload and three-truck ceiling model | 100% | Documentation only |
+| Google Routes Compute Route Matrix Essentials provider selected | 100% | Documentation only; inactive |
+| $120/month provider spend boundary and 19,500-element hard-stop policy defined | 100% | Documentation only; enforcement planned |
+| Coordinate notice, minimization, retention, and attribution policy drafted | 100% | Documentation only; public pages planned |
+| Google adapter, authorization, consent gates, and durable meter | 0% | Planned implementation |
+| Mobile live-road workflow and real provider estimates | 0% | Planned; manual/synthetic workflow remains |
+| Provider account, key, billing, live pages/posts, and deployment | 0% | Not configured or published |
 
-**Phase completion: 100% of this readiness-screen scope.** No provider was selected or called.
+**Phase completion: 100% of the provider-selection and policy-definition scope.** This does not mean live routing is functional.
 
-Impacts: `docs/ROAD_PROVIDER.md` and this handoff are documentation-only on the review branch. No app or Worker implementation, public website page, post, provider account, credential, or live deployment changed. GitHub Actions [run #220](https://github.com/newssmyrna/greencollar/actions/runs/38348150465) passed app typecheck and scheduling tests, Worker typecheck, staging Worker bundle dry-run, and authentication gates. No provider routing calls were made.
+### Cost and workload decision
 
-Remaining inputs for integration: number of daily crews/businesses and operating days; whether the depot or operator start point is sent in the matrix; monthly spend limit; customer-coordinate consent/retention policy; and a provider/commercial-terms decision.
+- Owner inputs: Edgewater, Florida; 5 operating days/week; 6 people; 3 trucks.
+- Stated expected volume: 10 stops per operating day. To size the cap conservatively, the meter allows up to 10 stops **per truck** (30 total) per day, two endpoints per truck, and one full rerun. That's 144 matrix elements per truck/pass, 864 per workday including the rerun, and 19,008 per average 22-day work month.
+- Recommended provider limit: **$120/month before tax**, enforced in the eventual server-side meter at **19,500 matrix elements/month**. At the current Google Essentials first paid tier ($5/1,000 elements), the no-free-usage estimate at the stop is $97.50/month. Billing alerts are supplemental only; the application meter is the hard gate.
+- Provider selected: Google Routes API Compute Route Matrix Essentials for standard, traffic-unaware driving-time estimates. Mapbox was not selected because its vehicle-use license includes a separate annual commercial license and may include seat pricing.
+
+### Policy decision
+
+Route requests require an explicit operator action, admin enablement, and notice that coordinates go to Google. Send coordinates only; do not send customer/person identifiers, service notes, employee identifiers, or device GPS. Keep the key in a restricted server secret. Do not log coordinate-bearing requests or persist raw/derived Google route data unless the applicable agreement permits it. Show required attribution. At the monthly stop or on any missing authorization, notice, public privacy/terms page, or meter failure, use manual travel-time entry and make no provider call.
+
+Google requires publicly accessible Terms of Use and a Privacy Policy referencing its own terms/privacy pages. The GreenCollar domain is not owned yet, so those pages and the first provider request remain planned. Truck dimensions/restrictions and any traffic-aware SKU are outside this selection and require a separate review.
+
+### Impact and verification
+
+- Changed on PR #67: `docs/ROAD_PROVIDER.md` and this handoff, both **documentation-only**.
+- Live pages/posts: **none**. Planned pages: public Terms of Use and Privacy Policy on the future GreenCollar domain. Testing-only impact: **none added in this update**; provider calls: **none**.
+- PR #67 remains open and review-only. The previous head's Actions run #222 passed app typecheck and scheduling tests, Worker typecheck, staging Worker bundle dry-run, and authentication gates. Check Actions on the new documentation head before handoff.
+- No app/Worker implementation, account, key, billing configuration, production setting, customer data, or deployment changed.
+
+Next phase: implement the server-side Google adapter, atomic monthly element reservation, operator/admin authorization and notice gates, result-discard policy, mobile/manual fallback, and tests. Keep routing disabled until public policies exist and the spend gate is verified.
