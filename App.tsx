@@ -67,6 +67,7 @@ const green = '#183d2b';
 const pale = '#d5f48b';
 
 function scheduleClockMinute(value:string):number|null{const m=/^(\d{1,2}):(\d{2})$/.exec(value.trim());if(!m)return null;const h=Number(m[1]),minute=Number(m[2]);return h<=23&&minute<=59?h*60+minute:null;}
+function scheduleMinuteClock(value:number):string{return String(Math.floor(value/60)).padStart(2,'0')+':'+String(value%60).padStart(2,'0');}
 function savedQueueTravelKey(fromVisitId:string|null,toVisitId:string):string{
   return JSON.stringify([fromVisitId,toVisitId]);
 }
