@@ -72,8 +72,7 @@ test('draft save allows shifts outside absence and does not treat lunch as a ful
 });
 
 test('supports a per-worker lunch block inside the shift and returns it in the saved draft',async()=>{
- const routes=structuredClone(base.routes);
- routes[0].workers[0]={...routes[0].workers[0],breaks:[{startMinute:720,endMinute:750}]};
+ const routes=base.routes.map(route=>({...route,workers:route.workers.map(worker=>worker.subject==='worker-a'?{...worker,breaks:[{startMinute:720,endMinute:750}]}:worker)}));
  const f=fixture(),url=new URL('https://api.test/v1/workday-schedules');
  const response=await api(req('POST',{...base,routes}),f.env,url);
  assert.equal(response.status,201);
@@ -88,7 +87,7 @@ test('rejects lunch outside a shift, overlapping lunch blocks, or too many break
   [{startMinute:600,endMinute:610},{startMinute:620,endMinute:630},{startMinute:640,endMinute:650},{startMinute:660,endMinute:670}]
  ];
  for(const breaks of lunchCases){
-  const routes=structuredClone(base.routes);routes[0].workers[0]={...routes[0].workers[0],breaks};
+  const routes=base.routes.map(route=>({...route,workers:route.workers.map(worker=>worker.subject==='worker-a'?{...worker,breaks}:worker)}));
   const response=await api(req('POST',{...base,routes}),fixture().env,url);
   assert.equal(response.status,400);
  }
