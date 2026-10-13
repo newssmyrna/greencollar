@@ -30,6 +30,7 @@ import {loadWorkSession,saveWorkSession} from './src/data/local-work-session';
 import {listServiceLocations,createServiceLocation,type SavedServiceLocation} from './src/data/service-location-api';
 import {listServiceAgreements,createServiceAgreement,type SavedServiceAgreement} from './src/data/service-agreement-api';
 import {dollarsToCents,localCalendarDate} from './src/domain/service-agreement';
+import {parseServiceClock,describeServiceTimeConstraints} from './src/domain/service-time';
 import {generateDueVisits,type Frequency} from './src/domain/recurrence';
 import {assessProximity,createLocationConfirmation,type ProximityAssessment,type LocationConfirmation} from './src/domain/location-assist';
 import {loadLocationConfirmations,saveLocationConfirmation,markLocationConfirmationSynced,pendingLocationConfirmations,type StoredLocationConfirmation} from './src/data/local-location-confirmations';
@@ -88,6 +89,9 @@ function GreenCollarDashboard() {
   const [agreementEnd,setAgreementEnd]=useState('');
   const [agreementFrequency,setAgreementFrequency]=useState<Frequency>('weekly');
   const [agreementInterval,setAgreementInterval]=useState('7');
+  const [agreementEarliest,setAgreementEarliest]=useState('');
+  const [agreementLatest,setAgreementLatest]=useState('');
+  const [agreementFixed,setAgreementFixed]=useState('');
   const [agreementError,setAgreementError]=useState('');
   const [agreementNotice,setAgreementNotice]=useState('');
   const [agreementLoading,setAgreementLoading]=useState(false);
@@ -98,7 +102,9 @@ function GreenCollarDashboard() {
         id:a.id,customerId:a.customer_id,locationId:a.location_id,serviceName:a.service_name,
         rateCents:a.rate_cents,estimatedMinutes:a.estimated_minutes,startsOn:a.starts_on,
         endsOn:a.ends_on??undefined,frequency:a.frequency as Frequency,intervalDays:a.interval_days??undefined,
-        daysOfWeek:a.days_of_week?JSON.parse(a.days_of_week):undefined,active:a.active===1
+        daysOfWeek:a.days_of_week?JSON.parse(a.days_of_week):undefined,active:a.active===1,
+        preferredStartMinute:a.preferred_start_minute??undefined,preferredFinishMinute:a.preferred_finish_minute??undefined,
+        fixedStartMinute:a.fixed_start_minute??undefined
       })),agreementStart,agreementStart);
       return due.length+' recurring services scheduled for '+agreementStart+'. Completion status is shown on Today.';
     }catch{return 'Enter a valid start date to preview scheduled services.';}
@@ -111,14 +117,20 @@ function GreenCollarDashboard() {
     const sequence=locationRequest.current;
     try{
       if(!/^\d{1,4}$/.test(agreementMinutes.trim()))throw new Error('Enter estimated duration in whole minutes');
+      const timing={
+        preferredStartMinute:parseServiceClock(agreementEarliest),
+        preferredFinishMinute:parseServiceClock(agreementLatest,true),
+        fixedStartMinute:parseServiceClock(agreementFixed)
+      };
       const token=await getToken({template:'greencollar-api'});if(!token)throw new Error('Sign in first');
       const saved=await createServiceAgreement(api,connectedBusiness.id,locationCustomerId,token,{
         locationId:agreementLocationId,serviceName:agreementName,rateCents:dollarsToCents(agreementPrice),
         estimatedMinutes:Number(agreementMinutes),startsOn:agreementStart,endsOn:agreementEnd||undefined,
-        frequency:agreementFrequency,...(agreementFrequency==='custom'?{intervalDays:Number(agreementInterval)}:{})
+        frequency:agreementFrequency,...(agreementFrequency==='custom'?{intervalDays:Number(agreementInterval)}:{}),...timing
       });
       if(sequence!==locationRequest.current)return;
       setServiceAgreements(previous=>[...previous,saved]);setAgreementName('');setAgreementPrice('');
+      setAgreementEarliest('');setAgreementLatest('');setAgreementFixed('');
       setAgreementNotice('Recurring service saved.');
       // A failed follow-up read must not turn a successful write into a retryable save error.
       try{
@@ -134,6 +146,7 @@ function GreenCollarDashboard() {
     setLocationAddress('');setLocationPreferences('');setLocationLat('');setLocationLon('');setLocationError('');
     setServiceAgreements([]);setAgreementsHaveMore(false);setAgreementLocationId('');
     setAgreementName('');setAgreementPrice('');setAgreementError('');setAgreementNotice('');
+    setAgreementEarliest('');setAgreementLatest('');setAgreementFixed('');
     const api=process.env.EXPO_PUBLIC_GREENCOLLAR_API_URL;
     if(!api||!connectedBusiness){setLocationError('Load your business first');return;}
     setLocationLoading(true);
@@ -185,6 +198,7 @@ function GreenCollarDashboard() {
   const [loadingSaved,setLoadingSaved] = useState(false);
   const [businessName,setBusinessName] = useState('');
   const [connectedBusiness,setConnectedBusiness] = useState<{id:string;name:string}|null>(null);
+  useEffect(()=>{setAgreementEarliest('');setAgreementLatest('');setAgreementFixed('');},[userId,connectedBusiness?.id]);
   useEffect(()=>{setInvoiceDrafts([]);invoiceDraftSnapshot.current.clear();setInvoiceError('');},[userId,connectedBusiness?.id]);
   async function saveCompletedService() {
     if(!connectedBusiness||!savedDay||!workSession||workSession.status!=='completed'||workSession.jobId==='demo-job')
@@ -270,7 +284,7 @@ function GreenCollarDashboard() {
     if(!savedQueueReview||!currentSavedQueueContext.current.canApprove||savedQueueApprovalChecking||savedQueueApprovalBusy)return;
     const review=savedQueueReview;
     const workloadDetails=review.workload?describeSavedQueueWorkload(review.workload)+' All visits remain in this queue. Travel, breaks and appointment timing are not assessed.\n\n':'';
-    const details=workloadDetails+review.visitCount+' scheduled visits · '+review.estimatedServiceMinutes+' estimated service minutes · $'+(review.expectedRevenueCents/100).toFixed(2)+' expected revenue. This is the saved work order; travel is not optimized.\n\n'+savedQueueVisits.map((visit,index)=>(index+1)+'. '+visit.customer+' · '+visit.service).join('\n');
+    const details=workloadDetails+review.visitCount+' scheduled visits · '+review.estimatedServiceMinutes+' estimated service minutes · $'+(review.expectedRevenueCents/100).toFixed(2)+' expected revenue. This is the saved work order; travel is not optimized.\n\n'+savedQueueVisits.map((visit,index)=>(index+1)+'. '+visit.customer+' · '+visit.service+' · '+describeServiceTimeConstraints(visit)).join('\n');
     Alert.alert("Review today's work queue",details,[
       {text:'Keep reviewing',style:'cancel'},
       {text:review.workload?.status==='over_limits'?'Approve with workload warnings':'Approve work queue',onPress:()=>void persistSavedQueueApproval(review)}
@@ -902,7 +916,7 @@ function GreenCollarDashboard() {
               <Text style={styles.muted}>Saved limits restore on this device for the same operator, business and date. They do not sync across devices. After completing work, update and save the budget for the remaining visits.</Text>
             </View>}
             <Pressable accessibilityRole="button" accessibilityState={{disabled:!savedQueueCanApprove||savedQueueApprovalChecking||savedQueueApprovalBusy}} style={styles.primary} disabled={!savedQueueCanApprove||savedQueueApprovalChecking||savedQueueApprovalBusy} onPress={requestSavedQueueApproval}><Text style={styles.primaryText}>{!savedQueueOrderReady?'Restore work order before approval':savedQueueOrderSaveBusy?'Saving work order…':savedQueueApprovalChecking?'Checking saved approval…':savedQueueApprovalBusy?'Saving approval…':savedQueueApproved?'Work queue approved on this device':'Review and approve work queue'}</Text></Pressable>
-            {!!savedQueueApprovalError&&<Text accessibilityLiveRegion="polite" style={styles.muted}>{savedQueueApprovalError}</Text>}{!savedQueueApproved&&savedDueSummary.pendingCount>0&&<Text style={styles.muted}>Review the current work order before starting a saved visit. Approval is saved securely on this device and tied to this business, date, visit order, estimates and workload limits; changes require review again.</Text>}
+            {!!savedQueueApprovalError&&<Text accessibilityLiveRegion="polite" style={styles.muted}>{savedQueueApprovalError}</Text>}{!savedQueueApproved&&savedDueSummary.pendingCount>0&&<Text style={styles.muted}>Review the current work order before starting a saved visit. Approval is saved securely on this device and tied to this business, date, visit order, estimates, appointment times and workload limits; changes require review again.</Text>}
             {!!visitSkipNotice&&<Text accessibilityLiveRegion="polite" style={styles.body}>{visitSkipNotice}</Text>}
             {!!visitSkipError&&<Text accessibilityLiveRegion="polite" style={styles.muted}>{visitSkipError}</Text>}
             <Text style={styles.muted}>Use Move earlier or Move later to choose your work order. Changes save securely on this device and restore for this operator, business, and date. Appointment times are unchanged and arrival times are not calculated.</Text>
@@ -913,6 +927,7 @@ function GreenCollarDashboard() {
             <Pressable accessibilityRole="button" accessibilityState={{disabled:savedQueueEditingLocked||!savedQueueReordered}} style={[styles.primary,{backgroundColor:'#f0f5ef'}]} disabled={savedQueueEditingLocked||!savedQueueReordered} onPress={resetSavedQueueOrder}><Text style={styles.primaryText}>Restore saved order</Text></Pressable>
             {savedQueueVisits.map((j,index)=><View key={j.id}>
               <Text style={styles.body}>{index+1}. {j.customer} · {j.service} · {j.address}</Text>
+              <Text style={styles.muted}>{describeServiceTimeConstraints(j)}</Text>
               <View style={{flexDirection:'row',flexWrap:'wrap',gap:8}}>
                 <Pressable accessibilityRole="button" accessibilityLabel={'Move '+j.customer+' '+j.service+' earlier'} accessibilityState={{disabled:savedQueueEditingLocked||index===0}} style={[styles.primary,{backgroundColor:'#f0f5ef'}]} disabled={savedQueueEditingLocked||index===0} onPress={()=>changeSavedQueueOrder(j.id,'earlier')}><Text style={styles.primaryText}>Move earlier</Text></Pressable>
                 <Pressable accessibilityRole="button" accessibilityLabel={'Move '+j.customer+' '+j.service+' later'} accessibilityState={{disabled:savedQueueEditingLocked||index===savedQueueVisits.length-1}} style={[styles.primary,{backgroundColor:'#f0f5ef'}]} disabled={savedQueueEditingLocked||index===savedQueueVisits.length-1} onPress={()=>changeSavedQueueOrder(j.id,'later')}><Text style={styles.primaryText}>Move later</Text></Pressable>
@@ -970,7 +985,7 @@ function GreenCollarDashboard() {
             <Text style={styles.muted}>Choose a saved address and enter the agreed service price and schedule.</Text>
             {!locations.length&&<Text style={styles.muted}>Save a service address above to begin.</Text>}
             {locations.map(l=><Pressable key={l.id} accessibilityRole="button" accessibilityState={{selected:l.id===agreementLocationId}} style={styles.primary} disabled={locationLoading||agreementLoading} onPress={()=>setAgreementLocationId(l.id)}><Text style={styles.primaryText}>{l.id===agreementLocationId?'Selected: ':''}{l.address}</Text></Pressable>)}
-            {serviceAgreements.map(a=><View key={a.id}><Text style={styles.body}>{a.service_name} · ${(a.rate_cents/100).toFixed(2)} · {a.estimated_minutes} min</Text><Text style={styles.muted}>{a.address} · {a.frequency}{a.interval_days?' every '+a.interval_days+' days':''} · starts {a.starts_on}{a.ends_on?' · ends '+a.ends_on:''}</Text></View>)}
+            {serviceAgreements.map(a=><View key={a.id}><Text style={styles.body}>{a.service_name} · ${(a.rate_cents/100).toFixed(2)} · {a.estimated_minutes} min</Text><Text style={styles.muted}>{a.address} · {a.frequency}{a.interval_days?' every '+a.interval_days+' days':''} · starts {a.starts_on}{a.ends_on?' · ends '+a.ends_on:''}</Text><Text style={styles.muted}>{describeServiceTimeConstraints({preferredStartMinute:a.preferred_start_minute??undefined,preferredFinishMinute:a.preferred_finish_minute??undefined,fixedStartMinute:a.fixed_start_minute??undefined})}</Text></View>)}
             {agreementsHaveMore&&<Text style={styles.muted}>Showing the first 200 recurring services. Additional services exist.</Text>}
             {!!serviceAgreements.length&&<Text style={styles.muted}>{scheduledServicePreview()}</Text>}
             {!!agreementLocationId&&<>
@@ -978,6 +993,15 @@ function GreenCollarDashboard() {
               <TextInput accessibilityLabel="Agreed service price in USD" style={styles.input} placeholder="Price per visit (USD)" placeholderTextColor="#819b8b" keyboardType="decimal-pad" value={agreementPrice} onChangeText={setAgreementPrice} editable={!agreementLoading}/>
               <Text style={styles.label}>Estimated duration in minutes</Text>
               <TextInput accessibilityLabel="Estimated service minutes" style={styles.input} keyboardType="number-pad" value={agreementMinutes} onChangeText={setAgreementMinutes} editable={!agreementLoading}/>
+              <Text style={styles.label}>Appointment times (optional)</Text>
+              <Text style={styles.muted}>Use the service location’s local time in 24-hour HH:MM. Set a fixed start, a service window, or both. Leave blank for flexible timing. These times apply to every occurrence.</Text>
+              <Text style={styles.label}>Earliest start</Text>
+              <TextInput accessibilityLabel="Optional earliest service start" style={styles.input} placeholder="Earliest start, for example 09:00" placeholderTextColor="#819b8b" value={agreementEarliest} onChangeText={setAgreementEarliest} maxLength={5} autoCapitalize="none" autoCorrect={false} editable={!agreementLoading}/>
+              <Text style={styles.label}>Latest finish</Text>
+              <TextInput accessibilityLabel="Optional latest service finish" style={styles.input} placeholder="Latest finish, for example 12:00" placeholderTextColor="#819b8b" value={agreementLatest} onChangeText={setAgreementLatest} maxLength={5} autoCapitalize="none" autoCorrect={false} editable={!agreementLoading}/>
+              <Text style={styles.label}>Fixed start</Text>
+              <TextInput accessibilityLabel="Optional fixed appointment start" style={styles.input} placeholder="Fixed start, for example 10:30" placeholderTextColor="#819b8b" value={agreementFixed} onChangeText={setAgreementFixed} maxLength={5} autoCapitalize="none" autoCorrect={false} editable={!agreementLoading}/>
+              <Text style={styles.muted}>The estimated service must finish within the same day and any saved window. Only latest finish accepts 24:00. Travel, breaks and conflicts with other visits are not checked here.</Text>
               <Text style={styles.label}>Start date (YYYY-MM-DD)</Text>
               <TextInput accessibilityLabel="Service start date" style={styles.input} value={agreementStart} onChangeText={setAgreementStart} editable={!agreementLoading}/>
               <TextInput accessibilityLabel="Optional service end date" style={styles.input} placeholder="End date YYYY-MM-DD (optional)" placeholderTextColor="#819b8b" value={agreementEnd} onChangeText={setAgreementEnd} editable={!agreementLoading}/>
