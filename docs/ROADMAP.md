@@ -91,3 +91,10 @@ Keep every change narrowly scoped and tested; never silently remove agreed featu
 - Let the owner/admin adjust, remove, or add worker-specific lunch intervals before saving.
 - Keep sick/unavailable overlap as a server-side hard conflict; never convert reported events into a published route automatically.
 - Test event-to-worker mapping and preserve date and business scope.
+
+## Phase 82 — Reported crew availability in schedule editor
+- Load the selected workday's business-scoped availability with the verified crew roster.
+- Display each selected worker's break, sick, and unavailable intervals.
+- Prefill editable lunch blocks from reported breaks; preserve all reported intervals and allow manager corrections before draft save.
+- Clear cached availability when the business or work date changes, and ignore stale roster requests.
+- Keep sick/unavailable overlap enforcement on the server; a report never publishes or changes a route by itself.
