@@ -727,7 +727,7 @@ function GreenCollarDashboard() {
     });
     return ()=>{if(savedQueueApprovalRequest.current===request)savedQueueApprovalRequest.current++;};
   },[userId,connectedBusiness?.id,savedDay?.date,savedQueueReview?.approvalKey,savedQueueOrderReady]);
-  const workloadPreview=planned?assessServiceWorkload(customers,hours,maxJobs):null;
+  const workloadPreview=planned?assessServiceWorkload(customers.map(customer=>({id:String(customer.id),minutes:customer.minutes})),hours,maxJobs):null;
   const visibleServerLocationConfirmations=filterLocationConfirmations(serverLocationConfirmations,serverAuditKindFilter,serverAuditSourceFilter);
 
   return (
