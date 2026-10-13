@@ -5,8 +5,8 @@
 **PR:** [#82 — safely edit saved single-route workday drafts](https://github.com/newssmyrna/greencollar/pull/82)  
 **Branch:** `codex/phase-single-route-draft-edit`  
 **Base:** `codex/phase-schedule-reported-lunch` at `fd9874d8d250c9699f9704d50e688d42a566682c`  
-**Implementation commit:** `f0b54d7aff3af185c8b34050e8520ac53ade6184`  
-**CI:** run #264 passed app typecheck/tests and Worker typecheck, staging bundle dry-run, and auth-gate tests on the implementation commit.
+**Implementation commit:** `4b547ee3d27894d9ee3a1db981e405eb0e667d94` (includes business/date response-scope checks).  
+**CI:** run #266 passed app typecheck/tests and Worker typecheck, staging bundle dry-run, and auth-gate tests on the implementation commit.
 
 ## Scope
 
@@ -24,7 +24,7 @@ The update path checks the current server version before submitting, then uses t
 
 ## Limits and next action
 
-No independent QA, iPhone/Android device acceptance, staging deployment, hosted data write, route publication, or customer communication was performed. The docs-only follow-up commit will trigger CI again.
+No independent QA, iPhone/Android device acceptance, staging deployment, hosted data write, route publication, or customer communication was performed. This PR remains unmerged and undeployed.
 
 **Next owner:** PROOF / independent reviewer.  
 **Exact next action:** review PR #82 against the single-route preservation and version-conflict cases; after approval, SWITCH can merge it into its base branch. Keep multi-route drafts read-only until the editor supports their complete shape.
