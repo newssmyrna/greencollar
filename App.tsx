@@ -251,7 +251,7 @@ function GreenCollarDashboard() {
   const [weatherInboxBusy,setWeatherInboxBusy]=useState(false);
   const [weatherInboxError,setWeatherInboxError]=useState('');
   useEffect(()=>{setAgreementEarliest('');setAgreementLatest('');setAgreementFixed('');setScheduleMembers([]);setScheduleWorkerSubjects([]);setScheduleLunchBlocks({});setScheduleAvailability([]);setScheduleTaskWorker('');setWorkdaySchedule(null);},[userId,connectedBusiness?.id]);
-  useEffect(()=>{setScheduleLunchBlocks({});setScheduleAvailability([]);setWorkdaySchedule(null);},[userId,connectedBusiness?.id,savedDay?.date]);
+  useEffect(()=>{scheduleRosterRequest.current++;setScheduleRosterBusy(false);setScheduleLunchBlocks({});setScheduleAvailability([]);setWorkdaySchedule(null);},[userId,connectedBusiness?.id,savedDay?.date]);
   useEffect(()=>{
     routingSettingsRequest.current++;
     routingSettingsBusyRef.current=false;
@@ -450,6 +450,7 @@ function GreenCollarDashboard() {
   const [scheduleEnd,setScheduleEnd]=useState('17:00');
   const [scheduleMembers,setScheduleMembers]=useState<BusinessMember[]>([]);
   const [scheduleRosterBusy,setScheduleRosterBusy]=useState(false);
+  const scheduleRosterRequest=useRef(0);
   const [scheduleWorkerSubjects,setScheduleWorkerSubjects]=useState<string[]>([]);
   const [scheduleLunchBlocks,setScheduleLunchBlocks]=useState<Record<string,Array<{start:string;end:string}>>>({});
   const [scheduleAvailability,setScheduleAvailability]=useState<CrewAvailability[]>([]);
@@ -1077,7 +1078,7 @@ function GreenCollarDashboard() {
             <Text style={styles.label}>Business crew</Text>
             <Pressable accessibilityRole="button" style={styles.primary} disabled={scheduleRosterBusy} onPress={async()=>{
               const api=process.env.EXPO_PUBLIC_GREENCOLLAR_API_URL;if(!api||!connectedBusiness){setScheduleError('Load a business and configure the API URL first.');return;}
-              setScheduleRosterBusy(true);setScheduleError('');
+              const request=++scheduleRosterRequest.current;setScheduleRosterBusy(true);setScheduleError('');
               if(!savedDay){setScheduleError('Load a saved workday first so crew availability uses the correct date.');setScheduleRosterBusy(false);return;}
               try{
                 const token=await getToken({template:'greencollar-api'});if(!token)throw new Error('Sign in first.');
@@ -1085,6 +1086,7 @@ function GreenCollarDashboard() {
                   listWorkdayMembers(api,connectedBusiness.id,token),
                   listAvailability(api,connectedBusiness.id,savedDay.date,token)
                 ]);
+                if(request!==scheduleRosterRequest.current)return;
                 const reportedLunch=reportedLunchBlocks(availability);
                 setScheduleMembers(members);setScheduleAvailability(availability);
                 setScheduleWorkerSubjects(current=>current.filter(subject=>members.some(member=>member.subject===subject)));
@@ -1095,8 +1097,8 @@ function GreenCollarDashboard() {
                 });
                 setScheduleNotice(members.length+' verified business member(s) and '+availability.length+' availability event(s) loaded for '+savedDay.date+'. Reported breaks are prefilled; review each shift before saving.');
               }
-              catch(error){setScheduleError(error instanceof Error?error.message:'Could not load business crew.');}
-              finally{setScheduleRosterBusy(false);}
+              catch(error){if(request===scheduleRosterRequest.current)setScheduleError(error instanceof Error?error.message:'Could not load business crew.');}
+              finally{if(request===scheduleRosterRequest.current)setScheduleRosterBusy(false);}
             }}><Text style={styles.primaryText}>{scheduleRosterBusy?'Loading crew…':'Load business crew'}</Text></Pressable>
             {!scheduleMembers.length?<Text style={styles.muted}>Load the verified owner/admin/worker roster, then select everyone assigned to this route.</Text>:scheduleMembers.map(member=>{
               const selected=scheduleWorkerSubjects.includes(member.subject);
