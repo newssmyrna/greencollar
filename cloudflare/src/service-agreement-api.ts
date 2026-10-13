@@ -36,12 +36,13 @@ export function createServiceAgreementApi(authenticate:typeof authenticatedSubje
    const id=crypto.randomUUID();
    const agreement={id,customer_id:customerId,location_id:input.locationId,service_name:input.serviceName,rate_cents:input.rateCents,
     estimated_minutes:input.estimatedMinutes,starts_on:input.startsOn,ends_on:input.endsOn??null,frequency:input.frequency,
-    interval_days:input.intervalDays??null,days_of_week:null,preferred_start_minute:null,preferred_finish_minute:null,
-    fixed_start_minute:null,active:1,address:location.address,preferences:location.preferences};
+    interval_days:input.intervalDays??null,days_of_week:null,preferred_start_minute:input.preferredStartMinute??null,preferred_finish_minute:input.preferredFinishMinute??null,
+    fixed_start_minute:input.fixedStartMinute??null,active:1,address:location.address,preferences:location.preferences};
    const result=await env.DB.prepare(
-    'INSERT INTO service_agreements(id,business_id,customer_id,location_id,service_name,rate_cents,estimated_minutes,starts_on,ends_on,frequency,interval_days,active) SELECT ?,?,?,?,?,?,?,?,?,?,?,1 WHERE EXISTS (SELECT 1 FROM service_locations l JOIN customers c ON c.id=l.customer_id AND c.business_id=l.business_id WHERE l.id=? AND l.business_id=? AND l.customer_id=?)'
+    'INSERT INTO service_agreements(id,business_id,customer_id,location_id,service_name,rate_cents,estimated_minutes,starts_on,ends_on,frequency,interval_days,preferred_start_minute,preferred_finish_minute,fixed_start_minute,active) SELECT ?,?,?,?,?,?,?,?,?,?,?,?,?,?,1 WHERE EXISTS (SELECT 1 FROM service_locations l JOIN customers c ON c.id=l.customer_id AND c.business_id=l.business_id WHERE l.id=? AND l.business_id=? AND l.customer_id=?)'
    ).bind(id,businessId,customerId,input.locationId,input.serviceName,input.rateCents,input.estimatedMinutes,
-    input.startsOn,input.endsOn??null,input.frequency,input.intervalDays??null,input.locationId,businessId,customerId).run();
+    input.startsOn,input.endsOn??null,input.frequency,input.intervalDays??null,
+    input.preferredStartMinute??null,input.preferredFinishMinute??null,input.fixedStartMinute??null,input.locationId,businessId,customerId).run();
    if(result.meta.changes!==1)return json({error:'location_not_found'},404);
    return json({agreement},201);
   }catch{return json({error:'agreement_storage_unavailable'},503);}
