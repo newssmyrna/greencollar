@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import {startWork,pauseWork,resumeWork,completeWork,getElapsedMinutes,completionRecord} from '../src/domain/work-session';
+import {startWork,pauseWork,resumeWork,completeWork,getElapsedMinutes,completionRecord,markWorkSessionSavedIfCurrent} from '../src/domain/work-session';
 
 test('pause time does not count toward work duration',()=>{
  const a=startWork('visit-1',100000);
@@ -54,4 +54,13 @@ test('scheduled visit identity and save status survive serialization',()=>{
 test('scheduled visit identity must be valid',()=>{
  assert.throws(()=>startWork('agreement-1:bad-date',1000,{businessId:'business-1',serviceDate:'2026-02-30'}),/Invalid scheduled visit/);
  assert.throws(()=>startWork('agreement-1:date',1000,{businessId:' ',serviceDate:'2026-10-12'}),/Invalid scheduled visit/);
+});
+
+
+test('late save response cannot mark a replacement timer as saved',()=>{
+ const completed=completeWork(startWork('visit-1',1000),2000);
+ const replacement=completeWork(startWork('visit-2',3000),4000);
+ assert.equal(markWorkSessionSavedIfCurrent(replacement,completed),replacement);
+ assert.equal(replacement.completionSaved,false);
+ assert.equal(markWorkSessionSavedIfCurrent(completed,completed)?.completionSaved,true);
 });
