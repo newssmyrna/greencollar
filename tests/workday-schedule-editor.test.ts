@@ -71,6 +71,11 @@ test('requires every selected stop to keep a task and every task to have a name 
   },['worker-a'])??'',/80 characters/);
 });
 
+test('limits each stop to 20 tasks',()=>{
+  const tasks=Array.from({length:21},(_,index)=>({taskId:'task-'+index,label:'Mow',assignedSubjects:['worker-a'],estimatedMinutes:45}));
+  assert.match(validateScheduleTasksForCrew(['agreement-a'],{'agreement-a':tasks},['worker-a'])??'',/no more than 20 tasks/);
+});
+
 test('requires task assignment to at least one worker on the selected route',()=>{
   assert.match(validateScheduleTasksForCrew(['agreement-a'],{
     'agreement-a':[{taskId:'task-a',label:'Mow',assignedSubjects:[],estimatedMinutes:45}]
@@ -106,4 +111,11 @@ test('keeps saved tasks read-only when task IDs are duplicated within a stop',()
   const schedule=sampleSchedule();
   schedule.routes[0].stops[0].tasks.push({...schedule.routes[0].stops[0].tasks[0],taskId:schedule.routes[0].stops[0].tasks[0].taskId});
   assert.throws(()=>hydrateSingleRouteDraft(schedule,'business-a',workDate,['agreement-a','agreement-b']),/saved task has invalid data/);
+});
+
+
+test('keeps saved stops read-only when they exceed the task count limit',()=>{
+  const schedule=sampleSchedule();
+  schedule.routes[0].stops[0].tasks=Array.from({length:21},(_,index)=>({taskId:'task-'+index,label:'Mow',assignedSubjects:['worker-a'],estimatedMinutes:45}));
+  assert.throws(()=>hydrateSingleRouteDraft(schedule,'business-a',workDate,['agreement-a','agreement-b']),/saved stop has invalid task data/);
 });

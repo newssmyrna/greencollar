@@ -1159,8 +1159,10 @@ function GreenCollarDashboard() {
                   {scheduleWorkerSubjects.map(subject=><Pressable key={subject} accessibilityRole="button" accessibilityState={{selected:scheduleTaskWorker===subject}} style={styles.primary} onPress={()=>setScheduleTaskWorker(subject)}><Text style={styles.primaryText}>{scheduleTaskWorker===subject?'✓ ':''}{subject}</Text></Pressable>)}
                   <Text style={styles.label}>Estimated task minutes</Text>
                   <TextInput accessibilityLabel="Estimated task minutes" keyboardType="numeric" style={styles.input} value={scheduleTaskMinutes} onChangeText={setScheduleTaskMinutes} />
-                  <Pressable accessibilityRole="button" style={styles.primary} onPress={()=>{
+                  {tasks.length>=20&&<Text style={styles.muted}>This stop has reached the 20-task draft limit.</Text>}
+                  <Pressable accessibilityRole="button" style={styles.primary} disabled={scheduleBusy||tasks.length>=20} onPress={()=>{
                     const minutes=Number(scheduleTaskMinutes),worker=scheduleTaskWorker;
+                    if((scheduleTaskDrafts[agreement.id]??[]).length>=20){setScheduleError('Each stop can have no more than 20 tasks.');return;}
                     if(!worker||!Number.isInteger(minutes)||minutes<1||minutes>1440){setScheduleError('Choose a crew member and enter task minutes from 1 to 1440.');return;}
                     setScheduleError('');
                     setScheduleTaskDrafts(current=>({...current,[agreement.id]:[...(current[agreement.id]??[]),{taskId:'task-'+Date.now()+'-'+(current[agreement.id]??[]).length,label:scheduleTaskLabel.trim()||agreement.service_name,assignedSubjects:[worker],estimatedMinutes:minutes}]}));

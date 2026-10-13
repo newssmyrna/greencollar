@@ -71,7 +71,7 @@ export function hydrateSingleRouteDraft(
     const agreementId=stop.visitId.slice(0,-suffix.length);
     if(!agreementId||!allowed.has(agreementId))throw new Error('A saved stop is no longer available in the loaded workday; the draft remains read-only.');
     if(seen.has(agreementId))throw new Error('The saved route contains a duplicate stop and remains read-only.');
-    if(!Array.isArray(stop.tasks))throw new Error('A saved stop has invalid task data and remains read-only.');
+    if(!Array.isArray(stop.tasks)||stop.tasks.length>20)throw new Error('A saved stop has invalid task data and remains read-only.');
     const seenTaskIds=new Set<string>();
     for(const task of stop.tasks){
       if(typeof task.taskId!=='string'||!/^[a-zA-Z0-9_-]{1,100}$/.test(task.taskId)||seenTaskIds.has(task.taskId)||
@@ -110,6 +110,7 @@ export function validateScheduleTasksForCrew(
   for(const agreementId of agreementIds){
     const tasks=tasksByAgreement[agreementId]??[];
     if(tasks.length===0)return 'Add at least one task to every selected stop.';
+    if(tasks.length>20)return 'Each stop can have no more than 20 tasks.';
     const taskIds=new Set<string>();
     for(const task of tasks){
       if(typeof task.taskId!=='string'||!/^[a-zA-Z0-9_-]{1,100}$/.test(task.taskId)||taskIds.has(task.taskId))
