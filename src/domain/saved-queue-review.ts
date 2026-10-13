@@ -1,6 +1,7 @@
+import type {ServiceTimeConstraints} from './service-time';
 import {assessSavedQueueWorkload,type SavedQueueWorkloadLimits,type SavedQueueWorkloadAssessment} from './saved-queue-workload';
 
-export type QueueReviewVisit={
+export type QueueReviewVisit=ServiceTimeConstraints&{
   id:string;
   customer:string;
   service:string;
@@ -31,9 +32,9 @@ export function createSavedQueueReview(businessId:string,date:string,visits:Queu
     if(!Number.isFinite(visit.estimatedMinutes)||visit.estimatedMinutes<0)throw new Error('Visit durations must be valid');
   }
   const workload=limits?assessSavedQueueWorkload(visits,limits):null;
-  const snapshot=[businessId,date,visits.map(v=>[v.id,v.rateCents,v.estimatedMinutes])];
+  const snapshot=[businessId,date,visits.map(v=>[v.id,v.rateCents,v.estimatedMinutes,v.preferredStartMinute??null,v.preferredFinishMinute??null,v.fixedStartMinute??null])];
   const approvalKey=JSON.stringify(limits
-    ?['saved-queue-workload-v1',...snapshot,workload?.status,workload?.availableMinutes,workload?.maxJobs]
+    ?['saved-queue-workload-v2',...snapshot,workload?.status,workload?.availableMinutes,workload?.maxJobs]
     :snapshot);
   return {
     businessId,date,visitIds:visits.map(v=>v.id),visitCount:visits.length,
