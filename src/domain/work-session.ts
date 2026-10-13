@@ -90,3 +90,10 @@ export function completionRecord(s: WorkSession) {
     actualMinutes: getElapsedMinutes(s, s.completedAt)
   };
 }
+
+
+/** Apply an async save result only to the in-memory session that initiated it. */
+export function markWorkSessionSavedIfCurrent(current: WorkSession | null, expected: WorkSession): WorkSession | null {
+  if (current !== expected || current.status !== 'completed' || current.completionSaved) return current;
+  return { ...current, completionSaved: true };
+}
