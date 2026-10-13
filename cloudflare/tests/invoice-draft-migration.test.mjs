@@ -47,7 +47,7 @@ test('integrity migration preserves drafts and rejects cross-business or deleted
   try{
     applyMigration(db,migration9);
     const saved=db.prepare('SELECT id,business_id,service_visit_id,unit_price_cents FROM invoice_drafts').get();
-    assert.deepEqual(saved,{id:'invoice-a',business_id:'business-a',service_visit_id:'visit-a',unit_price_cents:6500});
+    assert.deepEqual({...saved},{id:'invoice-a',business_id:'business-a',service_visit_id:'visit-a',unit_price_cents:6500});
     assert.deepEqual(db.prepare('PRAGMA foreign_key_check').all(),[]);
     assert.throws(()=>insertDraft(db,{id:'invoice-cross',businessId:'business-b',visitId:'visit-a'}));
     assert.throws(()=>db.prepare('DELETE FROM service_visits WHERE id=?').run('visit-a'));
