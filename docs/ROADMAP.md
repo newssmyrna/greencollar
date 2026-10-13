@@ -47,3 +47,10 @@ Keep every change narrowly scoped and tested; never silently remove agreed featu
 - Define manager-controlled SMS proposals; a customer must affirmatively accept before a manager commits a visit change.
 - Specify offline upload, authorization, audit history, schedule-version checks, failure paths, and acceptance tests.
 - Documentation only; no provider setup, purchase, text, schedule write, or live change.
+
+
+## Phase 74 — Availability event capture foundation
+- Add authenticated, tenant-scoped break, sick, and unavailable event capture.
+- Workers can report only themselves; owners/admins can record for verified business members and review team availability.
+- Store local work date and minute intervals; sick/unavailable may span a full day without collecting diagnoses.
+- Event capture never changes jobs or routes; manager replan integration and UI remain future work.
