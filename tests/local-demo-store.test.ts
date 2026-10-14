@@ -46,6 +46,9 @@ test('fresh browser preview gets an approved sample assignment for the worker st
   assert.equal(workday.approvedQueueKey,'local-preview-2026-10-13-sample-assignment');
   assert.equal(workday.dayStartedAt,null);
   assert.equal(workday.workSession,null,'starting the sample day does not start a visit timer');
+  assert.equal(workday.lunchDurationMinutes,30);
+  assert.equal(workday.lunchAfterVisitId,workday.plannedVisitIds[2]);
+  assert.equal(workday.delayMinutes,0);
 });
 
 test('starting a sample workday is idempotent and independent from its visit timer',()=>{
@@ -58,11 +61,14 @@ test('starting a sample workday is idempotent and independent from its visit tim
   assert.strictEqual(repeated,started,'a repeated Start action keeps the original day-start record');
   assert.equal(started.workSession,null);
   assert.throws(()=>beginLocalDemoWorkday(workday,-1),/valid timestamp/);
-  workspace.workdays[0]=started;
+  workspace.workdays[0]={...started,lunchDurationMinutes:60,lunchAfterVisitId:workday.plannedVisitIds[2],delayMinutes:15};
   assert.equal(saveLocalDemoWorkspace(workspace,storage),true);
   const restored=loadLocalDemoWorkspace(storage,'2026-10-13').workspace.workdays[0];
   assert.equal(restored.dayStartedAt,1000,'the separate day-start record survives a browser reload');
   assert.equal(restored.workSession,null,'a reload does not turn day start into a visit timer');
+  assert.equal(restored.lunchDurationMinutes,60,'the worker lunch choice survives a reload');
+  assert.equal(restored.lunchAfterVisitId,workday.plannedVisitIds[2]);
+  assert.equal(restored.delayMinutes,15,'the delay adjustment survives a reload');
 });
 
 test('stores local preview edits under a versioned key and restores them',()=>{

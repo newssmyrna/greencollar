@@ -42,6 +42,11 @@ export type LocalDemoWorkday = {
   endMinute: number;
   /** Local sample workday start; independent from any individual visit timer. */
   dayStartedAt?: number | null;
+  /** Worker-selected local sample break; it never starts the visit timer. */
+  lunchDurationMinutes?: 30 | 60 | null;
+  lunchAfterVisitId?: string | null;
+  /** Local delay allowance applied before the next unstarted stop. */
+  delayMinutes?: number;
   plannedVisitIds: string[];
   unscheduledVisitIds: string[];
   approvedQueueKey: string | null;
@@ -118,6 +123,9 @@ export function createInitialDemoWorkspace(date = localCalendarDate(), includeAs
     startMinute: 8 * 60,
     endMinute: 16 * 60,
     dayStartedAt: null,
+    lunchDurationMinutes: 30,
+    lunchAfterVisitId: `${agreements[2].id}:${date}`,
+    delayMinutes: 0,
     plannedVisitIds: agreements.map(agreement => `${agreement.id}:${date}`),
     unscheduledVisitIds: [],
     approvedQueueKey: `local-preview-${date}-sample-assignment`,
@@ -220,6 +228,12 @@ function isWorkspace(value: unknown): value is LocalDemoWorkspace | (Omit<LocalD
         || !Number.isInteger(day.endMinute) || (day.endMinute ?? 0) <= (day.startMinute ?? 0) || (day.endMinute ?? 1441) > 1440
         || (day.dayStartedAt !== undefined && day.dayStartedAt !== null
           && (!Number.isSafeInteger(day.dayStartedAt) || day.dayStartedAt < 0))
+        || (day.lunchDurationMinutes !== undefined && day.lunchDurationMinutes !== null
+          && day.lunchDurationMinutes !== 30 && day.lunchDurationMinutes !== 60)
+        || (day.lunchAfterVisitId !== undefined && day.lunchAfterVisitId !== null
+          && (typeof day.lunchAfterVisitId !== 'string' || !Array.isArray(day.plannedVisitIds) || !day.plannedVisitIds.includes(day.lunchAfterVisitId)))
+        || (day.delayMinutes !== undefined
+          && (!Number.isInteger(day.delayMinutes) || day.delayMinutes < 0 || day.delayMinutes > 120 || day.delayMinutes % 15 !== 0))
         || !Array.isArray(day.plannedVisitIds) || day.plannedVisitIds.some(id => typeof id !== 'string' || !id || id.length > 400)
         || new Set(day.plannedVisitIds).size !== day.plannedVisitIds.length
         || !Array.isArray(day.unscheduledVisitIds) || day.unscheduledVisitIds.some(id => typeof id !== 'string' || !id || id.length > 400)
@@ -347,6 +361,9 @@ export function createEmptyDemoWorkday(date: string, hours = '8', maxJobs = '6')
   return {
     date, hours, maxJobs, startMinute: 8 * 60, endMinute: 16 * 60,
     dayStartedAt: null,
+    lunchDurationMinutes: 30,
+    lunchAfterVisitId: null,
+    delayMinutes: 0,
     plannedVisitIds: [], unscheduledVisitIds: [], approvedQueueKey: null,
     arrivedVisitId: null, workSession: null, visits: [], invoiceDrafts: [],
   };

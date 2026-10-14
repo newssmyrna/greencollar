@@ -81,6 +81,12 @@ export function buildLocalDemoPlan(
     endMinute,
     dayStartedAt: existing?.dayStartedAt ?? (existing?.workSession ? existing.workSession.startedAt : null),
     plannedVisitIds: due.stops.map(stop => stop.jobId),
+    lunchDurationMinutes: existing?.lunchDurationMinutes ?? 30,
+    lunchAfterVisitId: existing
+      ? existing.lunchAfterVisitId && due.stops.some(stop => stop.jobId === existing.lunchAfterVisitId)
+        ? existing.lunchAfterVisitId : null
+      : due.stops[due.stops.length - 1]?.jobId ?? null,
+    delayMinutes: existing?.delayMinutes ?? 0,
     unscheduledVisitIds: due.unscheduledVisitIds,
     approvedQueueKey: null,
     arrivedVisitId: existing?.arrivedVisitId && due.stops.some(stop => stop.jobId === existing.arrivedVisitId)

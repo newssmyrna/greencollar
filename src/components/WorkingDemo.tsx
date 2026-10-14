@@ -8,12 +8,17 @@ import type { SavedServiceAgreement } from '../data/service-agreement-api';
 import type { SavedServiceLocation } from '../domain/service-location';
 import { completeWork, getElapsedMinutes, pauseWork, resumeWork, startWork, type WorkSession } from '../domain/work-session';
 import { dollarsToCents, localCalendarDate, validCalendarDate } from '../domain/service-agreement';
+import { parseServiceClock } from '../domain/service-time';
 import {
   clearLocalDemoWorkspace, createDemoRecordId, createInitialDemoWorkspace,
   createDemoVisitId, demoDayForDate, loadLocalDemoWorkspace, saveLocalDemoWorkspace,
   type LocalDemoWorkday, type LocalDemoWorkspace,
 } from '../demo/local-demo-store';
 import { beginLocalDemoWorkday, buildLocalDemoPlan } from '../demo/local-demo-workday';
+import {
+  buildIllustrativeTravelMatrix, estimateIllustrativeRoute, findIllustrativeLunchSlots,
+  SAMPLE_DEPOT_ID, SAMPLE_RETURN_ID, type IllustrativeRouteStop,
+} from '../demo/local-demo-route';
 
 type Tab = 'Today' | 'Customers' | 'Planner' | 'Schedule' | 'Invoices';
 type Role = 'Owner' | 'Worker';
@@ -41,6 +46,28 @@ function formatClock(totalMinutes: number) {
   const suffix = hour < 12 ? 'AM' : 'PM';
   const displayHour = hour % 12 || 12;
   return `${displayHour}:${String(minute).padStart(2, '0')} ${suffix}`;
+}
+function formatEditableClock(totalMinutes: number) {
+  const wrapped = ((totalMinutes % 1440) + 1440) % 1440;
+  return `${String(Math.floor(wrapped / 60)).padStart(2, '0')}:${String(wrapped % 60).padStart(2, '0')}`;
+}
+function parseEditableClock(value: string): number | undefined {
+  try { return parseServiceClock(value); } catch { return undefined; }
+}
+function localMinuteFromTimestamp(timestamp: number) {
+  const value = new Date(timestamp);
+  return value.getHours() * 60 + value.getMinutes();
+}
+function timestampForLocalClock(date: string, clock: string) {
+  if (!validCalendarDate(date)) throw new Error('Choose a valid work date.');
+  const minute = parseServiceClock(clock);
+  if (minute === undefined) throw new Error('Enter the start time as 24-hour HH:MM.');
+  const [year, month, day] = date.split('-').map(Number);
+  const timestamp = new Date(year, month - 1, day, Math.floor(minute / 60), minute % 60, 0, 0);
+  if (timestamp.getFullYear() !== year || timestamp.getMonth() !== month - 1 || timestamp.getDate() !== day
+    || timestamp.getHours() !== Math.floor(minute / 60) || timestamp.getMinutes() !== minute % 60)
+    throw new Error('That local start time is not available on this date.');
+  return timestamp.getTime();
 }
 function formatDayStart(timestamp: number) {
   return new Date(timestamp).toLocaleTimeString(undefined, { hour: 'numeric', minute: '2-digit' });
@@ -98,6 +125,7 @@ export function WorkingDemo({ onExit }: { onExit?: () => void }) {
   const [tab, setTab] = useState<Tab>('Today');
   const [workerScreen, setWorkerScreen] = useState<WorkerScreen>('briefing');
   const [date, setDate] = useState(localCalendarDate());
+  const [startTimeDraft, setStartTimeDraft] = useState(() => formatEditableClock(localMinuteFromTimestamp(Date.now())));
   const [hours, setHours] = useState('8');
   const [maxJobs, setMaxJobs] = useState('6');
   const [planError, setPlanError] = useState('');
@@ -147,6 +175,11 @@ export function WorkingDemo({ onExit }: { onExit?: () => void }) {
   const persistenceLabel = loaded.persistence === 'browser' ? 'Saved in this browser' : 'This session only';
   useEffect(() => { setNoteDraft(session?.note ?? ''); }, [session?.jobId]);
   useEffect(() => { setWorkerScreen('briefing'); }, [date]);
+  useEffect(() => {
+    setStartTimeDraft(workerDayStartedAt !== null
+      ? formatEditableClock(localMinuteFromTimestamp(workerDayStartedAt))
+      : formatEditableClock(day?.startMinute ?? 8 * 60));
+  }, [date, workerDayStartedAt, day?.startMinute]);
 
   function commit(next: LocalDemoWorkspace, message?: string) {
     const persisted = saveLocalDemoWorkspace(next);
@@ -321,10 +354,21 @@ export function WorkingDemo({ onExit }: { onExit?: () => void }) {
     if (dayStartLock.current) return;
     dayStartLock.current = true;
     try {
-      const started = beginLocalDemoWorkday(day, Date.now());
+      if (!selectedLunchSlot?.feasible) {
+        setPlanError('Choose an available lunch slot before starting this sample day.');
+        return;
+      }
+      if (!workerRoute.feasible) {
+        setPlanError('Resolve the sample appointment or workday limit conflict before starting.');
+        return;
+      }
+      const started = beginLocalDemoWorkday(day, timestampForLocalClock(date, startTimeDraft));
       replaceDay(started);
       showWorkerStops();
-      setNotice('Sample day started on this device. The visit timer has not started.');
+      setPlanError('');
+      setNotice('Sample day started at the chosen local time. Lunch is planned separately; the visit timer has not started.');
+    } catch (error) {
+      setPlanError(error instanceof Error ? error.message : 'Choose a valid local start time.');
     } finally {
       setTimeout(() => { dayStartLock.current = false; }, 220);
     }
@@ -381,7 +425,7 @@ export function WorkingDemo({ onExit }: { onExit?: () => void }) {
     const fresh = createInitialDemoWorkspace(localCalendarDate(), true);
     const persisted = saveLocalDemoWorkspace(fresh);
     setLoaded({ workspace: fresh, persistence: persisted ? 'browser' : 'session', notice: persisted ? undefined : 'Browser storage is unavailable. Changes stay in this open session and clear when it reloads.' });
-    setDate(localCalendarDate()); setTab('Today'); setRole('Owner'); setWorkerScreen('briefing'); setPlanError('');
+    setDate(localCalendarDate()); setStartTimeDraft(formatEditableClock(8 * 60)); setTab('Today'); setRole('Owner'); setWorkerScreen('briefing'); setPlanError('');
     setNotice('Sample workspace reset. Your local edits were cleared.');
     scrollToTop();
   }
@@ -395,14 +439,155 @@ export function WorkingDemo({ onExit }: { onExit?: () => void }) {
   function showWorkerStops() { setWorkerScreen('stop'); scrollToTop(); }
 
   const nextIndex = nextAgreement ? plannedAgreements.findIndex(item => item.id === nextAgreement.id) : -1;
-  const totalMinutes = plannedAgreements.reduce((sum, item) => sum + item.estimated_minutes, 0);
+  const routeStartInput = workerDayStartedAt !== null
+    ? localMinuteFromTimestamp(workerDayStartedAt) : parseEditableClock(startTimeDraft);
+  const startTimeValid = routeStartInput !== undefined;
+  const routeStartMinute = routeStartInput ?? day?.startMinute ?? 8 * 60;
+  const travelMatrix = buildIllustrativeTravelMatrix(workspace.locations.map(location => location.id));
+  const routeStops: IllustrativeRouteStop[] = plannedAgreements.map(agreement => {
+    const completed = day?.visits.find(visit => visit.agreement_id === agreement.id && visit.status === 'completed');
+    return {
+      id: `${agreement.id}:${date}`,
+      locationId: agreement.location_id,
+      serviceMinutes: completed?.actual_minutes ?? agreement.estimated_minutes,
+      earliestStartMinute: agreement.preferred_start_minute ?? undefined,
+      latestFinishMinute: agreement.preferred_finish_minute ?? undefined,
+      fixedStartMinute: agreement.fixed_start_minute ?? undefined,
+    };
+  });
+  const activeRouteVisitId = session && session.status !== 'completed' ? session.jobId : null;
+  const delayTargetStop = plannedAgreements.find(agreement =>
+    !completedIds.has(`${agreement.id}:${date}`) && `${agreement.id}:${date}` !== activeRouteVisitId);
+  const delayBeforeId = delayTargetStop ? `${delayTargetStop.id}:${date}` : SAMPLE_RETURN_ID;
+  const lunchDurationMinutes: 30 | 60 = day?.lunchDurationMinutes === 60 ? 60 : 30;
+  const delayMinutes = day?.delayMinutes ?? 0;
+  const routeOptions = {
+    stops: routeStops,
+    travelMinutes: travelMatrix,
+    startMinute: routeStartMinute,
+    endMinute: day?.endMinute ?? 16 * 60,
+    delayMinutes,
+    delayBeforeId,
+  };
+  const lunchSlots = routeStops.length
+    ? findIllustrativeLunchSlots({ ...routeOptions, durationMinutes: lunchDurationMinutes }) : [];
+  const selectedLunchSlot = lunchSlots.find(slot => slot.afterVisitId === day?.lunchAfterVisitId);
+  const workerRoute = estimateIllustrativeRoute({
+    ...routeOptions,
+    ...(day?.lunchAfterVisitId ? { lunchDurationMinutes, lunchAfterVisitId: day.lunchAfterVisitId } : {}),
+  });
+  const totalMinutes = routeStops.reduce((sum, item) => sum + item.serviceMinutes, 0);
   const plannedValue = plannedAgreements.reduce((sum, item) => sum + item.rate_cents, 0);
   const elapsed = session ? safeElapsedMinutes(session, tick) : 0;
   const timeText = `${Math.floor(elapsed / 60)}:${String(elapsed % 60).padStart(2, '0')}`;
-  const nextStartMinute = 8 * 60 + plannedAgreements.slice(0, Math.max(0, nextIndex)).reduce((sum, item) => sum + item.estimated_minutes, 0);
+  const nextStartMinute = workerRoute.stops.find(stop => stop.id === `${nextAgreement?.id}:${date}`)?.startMinute ?? routeStartMinute;
   const workerHasAssignment = approved && plannedAgreements.length > 0;
-  const workerEstimatedFinish = (day?.startMinute ?? 8 * 60) + totalMinutes;
+  const workerEstimatedFinish = workerRoute.finishMinute;
   const selectedTabs = role === 'Owner' ? tabs : ['Today', 'Schedule'] as Tab[];
+
+  function chooseLunchDuration(durationMinutes: 30 | 60) {
+    if (!day) return;
+    replaceDay({ ...day, lunchDurationMinutes: durationMinutes });
+    setPlanError('');
+  }
+  function chooseLunchSlot(afterVisitId: string) {
+    if (!day) return;
+    const slot = lunchSlots.find(item => item.afterVisitId === afterVisitId);
+    if (!slot?.feasible) return;
+    replaceDay({ ...day, lunchDurationMinutes, lunchAfterVisitId: afterVisitId });
+    setPlanError('');
+    setNotice(`Lunch planned after stop ${routeStops.findIndex(stop => stop.id === afterVisitId) + 1}. The visit timer is unchanged.`);
+  }
+  function chooseDelay(minutes: number) {
+    if (!day) return;
+    replaceDay({ ...day, delayMinutes: minutes });
+    setPlanError('');
+  }
+
+  function renderWorkerRoutePanel() {
+    if (!workerHasAssignment) return null;
+    const mapNodes = [
+      { id: 'depot-start', mark: 'D', title: 'Sample depot', detail: 'Route starts here' },
+      ...plannedAgreements.map((agreement, index) => ({
+        id: `${agreement.id}:${date}`, mark: String(index + 1).padStart(2, '0'),
+        title: agreement.service_name,
+        detail: workspace.customers.find(item => item.id === agreement.customer_id)?.name ?? 'Sample customer',
+      })),
+      { id: 'depot-return', mark: 'D', title: 'Sample depot', detail: 'Return included in finish estimate' },
+    ];
+    return <View style={s.routePanel}>
+      <View style={s.planHeader}>
+        <View><Text style={s.panelTitle}>Map & route estimate</Text><Text style={s.cardBody}>Illustrative local map · stop order stays as assigned</Text></View>
+        <Tag tone="neutral">SAMPLE MATRIX</Tag>
+      </View>
+      <View accessible accessibilityRole="image" accessibilityLabel={`Illustrative sample route map from depot through ${plannedAgreements.length} assigned stops and back to depot`} style={s.mapCanvas}>
+        <View pointerEvents="none" style={s.mapStreetHorizontal}/><View pointerEvents="none" style={s.mapStreetVertical}/>
+        <View pointerEvents="none" style={s.mapStreetDiagonal}/>
+        {mapNodes.map((node, index) => <View key={node.id} style={[s.mapNodeRow, index % 2 === 1 && s.mapNodeRowReverse]}>
+          <View style={[s.mapPin, (index === 0 || index === mapNodes.length - 1) && s.mapPinDepot]}><Text style={s.mapPinText}>{node.mark}</Text></View>
+          <View style={s.mapNodeText}><Text style={s.mapNodeTitle}>{node.title}</Text><Text style={s.mapNodeDetail}>{node.detail}</Text></View>
+        </View>)}
+      </View>
+      <Text style={s.mapDisclosure}>Schematic only · not to scale · no coordinates, GPS, traffic, or map provider. The sample matrix below has no routing-service connection.</Text>
+      <View style={s.routeMetrics}>
+        <View style={s.routeMetric}><Text style={s.routeMetricValue}>{workerRoute.totalDriveMinutes}m</Text><Text style={s.routeMetricLabel}>SAMPLE DRIVE</Text></View>
+        <View style={s.routeMetric}><Text style={s.routeMetricValue}>{totalMinutes}m</Text><Text style={s.routeMetricLabel}>SERVICE</Text></View>
+        <View style={s.routeMetric}><Text style={s.routeMetricValue}>{formatClock(workerEstimatedFinish)}</Text><Text style={s.routeMetricLabel}>EST. RETURN</Text></View>
+      </View>
+      {workerDayStartedAt === null
+        ? <Field label="Chosen local start time (24-hour)" value={startTimeDraft} onChangeText={setStartTimeDraft} placeholder="08:00" maxLength={5} autoCapitalize="none" accessibilityHint="Choose the sample start time used to calculate stop arrivals and estimated return."/>
+        : <Text style={s.cardBody}>Started at {formatDayStart(workerDayStartedAt)} · schedule continues from this saved start.</Text>}
+      {!startTimeValid && workerDayStartedAt === null && <Text style={s.errorText}>Enter a valid local time such as 08:00.</Text>}
+      <View style={s.routeSchedule}>
+        {routeStops.map((stop, index) => {
+          const leg = workerRoute.legs.find(item => item.toId === stop.locationId && !item.isReturn);
+          const scheduled = workerRoute.stops.find(item => item.id === stop.id);
+          const agreement = plannedAgreements[index];
+          const lunch = workerRoute.lunch?.afterVisitId === stop.id ? workerRoute.lunch : undefined;
+          const delay = workerRoute.delay?.beforeId === stop.id ? workerRoute.delay : undefined;
+          return <React.Fragment key={stop.id}>
+            {delay && <View style={s.routeEvent}><Text style={s.routeEventTitle}>Added delay · {delay.durationMinutes} min before stop {index + 1}</Text><Text style={s.routeEventMeta}>{formatClock(delay.startMinute)}–{formatClock(delay.finishMinute)}</Text></View>}
+            <View style={s.routeLeg}><Text style={s.routeLegTitle}>{index === 0 ? 'Depot' : `Stop ${String(index).padStart(2, '0')}`} → Stop {String(index + 1).padStart(2, '0')}</Text><Text style={s.routeLegMeta}>{leg ? `${leg.driveMinutes} min sample drive · arrives ${formatClock(leg.arrivalMinute)}` : 'Sample travel unavailable'}</Text></View>
+            <View style={s.routeStopCard}>
+              <View style={s.routeStopHead}><Text style={s.routeStopTitle}>Stop {String(index + 1).padStart(2, '0')} · {agreement.service_name}</Text><Tag tone={completedIds.has(stop.id) ? 'green' : 'neutral'}>{completedIds.has(stop.id) ? 'DONE' : `${stop.serviceMinutes} MIN`}</Tag></View>
+              <Text style={s.routeStopMeta}>{workspace.customers.find(item => item.id === agreement.customer_id)?.name ?? 'Sample customer'} · {agreement.address}</Text>
+              {scheduled && <Text style={s.routeStopTime}>Arrive {formatClock(scheduled.arrivalMinute)} · service {formatClock(scheduled.startMinute)}–{formatClock(scheduled.finishMinute)}</Text>}
+              {(agreement.fixed_start_minute !== null || agreement.preferred_start_minute !== null || agreement.preferred_finish_minute !== null)
+                && <Text style={s.routeStopMeta}>Customer time window applies</Text>}
+            </View>
+            {lunch && <View style={s.lunchEvent}><Text style={s.routeEventTitle}>Lunch · {lunch.durationMinutes} min · visit timer stays stopped</Text><Text style={s.routeEventMeta}>{formatClock(lunch.startMinute)}–{formatClock(lunch.finishMinute)}</Text></View>}
+          </React.Fragment>;
+        })}
+        {workerRoute.delay?.beforeId === SAMPLE_RETURN_ID && <View style={s.routeEvent}><Text style={s.routeEventTitle}>Added delay before depot return · {delayMinutes} min</Text><Text style={s.routeEventMeta}>{formatClock(workerRoute.delay.startMinute)}–{formatClock(workerRoute.delay.finishMinute)}</Text></View>}
+        {workerRoute.legs.length > 0 && <View style={s.routeLeg}><Text style={s.routeLegTitle}>Stop {String(routeStops.length).padStart(2, '0')} → Depot</Text><Text style={s.routeLegMeta}>{workerRoute.returnDriveMinutes} min sample return drive · estimated return {formatClock(workerRoute.finishMinute)}</Text></View>}
+      </View>
+      <View style={s.lunchControls}>
+        <Text style={s.panelTitle}>Choose a lunch</Text>
+        <Text style={s.cardBody}>Choose 30 or 60 minutes, then choose a feasible slot after a stop. The sample policy offers lunch after 3 hours on shift, no earlier than 11:00 AM.</Text>
+        <View style={s.choiceRow}>
+          {([30, 60] as const).map(minutes => <Pressable key={minutes} accessibilityRole="radio" accessibilityState={{ selected: lunchDurationMinutes === minutes }} onPress={() => chooseLunchDuration(minutes)} style={[s.choiceChip, lunchDurationMinutes === minutes && s.choiceChipSelected]}><Text style={[s.choiceChipText, lunchDurationMinutes === minutes && s.choiceChipTextSelected]}>{minutes} minutes</Text></Pressable>)}
+        </View>
+        <View style={s.lunchSlotList}>
+          {lunchSlots.map((slot, index) => {
+            const selected = slot.afterVisitId === day?.lunchAfterVisitId;
+            return <Pressable key={slot.afterVisitId} accessibilityRole="radio" accessibilityState={{ selected, disabled: !slot.feasible }} disabled={!slot.feasible} onPress={() => chooseLunchSlot(slot.afterVisitId)} style={[s.lunchSlot, selected && slot.feasible && s.lunchSlotSelected, !slot.feasible && s.lunchSlotUnavailable]}>
+              <Text style={s.lunchSlotTitle}>{slot.feasible ? `After stop ${index + 1}` : `Unavailable · after stop ${index + 1}`}</Text>
+              <Text style={s.lunchSlotMeta}>{formatClock(slot.startMinute)}–{formatClock(slot.finishMinute)} · {slot.durationMinutes} min</Text>
+              {!slot.feasible && !!slot.reason && <Text style={s.lunchSlotReason}>{slot.reason}</Text>}
+            </Pressable>;
+          })}
+          {!lunchSlots.some(slot => slot.feasible) && <View style={s.warning}><Text style={s.warningTitle}>No feasible lunch slot</Text><Text style={s.warningCopy}>This start time, duration, or delay does not fit the current sample route and workday limit. Change the duration, start time, or sample plan before starting.</Text></View>}
+        </View>
+        <Text style={s.fieldLabel}>Added delay before the next unstarted stop</Text>
+        <Text style={s.cardBody}>This local adjustment shifts downstream arrivals. It never starts or changes a visit timer.</Text>
+        <View style={s.choiceRow}>
+          {([0, 15, 30, 45, 60] as const).map(minutes => <Pressable key={minutes} accessibilityRole="radio" accessibilityState={{ selected: delayMinutes === minutes }} onPress={() => chooseDelay(minutes)} style={[s.choiceChip, delayMinutes === minutes && s.choiceChipSelected]}><Text style={[s.choiceChipText, delayMinutes === minutes && s.choiceChipTextSelected]}>{minutes === 0 ? 'No delay' : `+${minutes} min`}</Text></Pressable>)}
+        </View>
+      </View>
+      {workerRoute.conflicts.length > 0 && <View style={s.warning}><Text style={s.warningTitle}>Schedule needs attention</Text>{workerRoute.conflicts.map((conflict, index) => <Text key={`${conflict.kind}:${conflict.stopId ?? index}`} style={s.warningCopy}>{conflict.message}</Text>)}</View>}
+      <View style={s.panelSoft}><Text style={s.panelTitle}>What this estimate includes</Text><Text style={s.cardBody}>Chosen start time + sample drive legs + service estimates + selected lunch + added delay + return-to-depot drive. Stop order stays as approved. This is not live routing, traffic, GPS, or route optimization; real delays and actual service times can change the day.</Text></View>
+    </View>;
+  }
 
   function chooseTab(next: Tab) { Keyboard.dismiss(); setTab(next); if (next === 'Today') setWorkerScreen('briefing'); setNotice(''); setPlanError(''); scrollToTop(); }
   function tabButton(item: Tab) {
@@ -457,28 +642,10 @@ export function WorkingDemo({ onExit }: { onExit?: () => void }) {
                   <View style={s.assignmentCard}><Text style={s.cardEyebrow}>SAMPLE TEAM</Text><Text style={s.assignmentTitle}>Crew Green</Text><Text style={s.cardBody}>Sample worker · you + 1 sample partner</Text></View>
                   <View style={s.assignmentCard}><Text style={s.cardEyebrow}>SAMPLE VEHICLE</Text><Text style={s.assignmentTitle}>Truck 02</Text><Text style={s.cardBody}>Sample work vehicle</Text></View>
                 </View>
-                <View style={s.statsRow}>
-                  <View style={s.stat}><Text style={s.statValue}>{plannedAgreements.length}</Text><Text style={s.statLabel}>STOPS</Text></View>
-                  <View style={s.stat}><Text style={s.statValue}>{totalMinutes}m</Text><Text style={s.statLabel}>SERVICE TIME</Text></View>
-                  <View style={s.stat}><Text style={s.statValue}>{formatClock(workerEstimatedFinish)}</Text><Text style={s.statLabel}>EST. FINISH</Text></View>
-                </View>
-                <View style={s.panel}>
-                  <View style={s.planHeader}><View><Text style={s.panelTitle}>Today’s stops</Text><Text style={s.cardBody}>Sample order · starts {formatClock(day?.startMinute ?? 8 * 60)}</Text></View><Tag tone="neutral">LOCAL SAMPLE</Tag></View>
-                  {plannedAgreements.map((agreement, index) => {
-                    const complete = completedIds.has(`${agreement.id}:${date}`);
-                    const customer = workspace.customers.find(item => item.id === agreement.customer_id);
-                    const startMinute = (day?.startMinute ?? 8 * 60) + plannedAgreements.slice(0, index).reduce((sum, item) => sum + item.estimated_minutes, 0);
-                    return <View key={agreement.id} style={s.workerStopRow}>
-                      <View style={[s.stopNumber, complete && s.stopNumberDone]}><Text style={[s.stopNumberText, complete && s.stopNumberTextDone]}>{complete ? '✓' : String(index + 1).padStart(2, '0')}</Text></View>
-                      <View style={s.stopText}><Text style={s.stopTitle}>{agreement.service_name}</Text><Text style={s.stopMeta}>{customer?.name ?? 'Sample customer'} · {agreement.estimated_minutes} min</Text><Text style={s.stopMeta}>{agreement.address}</Text><Text style={s.scheduleMeta}>{formatClock(startMinute)} sample service start</Text></View>
-                      <Tag tone={complete ? 'green' : 'neutral'}>{complete ? 'DONE' : 'STOP'}</Tag>
-                    </View>;
-                  })}
-                  <View style={s.panelSoft}><Text style={s.panelTitle}>Estimated finish · {formatClock(workerEstimatedFinish)}</Text><Text style={s.cardBody}>Service time only. This estimate excludes travel, breaks, setup, and delays. No route optimization or live traffic is used.</Text></View>
-                </View>
+                {renderWorkerRoutePanel()}
                 {workerDayStartedAt !== null && <View style={s.returningCard}><Text style={s.cardEyebrow}>RETURNING TO THIS SAMPLE DAY</Text><Text style={s.cardTitle}>Started at {formatDayStart(workerDayStartedAt)}</Text><Text style={s.cardBody}>{session?.status === 'running' ? 'A visit timer was running when you left. Review the current stop before continuing.' : session?.status === 'paused' ? 'Your visit timer is paused. Continue to the current stop when ready.' : 'Your sample assignment and completed stops are saved in this browser.'}</Text></View>}
-                <ActionButton label={workerDayStartedAt !== null ? 'Continue my day' : 'Start my day'} disabled={saving} onPress={startWorkerDay}/>
-                <Text style={s.microCopy}>{workerDayStartedAt !== null ? 'Continue opens the current or next stop. It does not reset this day.' : 'Starting the day does not start a visit timer. Stop details come next.'} Sample-only · saved in this browser.</Text>
+                <ActionButton label={workerDayStartedAt !== null ? 'Continue my day' : 'Start my day'} disabled={saving || (workerDayStartedAt === null && (!startTimeValid || !selectedLunchSlot?.feasible || !workerRoute.feasible))} onPress={startWorkerDay}/>
+                <Text style={s.microCopy}>{workerDayStartedAt !== null ? 'Continue opens the current or next stop. It does not reset this day.' : 'Starting records the chosen local time; the visit timer remains stopped. Sample-only · saved in this browser.'}</Text>
               </>}
             </> : <>
               <Pressable accessibilityRole="button" accessibilityLabel="Back to day overview" onPress={showWorkerOverview} style={s.workerBack}><Text style={s.workerBackArrow}>‹</Text><Text style={s.workerBackText}>Day overview</Text></Pressable>
@@ -510,6 +677,7 @@ export function WorkingDemo({ onExit }: { onExit?: () => void }) {
               </View> : <View style={s.emptyCard}><Text style={s.emptyMark}>✓</Text><Text style={s.cardTitle}>All assigned sample stops are complete.</Text><Text style={s.cardBody}>Your day start is saved locally. No time or location was sent anywhere.</Text></View>}
               {session?.status === 'completed' && <View style={s.undoCard}><Text style={s.undoTitle}>Visit marked complete</Text><Text style={s.cardBody}>Completed in the local sample day. Undo is available if that was a mistake.</Text><ActionButton label="Undo completion" secondary disabled={saving} onPress={() => workerAction('undo')}/></View>}
               {approved && <View style={s.panelSoft}><Text style={s.panelTitle}>Remaining stops</Text>{plannedAgreements.slice(Math.max(0, nextIndex + (session?.status !== 'completed' && session ? 1 : 0))).map((agreement, index) => <View key={agreement.id} style={s.workerStopRow}><View style={s.stopNumber}><Text style={s.stopNumberText}>{String(Math.max(0, nextIndex + index + 2)).padStart(2, '0')}</Text></View><View style={s.stopText}><Text style={s.stopTitle}>{agreement.service_name}</Text><Text style={s.stopMeta}>{workspace.customers.find(item => item.id === agreement.customer_id)?.name ?? 'Sample customer'} · {agreement.estimated_minutes} min</Text></View></View>)}{!nextAgreement && <Text style={s.cardBody}>No remaining stops.</Text>}</View>}
+              {approved && renderWorkerRoutePanel()}
             </>}
           </>}
 
@@ -706,10 +874,11 @@ const s = StyleSheet.create({
   action: { minHeight: 50, paddingHorizontal: 18, paddingVertical: 13, alignItems: 'center', justifyContent: 'center', backgroundColor: palette.forest, borderRadius: 12, flex: 1 }, actionText: { color: palette.paper, fontSize: 14, fontWeight: '800', textAlign: 'center' }, secondaryAction: { backgroundColor: palette.paper, borderWidth: 1, borderColor: palette.line }, secondaryActionText: { color: palette.forest }, disabledAction: { opacity: 0.45 }, pressed: { opacity: 0.8, transform: [{ scale: 0.99 }] }, actionRow: { flexDirection: 'row', gap: 9 },
   emptyCard: { padding: 20, gap: 9, borderRadius: 18, backgroundColor: palette.paper, borderWidth: 1, borderColor: palette.line }, emptyMark: { color: palette.pine, fontSize: 26, fontWeight: '900' }, emptyCopy: { color: palette.quiet, fontSize: 13, paddingVertical: 8 }, undoCard: { padding: 16, gap: 8, borderRadius: 14, backgroundColor: '#F4F0E8', borderWidth: 1, borderColor: '#E4D8BE' }, undoTitle: { color: palette.ink, fontSize: 14, fontWeight: '800' },
   sectionHeader: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', marginTop: 7 }, sectionTitle: { color: palette.ink, fontSize: 18, fontWeight: '800' }, link: { color: palette.forest, fontSize: 12, fontWeight: '800' }, compactStop: { minHeight: 68, flexDirection: 'row', alignItems: 'center', gap: 11, paddingVertical: 10, borderBottomWidth: 1, borderBottomColor: palette.line }, stopNumber: { width: 34, height: 34, borderRadius: 11, backgroundColor: palette.soft, alignItems: 'center', justifyContent: 'center' }, stopNumberDone: { backgroundColor: palette.mint }, stopNumberText: { color: palette.quiet, fontSize: 10, fontWeight: '900' }, stopNumberTextDone: { color: palette.forest }, stopText: { flex: 1, gap: 3 }, stopTitle: { color: palette.ink, fontSize: 13, fontWeight: '800' }, stopMeta: { color: palette.quiet, fontSize: 11, lineHeight: 16 },
-  panel: { padding: 17, gap: 13, borderRadius: 17, backgroundColor: palette.paper, borderWidth: 1, borderColor: palette.line }, panelSoft: { padding: 16, gap: 9, borderRadius: 16, backgroundColor: palette.mint }, panelTitle: { color: palette.ink, fontSize: 16, fontWeight: '800' }, planHeader: { flexDirection: 'row', alignItems: 'flex-start', justifyContent: 'space-between', gap: 12 }, metrics: { flexDirection: 'row', justifyContent: 'space-between', gap: 8, paddingVertical: 10, borderTopWidth: 1, borderBottomWidth: 1, borderColor: palette.line }, metricText: { color: palette.quiet, fontSize: 11, fontWeight: '700' }, planStop: { flexDirection: 'row', alignItems: 'center', gap: 10, paddingVertical: 10, borderBottomWidth: 1, borderBottomColor: palette.line }, planIndex: { color: palette.pine, fontSize: 10, fontWeight: '900', width: 26 }, servicePrice: { color: palette.ink, fontSize: 12, fontWeight: '800' }, warning: { padding: 12, gap: 3, borderRadius: 12, backgroundColor: palette.amberBg }, warningTitle: { color: palette.amber, fontSize: 12, fontWeight: '900' }, warningCopy: { color: palette.quiet, fontSize: 11, lineHeight: 16 }, approvedCopy: { color: palette.forest, fontSize: 12, fontWeight: '700' }, errorText: { color: palette.red, fontSize: 12, lineHeight: 18, fontWeight: '700' }, errorBox: { padding: 10, borderRadius: 10, backgroundColor: palette.redBg },
+  panel: { padding: 17, gap: 13, borderRadius: 17, backgroundColor: palette.paper, borderWidth: 1, borderColor: palette.line }, panelSoft: { padding: 16, gap: 9, borderRadius: 16, backgroundColor: palette.mint }, panelTitle: { color: palette.ink, fontSize: 16, fontWeight: '800' }, planHeader: { flexDirection: 'row', alignItems: 'flex-start', justifyContent: 'space-between', gap: 12, flexWrap: 'wrap' }, metrics: { flexDirection: 'row', justifyContent: 'space-between', gap: 8, paddingVertical: 10, borderTopWidth: 1, borderBottomWidth: 1, borderColor: palette.line }, metricText: { color: palette.quiet, fontSize: 11, fontWeight: '700' }, planStop: { flexDirection: 'row', alignItems: 'center', gap: 10, paddingVertical: 10, borderBottomWidth: 1, borderBottomColor: palette.line }, planIndex: { color: palette.pine, fontSize: 10, fontWeight: '900', width: 26 }, servicePrice: { color: palette.ink, fontSize: 12, fontWeight: '800' }, warning: { padding: 12, gap: 3, borderRadius: 12, backgroundColor: palette.amberBg }, warningTitle: { color: palette.amber, fontSize: 12, fontWeight: '900' }, warningCopy: { color: palette.quiet, fontSize: 11, lineHeight: 16 }, approvedCopy: { color: palette.forest, fontSize: 12, fontWeight: '700' }, errorText: { color: palette.red, fontSize: 12, lineHeight: 18, fontWeight: '700' }, errorBox: { padding: 10, borderRadius: 10, backgroundColor: palette.redBg },
   fieldWrap: { flex: 1, gap: 6 }, fieldLabel: { color: palette.ink, fontSize: 12, fontWeight: '700' }, input: { minHeight: 48, paddingHorizontal: 12, paddingVertical: 11, borderWidth: 1, borderColor: palette.line, borderRadius: 10, backgroundColor: '#FCFDFB', color: palette.ink, fontSize: 14 }, multilineInput: { minHeight: 78, textAlignVertical: 'top' }, fieldRow: { flexDirection: 'row', gap: 10 }, fieldFlex: { flex: 1 }, dateControls: { gap: 8 },
   customerCard: { padding: 16, gap: 10, borderRadius: 16, backgroundColor: palette.paper, borderWidth: 1, borderColor: palette.line }, customerTop: { flexDirection: 'row', alignItems: 'center', gap: 10 }, avatar: { width: 42, height: 42, borderRadius: 14, backgroundColor: palette.mint, alignItems: 'center', justifyContent: 'center' }, avatarText: { color: palette.forest, fontSize: 12, fontWeight: '900' }, customerInfo: { flex: 1, gap: 3 }, customerName: { color: palette.ink, fontSize: 15, fontWeight: '800' }, customerAddress: { color: palette.quiet, fontSize: 11, lineHeight: 16 }, customerContact: { color: palette.quiet, fontSize: 11, lineHeight: 16 }, customerServices: { borderTopWidth: 1, borderTopColor: palette.line, paddingTop: 8, gap: 6 }, serviceLine: { flexDirection: 'row', justifyContent: 'space-between', gap: 8 }, serviceName: { color: palette.ink, fontSize: 11, fontWeight: '700', flex: 1 },
   assignmentGrid: { flexDirection: 'row', flexWrap: 'wrap', gap: 9 }, assignmentCard: { flex: 1, minWidth: 140, minHeight: 94, justifyContent: 'center', padding: 14, gap: 5, borderRadius: 15, backgroundColor: palette.paper, borderWidth: 1, borderColor: palette.line }, assignmentTitle: { color: palette.ink, fontSize: 16, fontWeight: '800' }, assignmentFact: { paddingVertical: 8, paddingHorizontal: 10, borderRadius: 10, backgroundColor: palette.soft }, workerStopRow: { flexDirection: 'row', alignItems: 'flex-start', gap: 10, paddingVertical: 12, borderBottomWidth: 1, borderBottomColor: palette.line }, workerBack: { flexDirection: 'row', alignItems: 'center', alignSelf: 'flex-start', minHeight: 42, gap: 5, paddingRight: 10 }, workerBackArrow: { color: palette.forest, fontSize: 28, lineHeight: 32, fontWeight: '700' }, workerBackText: { color: palette.forest, fontSize: 12, fontWeight: '800' }, returningCard: { padding: 16, gap: 7, borderRadius: 15, backgroundColor: palette.amberBg, borderWidth: 1, borderColor: '#E9D9B8' },
+  routePanel: { padding: 16, gap: 13, borderRadius: 17, backgroundColor: palette.paper, borderWidth: 1, borderColor: palette.line }, mapCanvas: { minHeight: 150, position: 'relative', overflow: 'hidden', justifyContent: 'center', padding: 12, gap: 4, borderRadius: 14, borderWidth: 1, borderColor: '#D4E1D5', backgroundColor: '#EAF1EA' }, mapStreetHorizontal: { position: 'absolute', left: 0, right: 0, top: '51%', height: 7, backgroundColor: '#DCE7DD' }, mapStreetVertical: { position: 'absolute', top: 0, bottom: 0, left: '49%', width: 7, backgroundColor: '#DCE7DD' }, mapStreetDiagonal: { position: 'absolute', top: '32%', left: '18%', width: '74%', height: 5, backgroundColor: '#DCE7DD', transform: [{ rotate: '-17deg' }] }, mapNodeRow: { minHeight: 39, zIndex: 1, flexDirection: 'row', alignItems: 'center', gap: 8 }, mapNodeRowReverse: { flexDirection: 'row-reverse' }, mapPin: { width: 32, height: 32, borderRadius: 16, alignItems: 'center', justifyContent: 'center', borderWidth: 2, borderColor: '#FFFFFF', backgroundColor: palette.pine }, mapPinDepot: { backgroundColor: palette.forest }, mapPinText: { color: '#FFFFFF', fontSize: 9, fontWeight: '900' }, mapNodeText: { maxWidth: '78%', paddingVertical: 5, paddingHorizontal: 8, borderRadius: 8, backgroundColor: 'rgba(255,255,255,0.92)' }, mapNodeTitle: { color: palette.ink, fontSize: 10, fontWeight: '800' }, mapNodeDetail: { color: palette.quiet, fontSize: 9 }, mapDisclosure: { color: palette.quiet, fontSize: 10, lineHeight: 15 }, routeMetrics: { flexDirection: 'row', flexWrap: 'wrap', gap: 8 }, routeMetric: { flex: 1, minWidth: 86, padding: 10, gap: 3, borderRadius: 11, backgroundColor: palette.soft }, routeMetricValue: { color: palette.forest, fontSize: 15, fontWeight: '900' }, routeMetricLabel: { color: palette.quiet, fontSize: 8, letterSpacing: 0.8, fontWeight: '800' }, routeSchedule: { gap: 6 }, routeLeg: { paddingVertical: 7, paddingHorizontal: 10, gap: 2, borderRadius: 9, backgroundColor: '#F2F5F0' }, routeLegTitle: { color: palette.forest, fontSize: 10, fontWeight: '900' }, routeLegMeta: { color: palette.quiet, fontSize: 10, lineHeight: 15 }, routeStopCard: { padding: 11, gap: 5, borderRadius: 12, borderWidth: 1, borderColor: palette.line, backgroundColor: '#FFFFFF' }, routeStopHead: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', gap: 8 }, routeStopTitle: { flex: 1, color: palette.ink, fontSize: 12, lineHeight: 17, fontWeight: '800' }, routeStopMeta: { color: palette.quiet, fontSize: 10, lineHeight: 15 }, routeStopTime: { color: palette.forest, fontSize: 10, lineHeight: 15, fontWeight: '800' }, routeEvent: { padding: 10, gap: 3, borderRadius: 10, borderWidth: 1, borderColor: '#E9D9B8', backgroundColor: palette.amberBg }, lunchEvent: { padding: 10, gap: 3, borderRadius: 10, borderWidth: 1, borderColor: '#C8DCA8', backgroundColor: '#F2F8E8' }, routeEventTitle: { color: palette.ink, fontSize: 10, fontWeight: '900' }, routeEventMeta: { color: palette.quiet, fontSize: 10 }, lunchControls: { gap: 9, padding: 13, borderRadius: 13, backgroundColor: '#F7F9F5', borderWidth: 1, borderColor: palette.line }, choiceRow: { flexDirection: 'row', flexWrap: 'wrap', gap: 7 }, choiceChip: { minHeight: 44, paddingHorizontal: 13, justifyContent: 'center', borderRadius: 11, borderWidth: 1, borderColor: palette.line, backgroundColor: palette.paper }, choiceChipSelected: { backgroundColor: palette.mint, borderColor: palette.pine }, choiceChipText: { color: palette.quiet, fontSize: 12, fontWeight: '700' }, choiceChipTextSelected: { color: palette.forest, fontWeight: '900' }, lunchSlotList: { gap: 7 }, lunchSlot: { minHeight: 52, padding: 10, gap: 3, borderRadius: 10, borderWidth: 1, borderColor: palette.line, backgroundColor: palette.paper }, lunchSlotSelected: { borderColor: palette.pine, backgroundColor: palette.mint }, lunchSlotUnavailable: { borderColor: '#E8C7C2', backgroundColor: '#FFF8F6' }, lunchSlotTitle: { color: palette.ink, fontSize: 11, fontWeight: '900' }, lunchSlotMeta: { color: palette.forest, fontSize: 10, fontWeight: '700' }, lunchSlotReason: { color: palette.red, fontSize: 10, lineHeight: 15 },
   scheduleCard: { flexDirection: 'row', gap: 12, minHeight: 110 }, scheduleRail: { width: 18, alignItems: 'center' }, scheduleDot: { width: 12, height: 12, borderRadius: 6, marginTop: 8, backgroundColor: '#B8C9B8', borderWidth: 2, borderColor: palette.canvas }, scheduleDotDone: { backgroundColor: palette.pine }, scheduleDotActive: { backgroundColor: '#E5AA43' }, scheduleLine: { width: 2, flex: 1, backgroundColor: palette.line, marginVertical: 4 }, scheduleBody: { flex: 1, padding: 14, gap: 6, borderRadius: 15, backgroundColor: palette.paper, borderWidth: 1, borderColor: palette.line }, scheduleTop: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center' }, scheduleIndex: { color: palette.quiet, fontSize: 9, fontWeight: '900', letterSpacing: 1 }, scheduleMeta: { color: palette.forest, fontSize: 11, fontWeight: '700' },
   invoiceRow: { flexDirection: 'row', alignItems: 'center', gap: 12, paddingVertical: 13, borderBottomWidth: 1, borderBottomColor: palette.line }, emptyInline: { paddingVertical: 20, gap: 6 }, footer: { paddingTop: 16, gap: 4, alignItems: 'center' }, footerText: { color: '#7D8980', fontSize: 8, letterSpacing: 1.1, fontWeight: '800' },
   bottomNav: { minHeight: 65, flexDirection: 'row', alignItems: 'stretch', paddingHorizontal: 7, paddingTop: 6, paddingBottom: Platform.OS === 'ios' ? 12 : 6, backgroundColor: palette.paper, borderTopWidth: 1, borderTopColor: palette.line }, bottomNavCompact: { paddingHorizontal: 4 }, navItem: { minHeight: 48, minWidth: 52, flex: 1, alignItems: 'center', justifyContent: 'center', paddingHorizontal: 4, borderRadius: 11, gap: 2 }, sideNavItem: { width: '100%', flex: 0, minWidth: 0, flexDirection: 'row', alignItems: 'center', justifyContent: 'flex-start', paddingHorizontal: 12, gap: 12 }, navItemSelected: { backgroundColor: palette.mint }, navPressed: { opacity: 0.7 }, navMark: { color: '#839087', fontSize: 8, fontWeight: '900', letterSpacing: 0.7 }, navMarkSelected: { color: palette.forest }, navLabel: { color: palette.quiet, fontSize: 10, fontWeight: '700' }, navLabelSelected: { color: palette.forest, fontWeight: '900' }, resetNav: { minWidth: 48, minHeight: 48, alignItems: 'center', justifyContent: 'center', borderRadius: 11, gap: 1 }, resetNavCompact: { minWidth: 40 }, resetNavMark: { color: palette.quiet, fontSize: 17, lineHeight: 20 }, resetNavLabel: { color: palette.quiet, fontSize: 9, fontWeight: '700' },
