@@ -27,7 +27,7 @@ Every preview screen discloses that records are fictional and local. Arrival doe
 - Export command: `EXPO_PUBLIC_GREENCOLLAR_APP_PREVIEW=true EXPO_NO_TELEMETRY=1 EXPO_OFFLINE=1 npm run export:web`.
 - Export bundle: `dist/_expo/static/js/web/AppEntry-5477129c88f5d530553a23a4e628cd35.js` (1.14 MB), SHA-256 `16be8341ffe5e67de67afe7648f5f71397c81f8b4251b72bc06ef2d751c13ef2`.
 - Full static export archive: `docs/ui-preview/worker-start-of-day/greencollar-worker-start-of-day-export.tar.gz` (304 KB), SHA-256 `6e8e1af5f3ab9c898eab8e03d792bfd895095a73df2617ee2be80148a1167b2b`. It contains the tested `dist/` export, including HTML, metadata, JavaScript bundle, and favicon assets.
-- The preview destination remains the existing private app URL: <https://greencollar-actual-app-preview.nobleloach1.chatgpt.site>. This handoff does not create or publish another host.
+- The preview remains on the existing owner-private Site. This handoff does not create or publish another host.
 
 ## Verification
 
