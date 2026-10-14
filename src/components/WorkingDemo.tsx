@@ -622,6 +622,7 @@ export function WorkingDemo({ onExit }: { onExit?: () => void }) {
         {editable && <Pressable accessibilityRole="button" accessibilityLabel={`Remove sample photo ${photo.name}`} onPress={() => removeLocalPhoto(visitKey, photo.id)} style={s.photoRemove}><Text style={s.photoRemoveText}>Remove</Text></Pressable>}
       </View>)}</View>}
       {editable && <ActionButton label="Add a local sample photo" secondary disabled={photos.length >= MAX_LOCAL_DEMO_PHOTOS_PER_VISIT || Platform.OS !== 'web'} onPress={() => addLocalPhoto(visitKey)}/>}
+      {editable && Platform.OS !== 'web' && <Text style={s.photoDisclosure}>Photo picking is available in the browser preview only.</Text>}
       <Text style={s.photoDisclosure}>Compressed sample photos stay in this browser only. No upload, GPS tag, or customer message is sent.</Text>
     </View>;
   }
@@ -801,7 +802,7 @@ export function WorkingDemo({ onExit }: { onExit?: () => void }) {
                     : <ActionButton label="Begin sample travel" disabled={saving || workerDayStartedAt === null} onPress={() => workerAction('travel')}/>}
                 <Text style={s.microCopy}>Travel, arrival and service timer are separate local sample actions. No live location, navigation, message, or dispatch is connected.</Text>
               </View> : <View style={s.emptyCard}><Text style={s.emptyMark}>✓</Text><Text style={s.cardTitle}>All assigned sample stops are complete.</Text><Text style={s.cardBody}>Your day start is saved locally. No time or location was sent anywhere.</Text></View>}
-              {session?.status === 'completed' && <View style={s.undoCard}><Text style={s.undoTitle}>Visit marked complete</Text><Text style={s.cardBody}>Completed in the local sample day. Undo is available if that was a mistake.</Text><ActionButton label="Undo completion" secondary disabled={saving} onPress={() => workerAction('undo')}/></View>}
+              {session?.status === 'completed' && <View style={s.undoCard}><Text style={s.undoTitle}>Visit marked complete</Text><Text style={s.cardBody}>Completed in the local sample day. Undo is available if that was a mistake.</Text>{renderLocalPhotos(session.jobId, false)}<ActionButton label="Undo completion" secondary disabled={saving} onPress={() => workerAction('undo')}/></View>}
               {approved && <View style={s.panelSoft}><Text style={s.panelTitle}>Remaining stops</Text>{plannedAgreements.slice(Math.max(0, nextIndex + (session?.status !== 'completed' && session ? 1 : 0))).map((agreement, index) => <View key={agreement.id} style={s.workerStopRow}><View style={s.stopNumber}><Text style={s.stopNumberText}>{String(Math.max(0, nextIndex + index + 2)).padStart(2, '0')}</Text></View><View style={s.stopText}><Text style={s.stopTitle}>{agreement.service_name}</Text><Text style={s.stopMeta}>{workspace.customers.find(item => item.id === agreement.customer_id)?.name ?? 'Sample customer'} · {agreement.estimated_minutes} min</Text></View></View>)}{!nextAgreement && <Text style={s.cardBody}>No remaining stops.</Text>}</View>}
               {approved && renderWorkerRoutePanel()}
             </>}
