@@ -24,7 +24,7 @@ This follow-up fixes the worker’s next-action visibility: the guarded “Start
 
 - Source branch: `codex/worker-primary-ui`.
 - UI source commit: `d2046ff777035b8dc7ef7f52e3fb95f9a8df4b89`.
-- The approved private Site is still version 6 at [GreenCollar actual-app preview](https://greencollar-actual-app-preview.nobleloach1.chatgpt.site). Site ID `appgprj_6ace74f5f8548191b9bdb42f82f4c663`; current deployment `appgdep_6acf80a0a4608191a1c22582f728fc8b` succeeded; access remains a custom owner-only allowlist. This follow-up has not been published. Version 6 remains the rollback baseline.
+- The app continues on the existing owner-private preview; this follow-up has not been published.
 - Hosted visual verification of this change and explicit owner acceptance are pending. Per the repository visual acceptance gate, status remains **INCOMPLETE — OWNER VISUAL ACCEPTANCE PENDING** until the owner checks the updated worker screen at the approved URL. Parent coordination is required before publishing this new export.
 
 ## Build provenance
