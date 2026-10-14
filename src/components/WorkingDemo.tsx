@@ -1,6 +1,6 @@
 import React, { useEffect, useMemo, useRef, useState } from 'react';
 import {
-  BackHandler, Keyboard, KeyboardAvoidingView, Modal, Platform, Pressable,
+  BackHandler, Image as RNImage, Keyboard, KeyboardAvoidingView, Modal, Platform, Pressable,
   SafeAreaView, ScrollView, StyleSheet, Text, TextInput, View, useWindowDimensions,
 } from 'react-native';
 import type { SavedCustomer } from '../data/customer-api';
@@ -12,9 +12,13 @@ import { parseServiceClock } from '../domain/service-time';
 import {
   clearLocalDemoWorkspace, createDemoRecordId, createInitialDemoWorkspace,
   createDemoVisitId, demoDayForDate, loadLocalDemoWorkspace, saveLocalDemoWorkspace,
-  type LocalDemoWorkday, type LocalDemoWorkspace,
+  MAX_LOCAL_DEMO_PHOTOS_PER_VISIT, MAX_LOCAL_DEMO_PHOTO_DATA_URL_LENGTH,
+  type LocalDemoPhoto, type LocalDemoWorkday, type LocalDemoWorkspace,
 } from '../demo/local-demo-store';
-import { beginLocalDemoWorkday, buildLocalDemoPlan } from '../demo/local-demo-workday';
+import {
+  beginLocalDemoTravel, beginLocalDemoWorkday, buildLocalDemoPlan,
+  confirmLocalDemoArrival,
+} from '../demo/local-demo-workday';
 import {
   buildIllustrativeTravelMatrix, estimateIllustrativeRoute, findIllustrativeLunchSlots,
   SAMPLE_DEPOT_ID, SAMPLE_RETURN_ID, type IllustrativeRouteStop,
@@ -142,6 +146,7 @@ export function WorkingDemo({ onExit }: { onExit?: () => void }) {
   const [saving, setSaving] = useState(false);
   const actionLock = useRef(false);
   const dayStartLock = useRef(false);
+  const workspaceRef = useRef(workspace);
   const contentScroll = useRef<ScrollView>(null);
 
   useEffect(() => {
@@ -173,7 +178,7 @@ export function WorkingDemo({ onExit }: { onExit?: () => void }) {
   const completedCount = completedIds.size;
   const totalVisitCount = dueDay.visits.filter(visit => visit.status !== 'skipped').length;
   const persistenceLabel = loaded.persistence === 'browser' ? 'Saved in this browser' : 'This session only';
-  useEffect(() => { setNoteDraft(session?.note ?? ''); }, [session?.jobId]);
+  useEffect(() => { setNoteDraft(session?.note ?? ''); }, [session?.jobId, session?.note]);
   useEffect(() => { setWorkerScreen('briefing'); }, [date]);
   useEffect(() => {
     setStartTimeDraft(workerDayStartedAt !== null
@@ -182,6 +187,7 @@ export function WorkingDemo({ onExit }: { onExit?: () => void }) {
   }, [date, workerDayStartedAt, day?.startMinute]);
 
   function commit(next: LocalDemoWorkspace, message?: string) {
+    workspaceRef.current = next;
     const persisted = saveLocalDemoWorkspace(next);
     setLoaded({
       workspace: next,
@@ -191,8 +197,9 @@ export function WorkingDemo({ onExit }: { onExit?: () => void }) {
     if (message) setNotice(message);
   }
   function replaceDay(nextDay: LocalDemoWorkday) {
-    const remaining = workspace.workdays.filter(item => item.date !== date);
-    commit({ ...workspace, workdays: [...remaining, nextDay] });
+    const latest = workspaceRef.current;
+    const remaining = latest.workdays.filter(item => item.date !== date);
+    commit({ ...latest, workdays: [...remaining, nextDay] });
   }
   function runOnce(action: () => void) {
     if (actionLock.current) return;
@@ -373,23 +380,122 @@ export function WorkingDemo({ onExit }: { onExit?: () => void }) {
       setTimeout(() => { dayStartLock.current = false; }, 220);
     }
   }
-  function updateSession(nextSession: WorkSession | null, visitUpdate?: LocalDemoWorkday['visits'][number]) {
-    if (!day) return;
+  function updateSession(
+    nextSession: WorkSession | null,
+    visitUpdate?: LocalDemoWorkday['visits'][number],
+    dayUpdate: Partial<LocalDemoWorkday> = {},
+  ) {
+    const currentDay = workspaceRef.current.workdays.find(item => item.date === date);
+    if (!currentDay) return;
     const visits = visitUpdate
-      ? [...day.visits.filter(visit => !(visit.agreement_id === visitUpdate.agreement_id && visit.scheduled_date === date)), visitUpdate]
-      : day.visits;
-    replaceDay({ ...day, workSession: nextSession, visits, approvedQueueKey: day.approvedQueueKey });
+      ? [...currentDay.visits.filter(visit => !(visit.agreement_id === visitUpdate.agreement_id && visit.scheduled_date === date)), visitUpdate]
+      : currentDay.visits;
+    replaceDay({ ...currentDay, ...dayUpdate, workSession: nextSession, visits, approvedQueueKey: currentDay.approvedQueueKey });
   }
-  function workerAction(action: 'arrive' | 'start' | 'pause' | 'resume' | 'complete' | 'undo') {
+  function updateVisitNote(value: string) {
+    setNoteDraft(value);
+    const latest = workspaceRef.current;
+    const currentDay = latest.workdays.find(item => item.date === date);
+    if (!currentDay?.workSession || currentDay.workSession.status === 'completed') return;
+    replaceDay({ ...currentDay, workSession: { ...currentDay.workSession, note: value || undefined } });
+  }
+  function addLocalPhoto(visitKey: string) {
+    if (Platform.OS !== 'web' || typeof document === 'undefined') {
+      setNotice('Photo picking is available in this browser preview only. No device photo is uploaded.');
+      return;
+    }
+    const input = document.createElement('input');
+    input.type = 'file';
+    input.accept = 'image/*';
+    input.setAttribute('aria-label', 'Choose a local sample visit photo');
+    input.onchange = () => {
+      const file = input.files?.[0];
+      input.remove();
+      if (!file) return;
+      if (!file.type.startsWith('image/')) { setNotice('Choose an image file for this sample visit.'); return; }
+      const objectUrl = URL.createObjectURL(file);
+      void (async () => {
+        try {
+          const image = await new Promise<HTMLImageElement>((resolve, reject) => {
+            const loadedImage = new window.Image();
+            loadedImage.onload = () => resolve(loadedImage);
+            loadedImage.onerror = () => reject(new Error('This image could not be opened.'));
+            loadedImage.src = objectUrl;
+          });
+          const canvas = document.createElement('canvas');
+          const maxEdge = 1200;
+          const scale = Math.min(1, maxEdge / Math.max(image.naturalWidth, image.naturalHeight));
+          canvas.width = Math.max(1, Math.round(image.naturalWidth * scale));
+          canvas.height = Math.max(1, Math.round(image.naturalHeight * scale));
+          const context = canvas.getContext('2d');
+          if (!context) throw new Error('This browser cannot prepare a local photo.');
+          context.drawImage(image, 0, 0, canvas.width, canvas.height);
+          let dataUrl = canvas.toDataURL('image/jpeg', 0.72);
+          if (dataUrl.length > MAX_LOCAL_DEMO_PHOTO_DATA_URL_LENGTH) {
+            const shrink = Math.min(1, 800 / Math.max(canvas.width, canvas.height));
+            canvas.width = Math.max(1, Math.round(canvas.width * shrink));
+            canvas.height = Math.max(1, Math.round(canvas.height * shrink));
+            context.drawImage(image, 0, 0, canvas.width, canvas.height);
+            dataUrl = canvas.toDataURL('image/jpeg', 0.55);
+          }
+          if (dataUrl.length > MAX_LOCAL_DEMO_PHOTO_DATA_URL_LENGTH)
+            throw new Error('This image is too large for the local sample. Choose a smaller photo.');
+          const latest = workspaceRef.current;
+          const currentDay = latest.workdays.find(item => item.date === date);
+          if (!currentDay || !currentDay.plannedVisitIds.includes(visitKey))
+            throw new Error('This visit is no longer in the sample day.');
+          const currentPhotos = currentDay.photosByVisitId?.[visitKey] ?? [];
+          if (currentPhotos.length >= MAX_LOCAL_DEMO_PHOTOS_PER_VISIT)
+            throw new Error(`Keep up to ${MAX_LOCAL_DEMO_PHOTOS_PER_VISIT} sample photos per visit.`);
+          const photo: LocalDemoPhoto = {
+            id: createDemoRecordId('photo'),
+            name: file.name.slice(0, 160) || 'Sample visit photo',
+            dataUrl,
+            createdAt: new Date().toISOString(),
+          };
+          replaceDay({ ...currentDay, photosByVisitId: {
+            ...currentDay.photosByVisitId,
+            [visitKey]: [...currentPhotos, photo],
+          } });
+          setNotice('Sample photo saved in this browser only. It was not uploaded or sent.');
+        } catch (error) {
+          setNotice(error instanceof Error ? error.message : 'Could not save this local sample photo.');
+        } finally {
+          URL.revokeObjectURL(objectUrl);
+        }
+      })();
+    };
+    input.click();
+  }
+  function removeLocalPhoto(visitKey: string, photoId: string) {
+    const latest = workspaceRef.current;
+    const currentDay = latest.workdays.find(item => item.date === date);
+    if (!currentDay) return;
+    const photos = (currentDay.photosByVisitId?.[visitKey] ?? []).filter(photo => photo.id !== photoId);
+    replaceDay({ ...currentDay, photosByVisitId: { ...currentDay.photosByVisitId, [visitKey]: photos } });
+    setNotice('Sample photo removed from this browser preview.');
+  }
+  function workerAction(action: 'travel' | 'arrive' | 'start' | 'pause' | 'resume' | 'complete' | 'undo') {
     if (!day || (!approved && action !== 'undo')) return;
     runOnce(() => {
       const selected = action === 'undo' ? activeAgreement : nextAgreement;
       if (!selected) return;
       const visitKey = `${selected.id}:${date}`;
-      if (action === 'arrive') { replaceDay({ ...day, arrivedVisitId: visitKey }); setNotice('Arrival confirmed in the local preview. Device location was not read.'); return; }
+      if (action === 'travel') {
+        replaceDay(beginLocalDemoTravel(day, visitKey));
+        setPlanError('');
+        setNotice('Sample travel started. This does not use GPS, navigation, or dispatch.');
+        return;
+      }
+      if (action === 'arrive') {
+        if (role === 'Worker') replaceDay(confirmLocalDemoArrival(day, visitKey));
+        else replaceDay({ ...day, arrivedVisitId: visitKey });
+        setNotice('Arrival confirmed for this sample stop. Device location was not read.');
+        return;
+      }
       if (action === 'start') {
         if (role === 'Worker' && workerDayStartedAt === null) { setPlanError('Start your sample day before starting a visit timer.'); return; }
-        if (role === 'Owner' && day.arrivedVisitId !== visitKey) { setPlanError('Confirm the sample arrival first.'); return; }
+        if (day.arrivedVisitId !== visitKey) { setPlanError('Confirm the sample arrival first.'); return; }
         replaceDay({ ...day, workSession: startWork(visitKey, Date.now()), approvedQueueKey: day.approvedQueueKey });
         setNotice('Sample visit started. The timer is running on this device.'); return;
       }
@@ -410,7 +516,7 @@ export function WorkingDemo({ onExit }: { onExit?: () => void }) {
           work_note: noteDraft.trim() || undefined,
           completed_customer_id: customer?.id ?? null, completed_customer_name: customer?.name ?? null,
           completed_service_name: selected.service_name, completed_rate_cents: selected.rate_cents,
-        });
+        }, { arrivedVisitId: null, travelingVisitId: null });
         setNoteDraft(''); setCompleteOpen(false); setNotice('Visit marked complete in this sample workday. Undo remains available below.'); return;
       }
       if (action === 'undo' && session?.status === 'completed') {
@@ -476,6 +582,8 @@ export function WorkingDemo({ onExit }: { onExit?: () => void }) {
     ...routeOptions,
     ...(day?.lunchAfterVisitId ? { lunchDurationMinutes, lunchAfterVisitId: day.lunchAfterVisitId } : {}),
   });
+  const nextRouteStop = workerRoute.stops.find(stop => stop.id === `${nextAgreement?.id}:${date}`);
+  const nextRouteLeg = workerRoute.legs.find(leg => leg.toId === nextAgreement?.location_id && !leg.isReturn);
   const totalMinutes = routeStops.reduce((sum, item) => sum + item.serviceMinutes, 0);
   const plannedValue = plannedAgreements.reduce((sum, item) => sum + item.rate_cents, 0);
   const elapsed = session ? safeElapsedMinutes(session, tick) : 0;
@@ -502,6 +610,21 @@ export function WorkingDemo({ onExit }: { onExit?: () => void }) {
     if (!day) return;
     replaceDay({ ...day, delayMinutes: minutes });
     setPlanError('');
+  }
+
+  function renderLocalPhotos(visitKey: string, editable: boolean) {
+    const photos = day?.photosByVisitId?.[visitKey] ?? [];
+    return <View style={s.photoPanel}>
+      <View style={s.photoPanelHead}><Text style={s.panelTitle}>Visit photos</Text><Tag tone="neutral">{`${photos.length}/${MAX_LOCAL_DEMO_PHOTOS_PER_VISIT} SAMPLE`}</Tag></View>
+      {photos.length > 0 && <View style={s.photoRow}>{photos.map(photo => <View key={photo.id} style={s.photoCard}>
+        <RNImage source={{ uri: photo.dataUrl }} accessibilityLabel={`Local sample photo: ${photo.name}`} resizeMode="cover" style={s.photoThumb}/>
+        <Text numberOfLines={2} style={s.photoName}>{photo.name}</Text>
+        {editable && <Pressable accessibilityRole="button" accessibilityLabel={`Remove sample photo ${photo.name}`} onPress={() => removeLocalPhoto(visitKey, photo.id)} style={s.photoRemove}><Text style={s.photoRemoveText}>Remove</Text></Pressable>}
+      </View>)}</View>}
+      {editable && <ActionButton label="Add a local sample photo" secondary disabled={photos.length >= MAX_LOCAL_DEMO_PHOTOS_PER_VISIT || Platform.OS !== 'web'} onPress={() => addLocalPhoto(visitKey)}/>}
+      {editable && Platform.OS !== 'web' && <Text style={s.photoDisclosure}>Photo picking is available in the browser preview only.</Text>}
+      <Text style={s.photoDisclosure}>Compressed sample photos stay in this browser only. No upload, GPS tag, or customer message is sent.</Text>
+    </View>;
   }
 
   function renderWorkerRoutePanel() {
@@ -659,7 +782,8 @@ export function WorkingDemo({ onExit }: { onExit?: () => void }) {
                 <Text style={s.cardBody}>{activeAgreement.address}</Text>
                 {!!activeAgreement.preferences && <Text style={s.cardBody}>Sample access note: {activeAgreement.preferences}</Text>}
                 <View style={s.assignmentFact}><Text style={s.stopMeta}>Crew Green · Truck 02 · sample assignment</Text></View>
-                <Field label="Optional work note" value={noteDraft} onChangeText={setNoteDraft} placeholder="Add a note for this sample visit" maxLength={1000} multiline accessibilityHint="This note stays in the local preview."/>
+                <Field label="Optional work note" value={noteDraft} onChangeText={updateVisitNote} placeholder="Add a note for this sample visit" maxLength={1000} multiline accessibilityHint="This note saves in the local preview as you type."/>
+                {renderLocalPhotos(session.jobId, true)}
                 {session.status === 'running' ? <View style={s.actionRow}><ActionButton label="Pause visit timer" disabled={saving} onPress={() => workerAction('pause')}/><ActionButton label="Finish visit" secondary disabled={saving} onPress={() => setCompleteOpen(true)}/></View>
                   : <View style={s.actionRow}><ActionButton label="Resume visit timer" disabled={saving} onPress={() => workerAction('resume')}/><ActionButton label="Finish visit" secondary disabled={saving} onPress={() => setCompleteOpen(true)}/></View>}
               </View> : nextAgreement ? <View style={s.nextCard}>
@@ -670,10 +794,15 @@ export function WorkingDemo({ onExit }: { onExit?: () => void }) {
                 {!!nextAgreement.preferences && <Text style={s.cardBody}>Sample access note: {nextAgreement.preferences}</Text>}
                 <Text style={s.scheduleMeta}>{formatClock((day?.startMinute ?? 8 * 60) + plannedAgreements.slice(0, Math.max(0, nextIndex)).reduce((sum, item) => sum + item.estimated_minutes, 0))} · {nextAgreement.estimated_minutes} service min</Text>
                 <View style={s.assignmentFact}><Text style={s.stopMeta}>Crew Green · Truck 02 · sample assignment</Text></View>
-                <ActionButton label="Start visit timer" disabled={saving || workerDayStartedAt === null} onPress={() => workerAction('start')}/>
-                <Text style={s.microCopy}>This starts the service timer only. No GPS, navigation, or dispatch action is connected.</Text>
+                {nextRouteLeg && nextRouteStop && <View style={s.routeLeg}><Text style={s.routeLegTitle}>{nextIndex === 0 ? 'Depot → Stop' : `Stop ${String(nextIndex).padStart(2, '0')} → Stop ${String(nextIndex + 1).padStart(2, '0')}`}</Text><Text style={s.routeLegMeta}>{nextRouteLeg.driveMinutes} min sample drive · estimated arrival {formatClock(nextRouteStop.arrivalMinute)}</Text></View>}
+                {day?.arrivedVisitId === `${nextAgreement.id}:${date}`
+                  ? <><Text style={s.arrivalText}>Sample arrival confirmed</Text><ActionButton label="Start visit timer" disabled={saving || workerDayStartedAt === null} onPress={() => workerAction('start')}/></>
+                  : day?.travelingVisitId === `${nextAgreement.id}:${date}`
+                    ? <><Tag tone="amber">EN ROUTE · SAMPLE</Tag><Text style={s.microCopy}>Travel state is simulated. No GPS or navigation is active.</Text><ActionButton label="Confirm sample arrival" disabled={saving} onPress={() => workerAction('arrive')}/></>
+                    : <ActionButton label="Begin sample travel" disabled={saving || workerDayStartedAt === null} onPress={() => workerAction('travel')}/>}
+                <Text style={s.microCopy}>Travel, arrival and service timer are separate local sample actions. No live location, navigation, message, or dispatch is connected.</Text>
               </View> : <View style={s.emptyCard}><Text style={s.emptyMark}>✓</Text><Text style={s.cardTitle}>All assigned sample stops are complete.</Text><Text style={s.cardBody}>Your day start is saved locally. No time or location was sent anywhere.</Text></View>}
-              {session?.status === 'completed' && <View style={s.undoCard}><Text style={s.undoTitle}>Visit marked complete</Text><Text style={s.cardBody}>Completed in the local sample day. Undo is available if that was a mistake.</Text><ActionButton label="Undo completion" secondary disabled={saving} onPress={() => workerAction('undo')}/></View>}
+              {session?.status === 'completed' && <View style={s.undoCard}><Text style={s.undoTitle}>Visit marked complete</Text><Text style={s.cardBody}>Completed in the local sample day. Undo is available if that was a mistake.</Text>{renderLocalPhotos(session.jobId, false)}<ActionButton label="Undo completion" secondary disabled={saving} onPress={() => workerAction('undo')}/></View>}
               {approved && <View style={s.panelSoft}><Text style={s.panelTitle}>Remaining stops</Text>{plannedAgreements.slice(Math.max(0, nextIndex + (session?.status !== 'completed' && session ? 1 : 0))).map((agreement, index) => <View key={agreement.id} style={s.workerStopRow}><View style={s.stopNumber}><Text style={s.stopNumberText}>{String(Math.max(0, nextIndex + index + 2)).padStart(2, '0')}</Text></View><View style={s.stopText}><Text style={s.stopTitle}>{agreement.service_name}</Text><Text style={s.stopMeta}>{workspace.customers.find(item => item.id === agreement.customer_id)?.name ?? 'Sample customer'} · {agreement.estimated_minutes} min</Text></View></View>)}{!nextAgreement && <Text style={s.cardBody}>No remaining stops.</Text>}</View>}
               {approved && renderWorkerRoutePanel()}
             </>}
@@ -693,7 +822,8 @@ export function WorkingDemo({ onExit }: { onExit?: () => void }) {
               <Text style={s.cardEyebrow}>CURRENT VISIT</Text><Text style={s.cardTitle}>{activeAgreement.service_name}</Text>
               <Text style={s.cardBody}>{workspace.customers.find(item => item.id === activeAgreement.customer_id)?.name ?? 'Sample customer'}</Text>
               <Text style={s.cardBody}>{activeAgreement.address}</Text>
-              <Field label="Optional work note" value={noteDraft} onChangeText={setNoteDraft} placeholder="Add a note for this sample visit" maxLength={1000} multiline accessibilityHint="This note stays in the local preview."/>
+              <Field label="Optional work note" value={noteDraft} onChangeText={updateVisitNote} placeholder="Add a note for this sample visit" maxLength={1000} multiline accessibilityHint="This note saves in the local preview as you type."/>
+              {renderLocalPhotos(session.jobId, true)}
               {session.status === 'running' ? <View style={s.actionRow}><ActionButton label="Pause work" disabled={saving} onPress={() => workerAction('pause')}/><ActionButton label="Finish visit" secondary disabled={saving} onPress={() => setCompleteOpen(true)}/></View>
                 : <View style={s.actionRow}><ActionButton label="Resume work" disabled={saving} onPress={() => workerAction('resume')}/><ActionButton label="Finish visit" secondary disabled={saving} onPress={() => setCompleteOpen(true)}/></View>}
             </View> : nextAgreement && approved ? <View style={s.nextCard}>
@@ -708,7 +838,7 @@ export function WorkingDemo({ onExit }: { onExit?: () => void }) {
               <Text style={s.microCopy}>Arrival is a sample action. This preview does not access GPS or contact anyone.</Text>
             </View> : approved ? <View style={s.emptyCard}><Text style={s.emptyMark}>✓</Text><Text style={s.cardTitle}>That’s the day complete.</Text><Text style={s.cardBody}>All planned sample visits are finished.</Text></View>
               : <View style={s.emptyCard}><Text style={s.cardEyebrow}>READY WHEN YOU ARE</Text><Text style={s.cardTitle}>No approved workday yet.</Text><Text style={s.cardBody}>Build a sample plan, check what fits, then approve it on this device.</Text><ActionButton label="Build a sample day" onPress={() => chooseTab('Planner')}/></View>}
-            {session?.status === 'completed' && <View style={s.undoCard}><Text style={s.undoTitle}>Visit marked complete</Text><Text style={s.cardBody}>Completed in the local sample day. Undo is available if that was a mistake.</Text><ActionButton label="Undo completion" secondary disabled={saving} onPress={() => workerAction('undo')}/></View>}
+            {session?.status === 'completed' && <View style={s.undoCard}><Text style={s.undoTitle}>Visit marked complete</Text><Text style={s.cardBody}>Completed in the local sample day. Undo is available if that was a mistake.</Text>{renderLocalPhotos(session.jobId, false)}<ActionButton label="Undo completion" secondary disabled={saving} onPress={() => workerAction('undo')}/></View>}
             <View style={s.sectionHeader}><Text style={s.sectionTitle}>Coming up</Text>{approved && <Pressable accessibilityRole="button" onPress={() => chooseTab('Schedule')}><Text style={s.link}>View schedule</Text></Pressable>}</View>
             {approved ? plannedAgreements.slice(0, 3).map((agreement, index) => <View key={agreement.id} style={s.compactStop}>
               <View style={[s.stopNumber, completedIds.has(`${agreement.id}:${date}`) && s.stopNumberDone]}><Text style={[s.stopNumberText, completedIds.has(`${agreement.id}:${date}`) && s.stopNumberTextDone]}>{completedIds.has(`${agreement.id}:${date}`) ? '✓' : String(index + 1).padStart(2, '0')}</Text></View>
@@ -888,6 +1018,7 @@ const s = StyleSheet.create({
   statsRow: { flexDirection: 'row', gap: 9, marginVertical: 2 }, stat: { flex: 1, minHeight: 78, padding: 12, justifyContent: 'center', gap: 5, borderRadius: 14, backgroundColor: palette.paper, borderWidth: 1, borderColor: palette.line }, statValue: { color: palette.ink, fontSize: 20, fontWeight: '800', letterSpacing: -0.4 }, statLabel: { color: palette.quiet, fontSize: 8, fontWeight: '900', letterSpacing: 0.9 },
   activeCard: { padding: 18, gap: 9, borderRadius: 18, backgroundColor: '#E8F1E5', borderWidth: 1, borderColor: '#CFE0CE' }, activeTop: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center' }, timer: { color: palette.forest, fontSize: 22, fontWeight: '800', fontVariant: ['tabular-nums'] }, cardEyebrow: { color: palette.pine, fontSize: 9, fontWeight: '900', letterSpacing: 1.2 }, cardTitle: { color: palette.ink, fontSize: 18, fontWeight: '800', lineHeight: 24 }, cardBody: { color: palette.quiet, fontSize: 13, lineHeight: 19 },
   nextCard: { padding: 18, gap: 9, borderRadius: 18, backgroundColor: palette.paper, borderWidth: 1, borderColor: palette.line, borderTopWidth: 4, borderTopColor: palette.pine }, nextHeader: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'flex-start', gap: 12 }, arrivalText: { color: palette.forest, fontWeight: '800', fontSize: 12 }, microCopy: { color: palette.quiet, fontSize: 11, lineHeight: 16 },
+  photoPanel: { padding: 12, gap: 9, borderRadius: 12, borderWidth: 1, borderColor: palette.line, backgroundColor: '#FFFFFF' }, photoPanelHead: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', gap: 8 }, photoRow: { flexDirection: 'row', flexWrap: 'wrap', gap: 8 }, photoCard: { width: 112, padding: 6, gap: 4, borderRadius: 9, backgroundColor: palette.soft }, photoThumb: { width: 100, height: 76, borderRadius: 6, backgroundColor: '#E3E8E2' }, photoName: { color: palette.ink, fontSize: 9, lineHeight: 12 }, photoRemove: { minHeight: 32, justifyContent: 'center', paddingHorizontal: 4 }, photoRemoveText: { color: palette.red, fontSize: 10, fontWeight: '800' }, photoDisclosure: { color: palette.quiet, fontSize: 10, lineHeight: 14 },
   action: { minHeight: 50, paddingHorizontal: 18, paddingVertical: 13, alignItems: 'center', justifyContent: 'center', backgroundColor: palette.forest, borderRadius: 12, flex: 1 }, actionText: { color: palette.paper, fontSize: 14, fontWeight: '800', textAlign: 'center' }, secondaryAction: { backgroundColor: palette.paper, borderWidth: 1, borderColor: palette.line }, secondaryActionText: { color: palette.forest }, disabledAction: { opacity: 0.45 }, pressed: { opacity: 0.8, transform: [{ scale: 0.99 }] }, actionRow: { flexDirection: 'row', gap: 9 },
   emptyCard: { padding: 20, gap: 9, borderRadius: 18, backgroundColor: palette.paper, borderWidth: 1, borderColor: palette.line }, emptyMark: { color: palette.pine, fontSize: 26, fontWeight: '900' }, emptyCopy: { color: palette.quiet, fontSize: 13, paddingVertical: 8 }, undoCard: { padding: 16, gap: 8, borderRadius: 14, backgroundColor: '#F4F0E8', borderWidth: 1, borderColor: '#E4D8BE' }, undoTitle: { color: palette.ink, fontSize: 14, fontWeight: '800' },
   sectionHeader: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', marginTop: 7 }, sectionTitle: { color: palette.ink, fontSize: 18, fontWeight: '800' }, link: { color: palette.forest, fontSize: 12, fontWeight: '800' }, compactStop: { minHeight: 68, flexDirection: 'row', alignItems: 'center', gap: 11, paddingVertical: 10, borderBottomWidth: 1, borderBottomColor: palette.line }, stopNumber: { width: 34, height: 34, borderRadius: 11, backgroundColor: palette.soft, alignItems: 'center', justifyContent: 'center' }, stopNumberDone: { backgroundColor: palette.mint }, stopNumberText: { color: palette.quiet, fontSize: 10, fontWeight: '900' }, stopNumberTextDone: { color: palette.forest }, stopText: { flex: 1, gap: 3 }, stopTitle: { color: palette.ink, fontSize: 13, fontWeight: '800' }, stopMeta: { color: palette.quiet, fontSize: 11, lineHeight: 16 },

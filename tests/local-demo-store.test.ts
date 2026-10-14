@@ -10,9 +10,10 @@ import {
   LEGACY_LOCAL_DEMO_STORAGE_KEY,
   loadLocalDemoWorkspace,
   saveLocalDemoWorkspace,
+  MAX_LOCAL_DEMO_PHOTOS_PER_VISIT,
   type DemoStorage,
 } from '../src/demo/local-demo-store';
-import {beginLocalDemoWorkday,buildLocalDemoPlan,prepareLocalDemoInvoiceDrafts} from '../src/demo/local-demo-workday';
+import {beginLocalDemoTravel,beginLocalDemoWorkday,buildLocalDemoPlan,confirmLocalDemoArrival,prepareLocalDemoInvoiceDrafts} from '../src/demo/local-demo-workday';
 import {createSavedQueueReview,canApproveSavedQueueReview,isSavedQueueApproved} from '../src/domain/saved-queue-review';
 import {invoiceTotals} from '../src/domain/invoice';
 import {startWork} from '../src/domain/work-session';
@@ -101,6 +102,68 @@ test('stores only planned synthetic arrival confirmations and rejects dangling a
   assert.equal(restored.workspace.workdays.length,1,'invalid local data falls back to the fresh sample assignment');
   assert.equal(restored.workspace.workdays[0].approvedQueueKey,'local-preview-2026-10-13-sample-assignment');
   assert.match(restored.notice??'',/could not be read/);
+});
+
+test('worker travel and arrival are separate local transitions and survive reload',()=>{
+  const storage=memoryStorage();
+  const date='2026-10-13';
+  const workspace=createInitialDemoWorkspace(date);
+  const {workday}=buildLocalDemoPlan(workspace,date,'8','6');
+  const visitId=workday.plannedVisitIds[0];
+  const started=beginLocalDemoWorkday(workday,1000);
+  assert.throws(()=>confirmLocalDemoArrival(started,visitId),/Begin sample travel/);
+  const traveling=beginLocalDemoTravel(started,visitId);
+  assert.equal(traveling.travelingVisitId,visitId);
+  assert.equal(traveling.arrivedVisitId,null);
+  assert.strictEqual(beginLocalDemoTravel(traveling,visitId),traveling,'repeated travel start is idempotent');
+  const arrived=confirmLocalDemoArrival(traveling,visitId);
+  assert.equal(arrived.travelingVisitId,null);
+  assert.equal(arrived.arrivedVisitId,visitId);
+  assert.throws(()=>beginLocalDemoTravel(workday,visitId),/Start the sample day/);
+  workspace.workdays.push(traveling);
+  assert.equal(saveLocalDemoWorkspace(workspace,storage),true);
+  const restored=loadLocalDemoWorkspace(storage,date).workspace.workdays[0];
+  assert.equal(restored.travelingVisitId,visitId,'in-progress sample travel survives reload');
+  assert.equal(restored.arrivedVisitId,null);
+});
+
+test('compressed local sample photos are bounded, keyed by visit, and persist in the browser workspace',()=>{
+  const storage=memoryStorage();
+  const date='2026-10-13';
+  const workspace=createInitialDemoWorkspace(date);
+  const {workday}=buildLocalDemoPlan(workspace,date,'8','6');
+  const visitId=workday.plannedVisitIds[0];
+  const photo={id:'preview-photo-one',name:'before.jpg',dataUrl:'data:image/jpeg;base64,/9j/4AAQSkZJRg==',createdAt:'2026-10-13T12:00:00.000Z'};
+  workday.photosByVisitId={[visitId]:[photo]};
+  workspace.workdays.push(workday);
+  assert.equal(saveLocalDemoWorkspace(workspace,storage),true);
+  const restored=loadLocalDemoWorkspace(storage,date).workspace.workdays[0];
+  assert.deepEqual(restored.photosByVisitId?.[visitId],[photo]);
+
+  const tooMany={...workspace,workdays:[{...workday,photosByVisitId:{[visitId]:Array.from({length:MAX_LOCAL_DEMO_PHOTOS_PER_VISIT+1},(_,index)=>({...photo,id:`preview-photo-${index}`}))}}]};
+  storage.setItem(LOCAL_DEMO_STORAGE_KEY,JSON.stringify(tooMany));
+  const rejectedCount=loadLocalDemoWorkspace(storage,date);
+  assert.match(rejectedCount.notice??'',/could not be read/);
+  assert.deepEqual(rejectedCount.workspace.workdays[0].photosByVisitId,{});
+
+  const invalidUrl={...workspace,workdays:[{...workday,photosByVisitId:{[visitId]:[{...photo,dataUrl:'data:image/png;base64,AA=='}]}}]};
+  storage.setItem(LOCAL_DEMO_STORAGE_KEY,JSON.stringify(invalidUrl));
+  assert.match(loadLocalDemoWorkspace(storage,date).notice??'',/could not be read/);
+});
+
+test('replanning preserves current sample travel and photos for visits that remain assigned',()=>{
+  const date='2026-10-13';
+  const workspace=createInitialDemoWorkspace(date);
+  const {workday}=buildLocalDemoPlan(workspace,date,'8','6');
+  const first=workday.plannedVisitIds[0];
+  const second=workday.plannedVisitIds[1];
+  workday.dayStartedAt=1000;
+  workday.travelingVisitId=second;
+  workday.photosByVisitId={[first]:[{id:'preview-photo-kept',name:'kept.jpg',dataUrl:'data:image/jpeg;base64,/9j/4AAQSkZJRg==',createdAt:'2026-10-13T12:00:00.000Z'}]};
+  workspace.workdays=[workday];
+  const rebuilt=buildLocalDemoPlan(workspace,date,'8','6').workday;
+  assert.equal(rebuilt.travelingVisitId,second);
+  assert.deepEqual(rebuilt.photosByVisitId,workday.photosByVisitId);
 });
 
 test('migrates v1 browser data in place without losing saved customers, addresses, or recurring jobs',()=>{

@@ -52,10 +52,24 @@ export type LocalDemoWorkday = {
   approvedQueueKey: string | null;
   /** Synthetic arrival confirmation; never sourced from device GPS. */
   arrivedVisitId?: string | null;
+  /** Synthetic in-progress travel state; never sourced from device GPS. */
+  travelingVisitId?: string | null;
+  /** Compressed JPEG data URLs held only in the local sample workspace. */
+  photosByVisitId?: Record<string, LocalDemoPhoto[]>;
   workSession: WorkSession | null;
   visits: DayData['visits'];
   invoiceDrafts: PersistedInvoiceDraft[];
 };
+
+export type LocalDemoPhoto = {
+  id: string;
+  name: string;
+  dataUrl: string;
+  createdAt: string;
+};
+
+export const MAX_LOCAL_DEMO_PHOTOS_PER_VISIT = 2;
+export const MAX_LOCAL_DEMO_PHOTO_DATA_URL_LENGTH = 360_000;
 
 export type DemoStorage = {
   getItem(key: string): string | null;
@@ -130,6 +144,8 @@ export function createInitialDemoWorkspace(date = localCalendarDate(), includeAs
     unscheduledVisitIds: [],
     approvedQueueKey: `local-preview-${date}-sample-assignment`,
     arrivedVisitId: null,
+    travelingVisitId: null,
+    photosByVisitId: {},
     workSession: null,
     visits: [],
     invoiceDrafts: [],
@@ -240,6 +256,22 @@ function isWorkspace(value: unknown): value is LocalDemoWorkspace | (Omit<LocalD
         || (day.approvedQueueKey !== null && typeof day.approvedQueueKey !== 'string')
         || (day.arrivedVisitId !== undefined && day.arrivedVisitId !== null
           && (typeof day.arrivedVisitId !== 'string' || !day.plannedVisitIds.includes(day.arrivedVisitId)))
+        || (day.travelingVisitId !== undefined && day.travelingVisitId !== null
+          && (typeof day.travelingVisitId !== 'string' || !day.plannedVisitIds.includes(day.travelingVisitId)
+            || day.travelingVisitId === day.arrivedVisitId))
+        || (day.photosByVisitId !== undefined && (!day.photosByVisitId || typeof day.photosByVisitId !== 'object'
+          || Array.isArray(day.photosByVisitId)
+          || Object.entries(day.photosByVisitId).some(([visitKey, photos]) => {
+            const match = /^([a-zA-Z0-9_-]{1,100}):(\d{4}-\d{2}-\d{2})$/.exec(visitKey);
+            if (!match || !agreementIds.has(match[1]) || !validCalendarDate(match[2])
+              || !Array.isArray(photos) || photos.length > MAX_LOCAL_DEMO_PHOTOS_PER_VISIT) return true;
+            return photos.some(photo => !photo || typeof photo !== 'object'
+              || typeof photo.id !== 'string' || !validRecordId(photo.id)
+              || typeof photo.name !== 'string' || !photo.name.trim() || photo.name.length > 160
+              || typeof photo.dataUrl !== 'string' || photo.dataUrl.length > MAX_LOCAL_DEMO_PHOTO_DATA_URL_LENGTH
+              || !/^data:image\/jpeg;base64,[A-Za-z0-9+/]+=*$/.test(photo.dataUrl)
+              || typeof photo.createdAt !== 'string' || photo.createdAt.length > 40);
+          })))
         || !Array.isArray(day.visits) || !Array.isArray(day.invoiceDrafts)) return false;
       if (day.workSession !== null) {
         const session = day.workSession;
@@ -346,7 +378,7 @@ export function clearLocalDemoWorkspace(
   }
 }
 
-export function createDemoRecordId(kind: 'customer' | 'location' | 'agreement'): string {
+export function createDemoRecordId(kind: 'customer' | 'location' | 'agreement' | 'photo'): string {
   const suffix = `${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 9)}`;
   return `preview-${kind}-${suffix}`;
 }
@@ -365,7 +397,8 @@ export function createEmptyDemoWorkday(date: string, hours = '8', maxJobs = '6')
     lunchAfterVisitId: null,
     delayMinutes: 0,
     plannedVisitIds: [], unscheduledVisitIds: [], approvedQueueKey: null,
-    arrivedVisitId: null, workSession: null, visits: [], invoiceDrafts: [],
+    arrivedVisitId: null, travelingVisitId: null, photosByVisitId: {},
+    workSession: null, visits: [], invoiceDrafts: [],
   };
 }
 
