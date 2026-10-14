@@ -18,9 +18,26 @@ The in-app banner says Clerk and the Cloudflare API are disconnected. `EXPO_PUBL
 
 ## Working UI verification
 
-The branch's local Expo web export was checked in Chromium at 390 × 844 (phone-sized) and 1440 × 1000 (desktop). The checks covered customer/address/schedule forms and dialogs; workday planning and approval; cancel/back and validation paths; timer pause/resume across reload; visit completions with local billing snapshots; invoice-draft preparation, edits, save, and reload; reset cancel/confirm; and the session-only disclosure when browser storage is blocked. Both layouts fit without horizontal overflow and reported no application JavaScript errors. This verifies the local export, not the separate GitHub Actions artifact below. The standard-export favicon request may return 404 in the local static server; it does not affect the app.
+The branch's local Expo web export was checked in Chromium at 390 × 844 (phone-sized) and 1440 × 1000 (desktop). The checks covered customer/address/schedule forms and dialogs; workday planning and approval; cancel/back and validation paths; repeated saves; visit completion with a local billing snapshot; invoice-draft preparation, validation, save, and reload; reset cancel/confirm; and the session-only disclosure when browser storage is blocked. Both layouts fit without horizontal overflow and reported no application JavaScript errors. This verifies the local export; the upstream baseline artifact below is a different build. The standard-export favicon request may return 404 in the local static server; it does not affect the app.
 
-The GitHub Actions candidate is run `38479510667`, artifact `greencollar-expo-web` (ID `11856342330`), built from commit `8b880e6f7a4ff7cf9ac88e1ae3bfe63990946e54`, with archive digest `sha256:106c98a809b3ceff2e59aabaddb83a8848e9d51c9466dfa5a341235911c487b9`. Its exact ZIP could not be retrieved for this Chromium smoke test. The supplied Library item (`libfile_3f090c8e9ec08191a1cfe1c4f50f569a`, 319,577 bytes) was recognized, but the signed-transfer helper failed and its returned workspace path was absent from the execution environment. The earlier connector download returned HTTP 403, and Chromium could not establish a tunnel to that temporary file host. Do not treat the local-export checks above as verification of this CI archive.
+The screenshots below were captured from the local export.
+
+## Current local export and screenshots
+
+- App source commit: `d43bc3a485a4c324c461a25a4214c7080c391bf4`
+- Export: `EXPO_PUBLIC_GREENCOLLAR_APP_PREVIEW=true npm run export:web`, written to `dist/` with no Clerk key or API URL.
+- Exact static export archive: `greencollar-web-d43bc3a.zip`; SHA-256 `d1058b61dcea172687509046e56210855685da4f1649678d475dda858df97911`.
+- Web bundle: `_expo/static/js/web/AppEntry-e89018be85c1160bfaf926cfa8cee1c6.js`; SHA-256 `0499a521f71297d29e6600ee2deb63367fba827f034acd9be252ebb6f6ab5ffe`.
+- Chromium smoke check passed at 390 × 844 and 1440 × 1000, with no horizontal overflow or application console errors. It exercised five-tab navigation; customer, address, and recurring-job validation; Back draft preservation and Cancel clearing; repeat saves; workday build and approval cancel/confirm; visit note, completion and billing snapshot; invoice validation, save and reload; and the session-only storage fallback.
+- The screenshots use synthetic fixtures and show the local preview only.
+
+![Phone Today screen](ui-preview/phone-today.png)
+
+![Phone customer form](ui-preview/phone-customer-form.png)
+
+![Desktop invoice review](ui-preview/desktop-invoice-review.png)
+
+![Desktop customer form](ui-preview/desktop-customer-form.png)
 
 ## What requires Clerk and/or the Cloudflare API
 
@@ -34,7 +51,7 @@ Preview edits are fictional browser data. They are not production records, do no
 
 ## Upstream baseline Expo export
 
-The values below describe the upstream artifact used for the existing Site version before this working UI update. The branch's local export verification and the separate CI artifact's provenance and smoke-test status are recorded above.
+The values below describe the upstream export before this working UI update. The local export provenance and smoke-test status for this branch are recorded above.
 
 - Source commit: `76912dfa09af6c00ab6ae2336fad6a710c9b1bce`
 - Upstream source before the visual-preview route: `dd6293972388c13f8f79a86d23621c81f7b1f3a0`
@@ -52,26 +69,6 @@ EXPO_PUBLIC_GREENCOLLAR_APP_PREVIEW=true npm run export:web
 
 The `GreenCollar Expo web export` workflow runs this on pull requests and retains the `dist/` artifact for seven days.
 
-## Private hosting status
+## Hosting
 
-Sites supports the compiled static bundle in `dist/`. An owner-private Sites project has been created for this preview:
-
-- Project ID: `appgprj_6ace74f5f8548191b9bdb42f82f4c663`
-- Current published version: version 1, deployment `appgdep_6ace87b3af188191bf319f67ac3f9c7b`
-- Current published app source: `76912dfa09af6c00ab6ae2336fad6a710c9b1bce`
-- Intended URL: `https://greencollar-actual-app-preview.nobleloach1.chatgpt.site`
-- Access: owner-only
-- The URL is live and was verified against the existing private Site. The next preview update must reuse this project and URL and publish the tested export from the new source commit.
-
-No Site publish is part of this source change. The existing owner-only URL remains on the current published version until the tested export for this change is published to the same project.
-
-## Deployment steps
-
-1. Use the existing Site project ID above and obtain a fresh source-write credential.
-2. Open its source with the installed Sites `site-workflow.mjs --project-id <project-id>` helper. Keep credentials on hidden stdin; never paste them into commands, files, or GitHub.
-3. Copy the GreenCollar source at the reviewed commit into the Site checkout. Preserve `.openai/hosting.json` and `static.directory: dist`.
-4. Put the exact tested Expo export in `dist/`, then package that source state with the Sites helper.
-5. Publish using the owner-private Sites operation. Verify deployment success and the returned URL before calling the update live.
-6. Record the pushed source SHA, Sites version, deployment ID, artifact digest, and verified URL here.
-
-Do not enable public access. Do not deploy the Cloudflare Worker or configure a production API as part of this visual preview.
+Publishing is managed separately by the owner. This public repository intentionally contains no private hosting URL, project identifier, deployment identifier, or access details. No host was created or changed as part of this source update.
