@@ -26,9 +26,9 @@ Update the relevant documentation when the source, publishing steps, URL, deploy
 
 ## Approved GreenCollar destination and current work
 
-The existing owner-only Site is now published at [the GreenCollar actual-app preview](https://greencollar-actual-app-preview.nobleloach1.chatgpt.site). Its current version and deployment succeeded; the [hosted-preview handoff](HOSTED-PREVIEW-HANDOFF.md) records the immutable app-artifact/source/Site mapping, tested publish and repeat-preparation steps, fixture limitations, and rollback path. The Site access policy is owner-only.
+The existing owner-only private Site has a successful deployment of the worker travel/arrival preview from [PR #88](https://github.com/newssmyrna/greencollar/pull/88). Its private URL and Site project/version/deployment identifiers are intentionally omitted from this public repository. The [hosted-preview handoff](HOSTED-PREVIEW-HANDOFF.md) records the public app-artifact provenance, sample-data limitations, and repeatable private publish/rollback process without publishing those private identifiers.
 
-A successful deployment is not owner visual acceptance. No hosted browser/phone visual QA or explicit owner acceptance is recorded yet, so UI work remains **INCOMPLETE — OWNER VISUAL ACCEPTANCE PENDING** until the owner opens the URL and checks the intended screen/state. PR #85 documents the earlier pre-deployment work; recheck this handoff and the actual Site state rather than relying on the PR’s historical “not deployed” description.
+A successful deployment is not owner visual acceptance. Verify the intended hosted screen/state and phone-sized layout, then record the actual check and the owner’s explicit acceptance. PR #88’s local tests and browser smoke do not substitute for hosted visual QA.
 
 Before substantial feature or design work, verify the existing approved publish path and confirm that the owner can reach the intended destination. Use only the existing owner-approved private Site and workflow; do not create another Site, alternate preview, or host to work around a blocked publish. If the approved URL, deployment capability, or owner access is unavailable, mark the task **INCOMPLETE**, stop further feature/design work, and report the exact failing step, observed error, source revision, and smallest unblock needed.
 
