@@ -21,6 +21,7 @@ Every preview screen discloses that records are fictional and local. Arrival doe
 - Repository: `newssmyrna/greencollar`.
 - Source branch starts from the complete Expo app line `codex/read-only-demo-entry`, commit `fd00f316dbd156ee8922810f07cbc9b89065d298`; its app-export ancestor is `76912dfa09af6c00ab6ae2336fad6a710c9b1bce`.
 - Isolated implementation branch: `codex/worker-primary-ui`.
+- Tested UI source commit: `7bed94e3c2b8a76aaee51da778b2731532c114aa`.
 - Export command: `EXPO_PUBLIC_GREENCOLLAR_APP_PREVIEW=true EXPO_NO_TELEMETRY=1 EXPO_OFFLINE=1 npm run export:web`.
 - Export bundle: `dist/_expo/static/js/web/AppEntry-049a5136bf888415b63709b8b11849ee.js` (1.13 MB), SHA-256 `5c862aaeeb039a38aa7ecd2563e280ebfb9ef56246df02cb1fa0bc7b1ab39ba5`.
 - Full static export archive: `/workspace/greencollar-worker-primary-export-20261014.tar.gz`, SHA-256 `c4813af9fed762508867b354f0ba94d8f86ddd8343cd138ca53d5dd6a5fcdee3`. The archive contains the tested `dist/` export, including HTML, metadata, bundle, and favicon assets.
