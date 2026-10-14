@@ -12,7 +12,7 @@ import {
   saveLocalDemoWorkspace,
   type DemoStorage,
 } from '../src/demo/local-demo-store';
-import {buildLocalDemoPlan,prepareLocalDemoInvoiceDrafts} from '../src/demo/local-demo-workday';
+import {beginLocalDemoWorkday,buildLocalDemoPlan,prepareLocalDemoInvoiceDrafts} from '../src/demo/local-demo-workday';
 import {createSavedQueueReview,canApproveSavedQueueReview,isSavedQueueApproved} from '../src/domain/saved-queue-review';
 import {invoiceTotals} from '../src/domain/invoice';
 import {startWork} from '../src/domain/work-session';
@@ -36,6 +36,33 @@ test('seeds synthetic customers and due sample jobs using the app data shape',()
   assert.equal(day.visits.length,3);
   assert.ok(day.visits.every(visit=>visit.status==='pending'));
   assert.equal(day.roadOptimization,false);
+});
+
+test('fresh browser preview gets an approved sample assignment for the worker start-of-day screen',()=>{
+  const date='2026-10-13';
+  const loaded=loadLocalDemoWorkspace(memoryStorage(),date);
+  const workday=loaded.workspace.workdays.find(item=>item.date===date)!;
+  assert.equal(workday.plannedVisitIds.length,3);
+  assert.equal(workday.approvedQueueKey,'local-preview-2026-10-13-sample-assignment');
+  assert.equal(workday.dayStartedAt,null);
+  assert.equal(workday.workSession,null,'starting the sample day does not start a visit timer');
+});
+
+test('starting a sample workday is idempotent and independent from its visit timer',()=>{
+  const storage=memoryStorage();
+  const workspace=createInitialDemoWorkspace('2026-10-13',true);
+  const workday=workspace.workdays[0];
+  const started=beginLocalDemoWorkday(workday,1000);
+  const repeated=beginLocalDemoWorkday(started,2000);
+  assert.equal(started.dayStartedAt,1000);
+  assert.strictEqual(repeated,started,'a repeated Start action keeps the original day-start record');
+  assert.equal(started.workSession,null);
+  assert.throws(()=>beginLocalDemoWorkday(workday,-1),/valid timestamp/);
+  workspace.workdays[0]=started;
+  assert.equal(saveLocalDemoWorkspace(workspace,storage),true);
+  const restored=loadLocalDemoWorkspace(storage,'2026-10-13').workspace.workdays[0];
+  assert.equal(restored.dayStartedAt,1000,'the separate day-start record survives a browser reload');
+  assert.equal(restored.workSession,null,'a reload does not turn day start into a visit timer');
 });
 
 test('stores local preview edits under a versioned key and restores them',()=>{
@@ -65,7 +92,8 @@ test('stores only planned synthetic arrival confirmations and rejects dangling a
   workday.arrivedVisitId='preview-visit-not-in-plan';
   storage.setItem(LOCAL_DEMO_STORAGE_KEY,JSON.stringify(workspace));
   const restored=loadLocalDemoWorkspace(storage,date);
-  assert.deepEqual(restored.workspace.workdays,[]);
+  assert.equal(restored.workspace.workdays.length,1,'invalid local data falls back to the fresh sample assignment');
+  assert.equal(restored.workspace.workdays[0].approvedQueueKey,'local-preview-2026-10-13-sample-assignment');
   assert.match(restored.notice??'',/could not be read/);
 });
 
@@ -111,10 +139,11 @@ test('builds a bounded workday from real recurring agreements and preserves unsc
     ...workday,approvedQueueKey:'stale-approval',visits:[{
       id:createDemoVisitId(firstAgreement.id,'2026-10-13'),agreement_id:firstAgreement.id,
       scheduled_date:'2026-10-13',status:'completed',actual_minutes:40,
-    }],
+    }],dayStartedAt:12345,
   };
   const rebuilt=buildLocalDemoPlan({...workspace,workdays:[completed]},'2026-10-13','8','6');
   assert.equal(rebuilt.workday.approvedQueueKey,null,'a rebuilt queue requires a new approval');
+  assert.equal(rebuilt.workday.dayStartedAt,12345,'a replan does not erase the started-day state');
   assert.equal(rebuilt.workday.plannedVisitIds.includes(`${firstAgreement.id}:2026-10-13`),false,'completed visits stay out of a rebuilt queue');
   assert.throws(()=>buildLocalDemoPlan({...workspace,workdays:[{...completed,workSession:startWork('sample-job',1000)}]},'2026-10-13','8','6'),/active sample visit/);
   assert.throws(()=>buildLocalDemoPlan(workspace,'2026-10-13','0','1'),/available hours/);

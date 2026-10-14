@@ -13,10 +13,11 @@ import {
   createDemoVisitId, demoDayForDate, loadLocalDemoWorkspace, saveLocalDemoWorkspace,
   type LocalDemoWorkday, type LocalDemoWorkspace,
 } from '../demo/local-demo-store';
-import { buildLocalDemoPlan } from '../demo/local-demo-workday';
+import { beginLocalDemoWorkday, buildLocalDemoPlan } from '../demo/local-demo-workday';
 
 type Tab = 'Today' | 'Customers' | 'Planner' | 'Schedule' | 'Invoices';
 type Role = 'Owner' | 'Worker';
+type WorkerScreen = 'briefing' | 'stop';
 type CustomerDraft = { name: string; address: string; phone: string; email: string; notes: string };
 type JobDraft = { customerId: string; service: string; price: string; minutes: string; date: string; cadence: 'once' | 'weekly' };
 
@@ -40,6 +41,9 @@ function formatClock(totalMinutes: number) {
   const suffix = hour < 12 ? 'AM' : 'PM';
   const displayHour = hour % 12 || 12;
   return `${displayHour}:${String(minute).padStart(2, '0')} ${suffix}`;
+}
+function formatDayStart(timestamp: number) {
+  return new Date(timestamp).toLocaleTimeString(undefined, { hour: 'numeric', minute: '2-digit' });
 }
 function safeElapsedMinutes(session: WorkSession, now: number) {
   const lowerBound = session.status === 'running'
@@ -92,6 +96,7 @@ export function WorkingDemo({ onExit }: { onExit?: () => void }) {
   const workspace = loaded.workspace;
   const [role, setRole] = useState<Role>('Owner');
   const [tab, setTab] = useState<Tab>('Today');
+  const [workerScreen, setWorkerScreen] = useState<WorkerScreen>('briefing');
   const [date, setDate] = useState(localCalendarDate());
   const [hours, setHours] = useState('8');
   const [maxJobs, setMaxJobs] = useState('6');
@@ -108,6 +113,7 @@ export function WorkingDemo({ onExit }: { onExit?: () => void }) {
   const [tick, setTick] = useState(Date.now());
   const [saving, setSaving] = useState(false);
   const actionLock = useRef(false);
+  const dayStartLock = useRef(false);
   const contentScroll = useRef<ScrollView>(null);
 
   useEffect(() => {
@@ -130,6 +136,7 @@ export function WorkingDemo({ onExit }: { onExit?: () => void }) {
   const awaitingPlan = dueDay.visits.filter(visit => visit.status === 'pending' && !planIds.includes(`${visit.agreement_id}:${date}`))
     .map(visit => workspace.agreements.find(agreement => agreement.id === visit.agreement_id)).filter((item): item is SavedServiceAgreement => !!item);
   const session = day?.workSession ?? null;
+  const workerDayStartedAt = day?.dayStartedAt ?? (session ? session.startedAt : null);
   const activeAgreement = session ? workspace.agreements.find(item => `${item.id}:${date}` === session.jobId) : undefined;
   const nextAgreement = session && session.status !== 'completed'
     ? activeAgreement
@@ -139,6 +146,7 @@ export function WorkingDemo({ onExit }: { onExit?: () => void }) {
   const totalVisitCount = dueDay.visits.filter(visit => visit.status !== 'skipped').length;
   const persistenceLabel = loaded.persistence === 'browser' ? 'Saved in this browser' : 'This session only';
   useEffect(() => { setNoteDraft(session?.note ?? ''); }, [session?.jobId]);
+  useEffect(() => { setWorkerScreen('briefing'); }, [date]);
 
   function commit(next: LocalDemoWorkspace, message?: string) {
     const persisted = saveLocalDemoWorkspace(next);
@@ -205,6 +213,26 @@ export function WorkingDemo({ onExit }: { onExit?: () => void }) {
     }
     return () => back.remove();
   }, [form, customerStep, customerDraft, jobDraft, discardOpen, completeOpen]);
+  useEffect(() => {
+    if (role !== 'Worker' || tab !== 'Today' || workerScreen !== 'stop' || form) return;
+    const back = BackHandler.addEventListener('hardwareBackPress', () => {
+      if (completeOpen) { setCompleteOpen(false); return true; }
+      if (discardOpen) { setDiscardOpen(false); return true; }
+      showWorkerOverview(); return true;
+    });
+    if (Platform.OS === 'web' && typeof document !== 'undefined') {
+      const handleKey = (event: KeyboardEvent) => {
+        if (event.key !== 'Escape') return;
+        event.preventDefault(); event.stopPropagation();
+        if (completeOpen) { setCompleteOpen(false); return; }
+        if (discardOpen) { setDiscardOpen(false); return; }
+        showWorkerOverview();
+      };
+      document.addEventListener('keydown', handleKey, true);
+      return () => { back.remove(); document.removeEventListener('keydown', handleKey, true); };
+    }
+    return () => back.remove();
+  }, [role, tab, workerScreen, form, completeOpen, discardOpen]);
 
   function validateCustomer(): string {
     if (!customerDraft.name.trim()) return 'Enter the customer’s name to continue.';
@@ -287,6 +315,20 @@ export function WorkingDemo({ onExit }: { onExit?: () => void }) {
       setNotice('Sample workday approved on this device. No team member was notified.');
     });
   }
+  function startWorkerDay() {
+    if (!day || !approved || plannedAgreements.length === 0) return;
+    if (workerDayStartedAt !== null) { showWorkerStops(); return; }
+    if (dayStartLock.current) return;
+    dayStartLock.current = true;
+    try {
+      const started = beginLocalDemoWorkday(day, Date.now());
+      replaceDay(started);
+      showWorkerStops();
+      setNotice('Sample day started on this device. The visit timer has not started.');
+    } finally {
+      setTimeout(() => { dayStartLock.current = false; }, 220);
+    }
+  }
   function updateSession(nextSession: WorkSession | null, visitUpdate?: LocalDemoWorkday['visits'][number]) {
     if (!day) return;
     const visits = visitUpdate
@@ -302,7 +344,8 @@ export function WorkingDemo({ onExit }: { onExit?: () => void }) {
       const visitKey = `${selected.id}:${date}`;
       if (action === 'arrive') { replaceDay({ ...day, arrivedVisitId: visitKey }); setNotice('Arrival confirmed in the local preview. Device location was not read.'); return; }
       if (action === 'start') {
-        if (day.arrivedVisitId !== visitKey) { setPlanError('Confirm the sample arrival first.'); return; }
+        if (role === 'Worker' && workerDayStartedAt === null) { setPlanError('Start your sample day before starting a visit timer.'); return; }
+        if (role === 'Owner' && day.arrivedVisitId !== visitKey) { setPlanError('Confirm the sample arrival first.'); return; }
         replaceDay({ ...day, workSession: startWork(visitKey, Date.now()), approvedQueueKey: day.approvedQueueKey });
         setNotice('Sample visit started. The timer is running on this device.'); return;
       }
@@ -335,10 +378,10 @@ export function WorkingDemo({ onExit }: { onExit?: () => void }) {
   }
   function resetDemo() {
     clearLocalDemoWorkspace();
-    const fresh = createInitialDemoWorkspace();
+    const fresh = createInitialDemoWorkspace(localCalendarDate(), true);
     const persisted = saveLocalDemoWorkspace(fresh);
     setLoaded({ workspace: fresh, persistence: persisted ? 'browser' : 'session', notice: persisted ? undefined : 'Browser storage is unavailable. Changes stay in this open session and clear when it reloads.' });
-    setDate(localCalendarDate()); setTab('Today'); setRole('Owner'); setPlanError('');
+    setDate(localCalendarDate()); setTab('Today'); setRole('Owner'); setWorkerScreen('briefing'); setPlanError('');
     setNotice('Sample workspace reset. Your local edits were cleared.');
     scrollToTop();
   }
@@ -348,15 +391,20 @@ export function WorkingDemo({ onExit }: { onExit?: () => void }) {
     if (Platform.OS === 'web' && typeof window !== 'undefined') window.scrollTo({ top: 0, behavior: 'auto' });
   }
 
+  function showWorkerOverview() { setWorkerScreen('briefing'); scrollToTop(); }
+  function showWorkerStops() { setWorkerScreen('stop'); scrollToTop(); }
+
   const nextIndex = nextAgreement ? plannedAgreements.findIndex(item => item.id === nextAgreement.id) : -1;
   const totalMinutes = plannedAgreements.reduce((sum, item) => sum + item.estimated_minutes, 0);
   const plannedValue = plannedAgreements.reduce((sum, item) => sum + item.rate_cents, 0);
   const elapsed = session ? safeElapsedMinutes(session, tick) : 0;
   const timeText = `${Math.floor(elapsed / 60)}:${String(elapsed % 60).padStart(2, '0')}`;
   const nextStartMinute = 8 * 60 + plannedAgreements.slice(0, Math.max(0, nextIndex)).reduce((sum, item) => sum + item.estimated_minutes, 0);
+  const workerHasAssignment = approved && plannedAgreements.length > 0;
+  const workerEstimatedFinish = (day?.startMinute ?? 8 * 60) + totalMinutes;
   const selectedTabs = role === 'Owner' ? tabs : ['Today', 'Schedule'] as Tab[];
 
-  function chooseTab(next: Tab) { Keyboard.dismiss(); setTab(next); setNotice(''); setPlanError(''); scrollToTop(); }
+  function chooseTab(next: Tab) { Keyboard.dismiss(); setTab(next); if (next === 'Today') setWorkerScreen('briefing'); setNotice(''); setPlanError(''); scrollToTop(); }
   function tabButton(item: Tab) {
     const selected = tab === item;
     return <Pressable key={item} accessibilityRole="tab" accessibilityState={{ selected }}
@@ -377,7 +425,7 @@ export function WorkingDemo({ onExit }: { onExit?: () => void }) {
         <View style={[s.headerRight, compact && s.headerRightCompact]}>
           <View style={s.previewLabel}><View style={s.previewDot}/><Text style={s.previewLabelText}>PRIVATE PREVIEW · FICTIONAL DATA</Text></View>
           <View style={s.roleSwitch} accessibilityLabel="Choose demo role">
-            {(['Owner', 'Worker'] as Role[]).map(item => <Pressable key={item} accessibilityRole="button" accessibilityState={{ selected: role === item }} onPress={() => { setRole(item); if (item === 'Worker' && !['Today', 'Schedule'].includes(tab)) setTab('Today'); scrollToTop(); }} style={[s.roleChoice, role === item && s.roleChoiceSelected]}><Text style={[s.roleChoiceText, role === item && s.roleChoiceTextSelected]}>{item}</Text></Pressable>)}
+            {(['Owner', 'Worker'] as Role[]).map(item => <Pressable key={item} accessibilityRole="button" accessibilityState={{ selected: role === item }} onPress={() => { setRole(item); setWorkerScreen('briefing'); if (item === 'Worker' && !['Today', 'Schedule'].includes(tab)) setTab('Today'); scrollToTop(); }} style={[s.roleChoice, role === item && s.roleChoiceSelected]}><Text style={[s.roleChoiceText, role === item && s.roleChoiceTextSelected]}>{item}</Text></Pressable>)}
           </View>
           {onExit && <Pressable accessibilityRole="button" accessibilityLabel="Exit preview" onPress={onExit} style={s.exit}><Text style={s.exitText}>Exit</Text></Pressable>}
         </View>
@@ -394,14 +442,85 @@ export function WorkingDemo({ onExit }: { onExit?: () => void }) {
           <View style={s.sideBottom}><Text style={s.sideCaption}>LOCAL PREVIEW</Text><Text style={s.sideCopy}>{persistenceLabel}. Reset any time.</Text><ActionButton label="Reset sample data" secondary onPress={resetDemo}/></View>
         </View>}
         <ScrollView ref={contentScroll} style={s.scroller} contentContainerStyle={[s.content, wide && s.contentWide]} keyboardShouldPersistTaps="handled">
-          {tab === 'Today' && <>
-            <View style={s.eyebrowRow}><Text style={s.eyebrow}>{role === 'Worker' ? 'YOUR WORKDAY' : 'OVERVIEW'}</Text><Tag tone={approved ? 'green' : 'amber'}>{approved ? 'APPROVED · LOCAL' : 'PLAN NEEDED'}</Tag></View>
-            <Text style={s.h1}>{role === 'Worker' ? 'Your day, made clear.' : 'A good day starts here.'}</Text>
+          {tab === 'Today' && role === 'Worker' && <>
+            {workerScreen === 'briefing' ? <>
+              <View style={s.eyebrowRow}><Text style={s.eyebrow}>WORKER START OF DAY</Text><Tag tone={workerHasAssignment ? workerDayStartedAt !== null ? 'green' : 'amber' : 'neutral'}>{workerHasAssignment ? workerDayStartedAt !== null ? 'DAY IN PROGRESS' : 'READY TO START' : 'NO ASSIGNMENT'}</Tag></View>
+              <Text style={s.h1}>{workerDayStartedAt !== null ? 'Your day is underway.' : 'Start your day.'}</Text>
+              <Text style={s.lede}>{dateLabel(date)} · {workerHasAssignment ? `${plannedAgreements.length} assigned sample stops` : 'No approved sample route is assigned for this day.'}</Text>
+              {!workerHasAssignment ? <View style={s.emptyCard}>
+                <Text style={s.cardEyebrow}>NOTHING ASSIGNED</Text>
+                <Text style={s.cardTitle}>No sample workday is ready.</Text>
+                <Text style={s.cardBody}>This preview does not send a request to a manager. Switch to Owner view to build and approve a sample day on this device.</Text>
+                <ActionButton label="Switch to Owner view" onPress={() => { setRole('Owner'); setTab('Planner'); setNotice('Build and approve a sample plan here, then switch back to Worker view.'); scrollToTop(); }}/>
+              </View> : <>
+                <View style={s.assignmentGrid}>
+                  <View style={s.assignmentCard}><Text style={s.cardEyebrow}>SAMPLE TEAM</Text><Text style={s.assignmentTitle}>Crew Green</Text><Text style={s.cardBody}>Sample worker · you + 1 sample partner</Text></View>
+                  <View style={s.assignmentCard}><Text style={s.cardEyebrow}>SAMPLE VEHICLE</Text><Text style={s.assignmentTitle}>Truck 02</Text><Text style={s.cardBody}>Sample work vehicle</Text></View>
+                </View>
+                <View style={s.statsRow}>
+                  <View style={s.stat}><Text style={s.statValue}>{plannedAgreements.length}</Text><Text style={s.statLabel}>STOPS</Text></View>
+                  <View style={s.stat}><Text style={s.statValue}>{totalMinutes}m</Text><Text style={s.statLabel}>SERVICE TIME</Text></View>
+                  <View style={s.stat}><Text style={s.statValue}>{formatClock(workerEstimatedFinish)}</Text><Text style={s.statLabel}>EST. FINISH</Text></View>
+                </View>
+                <View style={s.panel}>
+                  <View style={s.planHeader}><View><Text style={s.panelTitle}>Today’s stops</Text><Text style={s.cardBody}>Sample order · starts {formatClock(day?.startMinute ?? 8 * 60)}</Text></View><Tag tone="neutral">LOCAL SAMPLE</Tag></View>
+                  {plannedAgreements.map((agreement, index) => {
+                    const complete = completedIds.has(`${agreement.id}:${date}`);
+                    const customer = workspace.customers.find(item => item.id === agreement.customer_id);
+                    const startMinute = (day?.startMinute ?? 8 * 60) + plannedAgreements.slice(0, index).reduce((sum, item) => sum + item.estimated_minutes, 0);
+                    return <View key={agreement.id} style={s.workerStopRow}>
+                      <View style={[s.stopNumber, complete && s.stopNumberDone]}><Text style={[s.stopNumberText, complete && s.stopNumberTextDone]}>{complete ? '✓' : String(index + 1).padStart(2, '0')}</Text></View>
+                      <View style={s.stopText}><Text style={s.stopTitle}>{agreement.service_name}</Text><Text style={s.stopMeta}>{customer?.name ?? 'Sample customer'} · {agreement.estimated_minutes} min</Text><Text style={s.stopMeta}>{agreement.address}</Text><Text style={s.scheduleMeta}>{formatClock(startMinute)} sample service start</Text></View>
+                      <Tag tone={complete ? 'green' : 'neutral'}>{complete ? 'DONE' : 'STOP'}</Tag>
+                    </View>;
+                  })}
+                  <View style={s.panelSoft}><Text style={s.panelTitle}>Estimated finish · {formatClock(workerEstimatedFinish)}</Text><Text style={s.cardBody}>Service time only. This estimate excludes travel, breaks, setup, and delays. No route optimization or live traffic is used.</Text></View>
+                </View>
+                {workerDayStartedAt !== null && <View style={s.returningCard}><Text style={s.cardEyebrow}>RETURNING TO THIS SAMPLE DAY</Text><Text style={s.cardTitle}>Started at {formatDayStart(workerDayStartedAt)}</Text><Text style={s.cardBody}>{session?.status === 'running' ? 'A visit timer was running when you left. Review the current stop before continuing.' : session?.status === 'paused' ? 'Your visit timer is paused. Continue to the current stop when ready.' : 'Your sample assignment and completed stops are saved in this browser.'}</Text></View>}
+                <ActionButton label={workerDayStartedAt !== null ? 'Continue my day' : 'Start my day'} disabled={saving} onPress={startWorkerDay}/>
+                <Text style={s.microCopy}>{workerDayStartedAt !== null ? 'Continue opens the current or next stop. It does not reset this day.' : 'Starting the day does not start a visit timer. Stop details come next.'} Sample-only · saved in this browser.</Text>
+              </>}
+            </> : <>
+              <Pressable accessibilityRole="button" accessibilityLabel="Back to day overview" onPress={showWorkerOverview} style={s.workerBack}><Text style={s.workerBackArrow}>‹</Text><Text style={s.workerBackText}>Day overview</Text></Pressable>
+              <View style={s.eyebrowRow}><Text style={s.eyebrow}>YOUR SAMPLE WORKDAY</Text><Tag tone={approved ? 'green' : 'amber'}>{approved ? 'DAY STARTED · LOCAL' : 'REVIEW NEEDED'}</Tag></View>
+              <Text style={s.h1}>{approved ? 'Next stop.' : 'This day needs review.'}</Text>
+              <Text style={s.lede}>{approved ? `${completedCount} of ${planIds.length} stops complete · sample day started ${workerDayStartedAt === null ? '' : formatDayStart(workerDayStartedAt)}` : 'The sample work queue changed. Ask the owner to review it before continuing.'}</Text>
+              {!approved ? <View style={s.emptyCard}><Text style={s.cardTitle}>Review the sample assignment again.</Text><Text style={s.cardBody}>Undoing a completion clears the local approval. Return to the Owner view to rebuild or approve the sample day again.</Text><ActionButton label="Switch to Owner view" onPress={() => { setRole('Owner'); setTab('Planner'); setNotice('Review and approve the sample workday, then return to Worker view.'); scrollToTop(); }}/></View>
+              : session && session.status !== 'completed' && activeAgreement ? <View style={s.activeCard}>
+                <View style={s.activeTop}><Tag>{session.status === 'running' ? 'VISIT TIMER RUNNING' : 'VISIT TIMER PAUSED'}</Tag><Text style={s.timer}>{timeText}</Text></View>
+                <Text style={s.cardEyebrow}>STOP {String(nextIndex + 1).padStart(2, '0')} OF {planIds.length} · CURRENT VISIT</Text>
+                <Text style={s.cardTitle}>{activeAgreement.service_name}</Text>
+                <Text style={s.cardBody}>{workspace.customers.find(item => item.id === activeAgreement.customer_id)?.name ?? 'Sample customer'}</Text>
+                <Text style={s.cardBody}>{activeAgreement.address}</Text>
+                {!!activeAgreement.preferences && <Text style={s.cardBody}>Sample access note: {activeAgreement.preferences}</Text>}
+                <View style={s.assignmentFact}><Text style={s.stopMeta}>Crew Green · Truck 02 · sample assignment</Text></View>
+                <Field label="Optional work note" value={noteDraft} onChangeText={setNoteDraft} placeholder="Add a note for this sample visit" maxLength={1000} multiline accessibilityHint="This note stays in the local preview."/>
+                {session.status === 'running' ? <View style={s.actionRow}><ActionButton label="Pause visit timer" disabled={saving} onPress={() => workerAction('pause')}/><ActionButton label="Finish visit" secondary disabled={saving} onPress={() => setCompleteOpen(true)}/></View>
+                  : <View style={s.actionRow}><ActionButton label="Resume visit timer" disabled={saving} onPress={() => workerAction('resume')}/><ActionButton label="Finish visit" secondary disabled={saving} onPress={() => setCompleteOpen(true)}/></View>}
+              </View> : nextAgreement ? <View style={s.nextCard}>
+                {session?.status === 'completed' && <View style={s.assignmentFact}><Text style={s.stopMeta}>Previous stop completed · {session.note ? 'sample note saved' : 'no note'}</Text></View>}
+                <View style={s.nextHeader}><View><Text style={s.cardEyebrow}>STOP {String(nextIndex + 1).padStart(2, '0')} OF {planIds.length}</Text><Text style={s.cardTitle}>{nextAgreement.service_name}</Text></View><Tag>{`${nextAgreement.estimated_minutes} MIN`}</Tag></View>
+                <Text style={s.cardBody}>{workspace.customers.find(item => item.id === nextAgreement.customer_id)?.name ?? 'Sample customer'}</Text>
+                <Text style={s.cardBody}>{nextAgreement.address}</Text>
+                {!!nextAgreement.preferences && <Text style={s.cardBody}>Sample access note: {nextAgreement.preferences}</Text>}
+                <Text style={s.scheduleMeta}>{formatClock((day?.startMinute ?? 8 * 60) + plannedAgreements.slice(0, Math.max(0, nextIndex)).reduce((sum, item) => sum + item.estimated_minutes, 0))} · {nextAgreement.estimated_minutes} service min</Text>
+                <View style={s.assignmentFact}><Text style={s.stopMeta}>Crew Green · Truck 02 · sample assignment</Text></View>
+                <ActionButton label="Start visit timer" disabled={saving || workerDayStartedAt === null} onPress={() => workerAction('start')}/>
+                <Text style={s.microCopy}>This starts the service timer only. No GPS, navigation, or dispatch action is connected.</Text>
+              </View> : <View style={s.emptyCard}><Text style={s.emptyMark}>✓</Text><Text style={s.cardTitle}>All assigned sample stops are complete.</Text><Text style={s.cardBody}>Your day start is saved locally. No time or location was sent anywhere.</Text></View>}
+              {session?.status === 'completed' && <View style={s.undoCard}><Text style={s.undoTitle}>Visit marked complete</Text><Text style={s.cardBody}>Completed in the local sample day. Undo is available if that was a mistake.</Text><ActionButton label="Undo completion" secondary disabled={saving} onPress={() => workerAction('undo')}/></View>}
+              {approved && <View style={s.panelSoft}><Text style={s.panelTitle}>Remaining stops</Text>{plannedAgreements.slice(Math.max(0, nextIndex + (session?.status !== 'completed' && session ? 1 : 0))).map((agreement, index) => <View key={agreement.id} style={s.workerStopRow}><View style={s.stopNumber}><Text style={s.stopNumberText}>{String(Math.max(0, nextIndex + index + 2)).padStart(2, '0')}</Text></View><View style={s.stopText}><Text style={s.stopTitle}>{agreement.service_name}</Text><Text style={s.stopMeta}>{workspace.customers.find(item => item.id === agreement.customer_id)?.name ?? 'Sample customer'} · {agreement.estimated_minutes} min</Text></View></View>)}{!nextAgreement && <Text style={s.cardBody}>No remaining stops.</Text>}</View>}
+            </>}
+          </>}
+
+          {tab === 'Today' && role === 'Owner' && <>
+            <View style={s.eyebrowRow}><Text style={s.eyebrow}>OVERVIEW</Text><Tag tone={approved ? 'green' : 'amber'}>{approved ? 'APPROVED · LOCAL' : 'PLAN NEEDED'}</Tag></View>
+            <Text style={s.h1}>A good day starts here.</Text>
             <Text style={s.lede}>{dateLabel(date)} · {approved ? `${completedCount} of ${totalVisitCount} visits complete` : 'Review and approve a sample plan before work begins.'}</Text>
             <View style={s.statsRow}>
               <View style={s.stat}><Text style={s.statValue}>{approved ? `${completedCount}/${totalVisitCount}` : '—'}</Text><Text style={s.statLabel}>VISITS DONE</Text></View>
               <View style={s.stat}><Text style={s.statValue}>{approved ? `${totalMinutes}m` : '—'}</Text><Text style={s.statLabel}>EST. SERVICE</Text></View>
-              <View style={s.stat}><Text style={s.statValue}>{approved ? role === 'Owner' ? money(plannedValue) : `${planIds.length} stops` : '—'}</Text><Text style={s.statLabel}>{role === 'Owner' ? 'SAMPLE TOTAL' : 'WORKDAY'}</Text></View>
+              <View style={s.stat}><Text style={s.statValue}>{approved ? money(plannedValue) : '—'}</Text><Text style={s.statLabel}>SAMPLE TOTAL</Text></View>
             </View>
             {session && session.status !== 'completed' && activeAgreement ? <View style={s.activeCard}>
               <View style={s.activeTop}><Tag>{session.status === 'running' ? 'IN PROGRESS' : 'PAUSED'}</Tag><Text style={s.timer}>{timeText}</Text></View>
@@ -422,7 +541,7 @@ export function WorkingDemo({ onExit }: { onExit?: () => void }) {
                 : <ActionButton label="Confirm arrival" disabled={saving} onPress={() => workerAction('arrive')} accessibilityLabel="Simulate arrival at the next stop"/>}
               <Text style={s.microCopy}>Arrival is a sample action. This preview does not access GPS or contact anyone.</Text>
             </View> : approved ? <View style={s.emptyCard}><Text style={s.emptyMark}>✓</Text><Text style={s.cardTitle}>That’s the day complete.</Text><Text style={s.cardBody}>All planned sample visits are finished.</Text></View>
-              : <View style={s.emptyCard}><Text style={s.cardEyebrow}>READY WHEN YOU ARE</Text><Text style={s.cardTitle}>No approved workday yet.</Text><Text style={s.cardBody}>Build a sample plan, check what fits, then approve it on this device.</Text><ActionButton label={role === 'Worker' ? 'Ask owner to approve a plan' : 'Build a sample day'} onPress={() => role === 'Worker' ? setNotice('Switch to Owner view to build and approve a sample workday.') : chooseTab('Planner')}/></View>}
+              : <View style={s.emptyCard}><Text style={s.cardEyebrow}>READY WHEN YOU ARE</Text><Text style={s.cardTitle}>No approved workday yet.</Text><Text style={s.cardBody}>Build a sample plan, check what fits, then approve it on this device.</Text><ActionButton label="Build a sample day" onPress={() => chooseTab('Planner')}/></View>}
             {session?.status === 'completed' && <View style={s.undoCard}><Text style={s.undoTitle}>Visit marked complete</Text><Text style={s.cardBody}>Completed in the local sample day. Undo is available if that was a mistake.</Text><ActionButton label="Undo completion" secondary disabled={saving} onPress={() => workerAction('undo')}/></View>}
             <View style={s.sectionHeader}><Text style={s.sectionTitle}>Coming up</Text>{approved && <Pressable accessibilityRole="button" onPress={() => chooseTab('Schedule')}><Text style={s.link}>View schedule</Text></Pressable>}</View>
             {approved ? plannedAgreements.slice(0, 3).map((agreement, index) => <View key={agreement.id} style={s.compactStop}>
@@ -590,6 +709,7 @@ const s = StyleSheet.create({
   panel: { padding: 17, gap: 13, borderRadius: 17, backgroundColor: palette.paper, borderWidth: 1, borderColor: palette.line }, panelSoft: { padding: 16, gap: 9, borderRadius: 16, backgroundColor: palette.mint }, panelTitle: { color: palette.ink, fontSize: 16, fontWeight: '800' }, planHeader: { flexDirection: 'row', alignItems: 'flex-start', justifyContent: 'space-between', gap: 12 }, metrics: { flexDirection: 'row', justifyContent: 'space-between', gap: 8, paddingVertical: 10, borderTopWidth: 1, borderBottomWidth: 1, borderColor: palette.line }, metricText: { color: palette.quiet, fontSize: 11, fontWeight: '700' }, planStop: { flexDirection: 'row', alignItems: 'center', gap: 10, paddingVertical: 10, borderBottomWidth: 1, borderBottomColor: palette.line }, planIndex: { color: palette.pine, fontSize: 10, fontWeight: '900', width: 26 }, servicePrice: { color: palette.ink, fontSize: 12, fontWeight: '800' }, warning: { padding: 12, gap: 3, borderRadius: 12, backgroundColor: palette.amberBg }, warningTitle: { color: palette.amber, fontSize: 12, fontWeight: '900' }, warningCopy: { color: palette.quiet, fontSize: 11, lineHeight: 16 }, approvedCopy: { color: palette.forest, fontSize: 12, fontWeight: '700' }, errorText: { color: palette.red, fontSize: 12, lineHeight: 18, fontWeight: '700' }, errorBox: { padding: 10, borderRadius: 10, backgroundColor: palette.redBg },
   fieldWrap: { flex: 1, gap: 6 }, fieldLabel: { color: palette.ink, fontSize: 12, fontWeight: '700' }, input: { minHeight: 48, paddingHorizontal: 12, paddingVertical: 11, borderWidth: 1, borderColor: palette.line, borderRadius: 10, backgroundColor: '#FCFDFB', color: palette.ink, fontSize: 14 }, multilineInput: { minHeight: 78, textAlignVertical: 'top' }, fieldRow: { flexDirection: 'row', gap: 10 }, fieldFlex: { flex: 1 }, dateControls: { gap: 8 },
   customerCard: { padding: 16, gap: 10, borderRadius: 16, backgroundColor: palette.paper, borderWidth: 1, borderColor: palette.line }, customerTop: { flexDirection: 'row', alignItems: 'center', gap: 10 }, avatar: { width: 42, height: 42, borderRadius: 14, backgroundColor: palette.mint, alignItems: 'center', justifyContent: 'center' }, avatarText: { color: palette.forest, fontSize: 12, fontWeight: '900' }, customerInfo: { flex: 1, gap: 3 }, customerName: { color: palette.ink, fontSize: 15, fontWeight: '800' }, customerAddress: { color: palette.quiet, fontSize: 11, lineHeight: 16 }, customerContact: { color: palette.quiet, fontSize: 11, lineHeight: 16 }, customerServices: { borderTopWidth: 1, borderTopColor: palette.line, paddingTop: 8, gap: 6 }, serviceLine: { flexDirection: 'row', justifyContent: 'space-between', gap: 8 }, serviceName: { color: palette.ink, fontSize: 11, fontWeight: '700', flex: 1 },
+  assignmentGrid: { flexDirection: 'row', flexWrap: 'wrap', gap: 9 }, assignmentCard: { flex: 1, minWidth: 140, minHeight: 94, justifyContent: 'center', padding: 14, gap: 5, borderRadius: 15, backgroundColor: palette.paper, borderWidth: 1, borderColor: palette.line }, assignmentTitle: { color: palette.ink, fontSize: 16, fontWeight: '800' }, assignmentFact: { paddingVertical: 8, paddingHorizontal: 10, borderRadius: 10, backgroundColor: palette.soft }, workerStopRow: { flexDirection: 'row', alignItems: 'flex-start', gap: 10, paddingVertical: 12, borderBottomWidth: 1, borderBottomColor: palette.line }, workerBack: { flexDirection: 'row', alignItems: 'center', alignSelf: 'flex-start', minHeight: 42, gap: 5, paddingRight: 10 }, workerBackArrow: { color: palette.forest, fontSize: 28, lineHeight: 32, fontWeight: '700' }, workerBackText: { color: palette.forest, fontSize: 12, fontWeight: '800' }, returningCard: { padding: 16, gap: 7, borderRadius: 15, backgroundColor: palette.amberBg, borderWidth: 1, borderColor: '#E9D9B8' },
   scheduleCard: { flexDirection: 'row', gap: 12, minHeight: 110 }, scheduleRail: { width: 18, alignItems: 'center' }, scheduleDot: { width: 12, height: 12, borderRadius: 6, marginTop: 8, backgroundColor: '#B8C9B8', borderWidth: 2, borderColor: palette.canvas }, scheduleDotDone: { backgroundColor: palette.pine }, scheduleDotActive: { backgroundColor: '#E5AA43' }, scheduleLine: { width: 2, flex: 1, backgroundColor: palette.line, marginVertical: 4 }, scheduleBody: { flex: 1, padding: 14, gap: 6, borderRadius: 15, backgroundColor: palette.paper, borderWidth: 1, borderColor: palette.line }, scheduleTop: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center' }, scheduleIndex: { color: palette.quiet, fontSize: 9, fontWeight: '900', letterSpacing: 1 }, scheduleMeta: { color: palette.forest, fontSize: 11, fontWeight: '700' },
   invoiceRow: { flexDirection: 'row', alignItems: 'center', gap: 12, paddingVertical: 13, borderBottomWidth: 1, borderBottomColor: palette.line }, emptyInline: { paddingVertical: 20, gap: 6 }, footer: { paddingTop: 16, gap: 4, alignItems: 'center' }, footerText: { color: '#7D8980', fontSize: 8, letterSpacing: 1.1, fontWeight: '800' },
   bottomNav: { minHeight: 65, flexDirection: 'row', alignItems: 'stretch', paddingHorizontal: 7, paddingTop: 6, paddingBottom: Platform.OS === 'ios' ? 12 : 6, backgroundColor: palette.paper, borderTopWidth: 1, borderTopColor: palette.line }, bottomNavCompact: { paddingHorizontal: 4 }, navItem: { minHeight: 48, minWidth: 52, flex: 1, alignItems: 'center', justifyContent: 'center', paddingHorizontal: 4, borderRadius: 11, gap: 2 }, sideNavItem: { width: '100%', flex: 0, minWidth: 0, flexDirection: 'row', alignItems: 'center', justifyContent: 'flex-start', paddingHorizontal: 12, gap: 12 }, navItemSelected: { backgroundColor: palette.mint }, navPressed: { opacity: 0.7 }, navMark: { color: '#839087', fontSize: 8, fontWeight: '900', letterSpacing: 0.7 }, navMarkSelected: { color: palette.forest }, navLabel: { color: palette.quiet, fontSize: 10, fontWeight: '700' }, navLabelSelected: { color: palette.forest, fontWeight: '900' }, resetNav: { minWidth: 48, minHeight: 48, alignItems: 'center', justifyContent: 'center', borderRadius: 11, gap: 1 }, resetNavCompact: { minWidth: 40 }, resetNavMark: { color: palette.quiet, fontSize: 17, lineHeight: 20 }, resetNavLabel: { color: palette.quiet, fontSize: 9, fontWeight: '700' },

@@ -40,6 +40,8 @@ export type LocalDemoWorkday = {
   maxJobs: string;
   startMinute: number;
   endMinute: number;
+  /** Local sample workday start; independent from any individual visit timer. */
+  dayStartedAt?: number | null;
   plannedVisitIds: string[];
   unscheduledVisitIds: string[];
   approvedQueueKey: string | null;
@@ -71,7 +73,7 @@ function browserStorage(): DemoStorage | undefined {
   }
 }
 
-export function createInitialDemoWorkspace(date = localCalendarDate()): LocalDemoWorkspace {
+export function createInitialDemoWorkspace(date = localCalendarDate(), includeAssignedSampleDay = false): LocalDemoWorkspace {
   const customers: SavedCustomer[] = demoCustomerFixtures.map((fixture, index) => ({
     id: `preview-customer-${index + 1}`,
     name: fixture.name,
@@ -109,7 +111,22 @@ export function createInitialDemoWorkspace(date = localCalendarDate()): LocalDem
     lat: null,
     lon: null,
   }));
-  return { version: 2, customers, locations, agreements, workdays: [] };
+  const sampleDay: LocalDemoWorkday[] = includeAssignedSampleDay ? [{
+    date,
+    hours: '8',
+    maxJobs: '6',
+    startMinute: 8 * 60,
+    endMinute: 16 * 60,
+    dayStartedAt: null,
+    plannedVisitIds: agreements.map(agreement => `${agreement.id}:${date}`),
+    unscheduledVisitIds: [],
+    approvedQueueKey: `local-preview-${date}-sample-assignment`,
+    arrivedVisitId: null,
+    workSession: null,
+    visits: [],
+    invoiceDrafts: [],
+  }] : [];
+  return { version: 2, customers, locations, agreements, workdays: sampleDay };
 }
 
 function isWorkspace(value: unknown): value is LocalDemoWorkspace | (Omit<LocalDemoWorkspace, 'version' | 'workdays'> & { version: 1; workdays?: never }) {
@@ -201,6 +218,8 @@ function isWorkspace(value: unknown): value is LocalDemoWorkspace | (Omit<LocalD
         || typeof day.maxJobs !== 'string' || !/^\d+$/.test(day.maxJobs)
         || !Number.isInteger(day.startMinute) || (day.startMinute ?? -1) < 0 || (day.startMinute ?? 1441) > 1439
         || !Number.isInteger(day.endMinute) || (day.endMinute ?? 0) <= (day.startMinute ?? 0) || (day.endMinute ?? 1441) > 1440
+        || (day.dayStartedAt !== undefined && day.dayStartedAt !== null
+          && (!Number.isSafeInteger(day.dayStartedAt) || day.dayStartedAt < 0))
         || !Array.isArray(day.plannedVisitIds) || day.plannedVisitIds.some(id => typeof id !== 'string' || !id || id.length > 400)
         || new Set(day.plannedVisitIds).size !== day.plannedVisitIds.length
         || !Array.isArray(day.unscheduledVisitIds) || day.unscheduledVisitIds.some(id => typeof id !== 'string' || !id || id.length > 400)
@@ -245,7 +264,7 @@ export function loadLocalDemoWorkspace(
   storage: DemoStorage | undefined = browserStorage(),
   date = localCalendarDate(),
 ): DemoWorkspaceLoad {
-  const initial = createInitialDemoWorkspace(date);
+  const initial = createInitialDemoWorkspace(date, true);
   if (!storage) {
     return {
       workspace: initial,
@@ -327,6 +346,7 @@ export function createDemoVisitId(agreementId: string, date: string): string {
 export function createEmptyDemoWorkday(date: string, hours = '8', maxJobs = '6'): LocalDemoWorkday {
   return {
     date, hours, maxJobs, startMinute: 8 * 60, endMinute: 16 * 60,
+    dayStartedAt: null,
     plannedVisitIds: [], unscheduledVisitIds: [], approvedQueueKey: null,
     arrivedVisitId: null, workSession: null, visits: [], invoiceDrafts: [],
   };

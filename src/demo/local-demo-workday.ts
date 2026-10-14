@@ -79,6 +79,7 @@ export function buildLocalDemoPlan(
     maxJobs,
     startMinute,
     endMinute,
+    dayStartedAt: existing?.dayStartedAt ?? (existing?.workSession ? existing.workSession.startedAt : null),
     plannedVisitIds: due.stops.map(stop => stop.jobId),
     unscheduledVisitIds: due.unscheduledVisitIds,
     approvedQueueKey: null,
@@ -89,6 +90,13 @@ export function buildLocalDemoPlan(
     invoiceDrafts: existing?.invoiceDrafts ?? [],
   };
   return { workday, plan: due };
+}
+
+/** Mark a local sample day started once, without starting or replacing its job timer. */
+export function beginLocalDemoWorkday(workday: LocalDemoWorkday, startedAt: number): LocalDemoWorkday {
+  if (!Number.isSafeInteger(startedAt) || startedAt < 0) throw new Error('Workday start time must be a valid timestamp.');
+  if (workday.dayStartedAt !== undefined && workday.dayStartedAt !== null) return workday;
+  return { ...workday, dayStartedAt: workday.workSession?.startedAt ?? startedAt };
 }
 
 export function prepareLocalDemoInvoiceDrafts(
