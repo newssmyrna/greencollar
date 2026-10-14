@@ -91,6 +91,9 @@ export function buildLocalDemoPlan(
     approvedQueueKey: null,
     arrivedVisitId: existing?.arrivedVisitId && due.stops.some(stop => stop.jobId === existing.arrivedVisitId)
       ? existing.arrivedVisitId : null,
+    travelingVisitId: existing?.travelingVisitId && due.stops.some(stop => stop.jobId === existing.travelingVisitId)
+      ? existing.travelingVisitId : null,
+    photosByVisitId: existing?.photosByVisitId ?? {},
     workSession: existing?.workSession?.status === 'completed' ? existing.workSession : null,
     visits: existing?.visits ?? [],
     invoiceDrafts: existing?.invoiceDrafts ?? [],
@@ -103,6 +106,30 @@ export function beginLocalDemoWorkday(workday: LocalDemoWorkday, startedAt: numb
   if (!Number.isSafeInteger(startedAt) || startedAt < 0) throw new Error('Workday start time must be a valid timestamp.');
   if (workday.dayStartedAt !== undefined && workday.dayStartedAt !== null) return workday;
   return { ...workday, dayStartedAt: workday.workSession?.startedAt ?? startedAt };
+}
+
+/** Mark a planned visit as the current synthetic travel leg in the local preview. */
+export function beginLocalDemoTravel(workday: LocalDemoWorkday, visitId: string): LocalDemoWorkday {
+  if (workday.dayStartedAt == null) throw new Error('Start the sample day before beginning travel.');
+  if (!workday.plannedVisitIds.includes(visitId)) throw new Error('Choose an assigned sample stop.');
+  if (workday.workSession && workday.workSession.status !== 'completed')
+    throw new Error('Pause or finish the active sample visit before traveling.');
+  if (workday.arrivedVisitId === visitId) return workday;
+  if (workday.travelingVisitId && workday.travelingVisitId !== visitId)
+    throw new Error('Confirm arrival at the current sample stop before traveling to another.');
+  if (workday.travelingVisitId === visitId) return workday;
+  return { ...workday, travelingVisitId: visitId, arrivedVisitId: null };
+}
+
+/** Confirm arrival only after the matching local sample travel leg has begun. */
+export function confirmLocalDemoArrival(workday: LocalDemoWorkday, visitId: string): LocalDemoWorkday {
+  if (workday.dayStartedAt == null) throw new Error('Start the sample day before confirming arrival.');
+  if (!workday.plannedVisitIds.includes(visitId)) throw new Error('Choose an assigned sample stop.');
+  if (workday.workSession && workday.workSession.status !== 'completed')
+    throw new Error('Finish the active sample visit before confirming another arrival.');
+  if (workday.travelingVisitId !== visitId)
+    throw new Error('Begin sample travel to this stop before confirming arrival.');
+  return { ...workday, travelingVisitId: null, arrivedVisitId: visitId };
 }
 
 export function prepareLocalDemoInvoiceDrafts(
