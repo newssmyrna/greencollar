@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useRef } from 'react';
-import { ReadOnlyDemo, DemoEntryOnly } from './src/components/ReadOnlyDemo';
+import { WorkingDemo, DemoEntryOnly } from './src/components/WorkingDemo';
 import * as Location from 'expo-location';
 import { ClerkProvider, useAuth, useClerk } from '@clerk/expo';
 import { useHostedAuth } from '@clerk/expo/hosted-auth';
@@ -1689,7 +1689,7 @@ function AuthGate() {
   const { signOut } = useClerk();
   const [authError, setAuthError] = useState('');
   if (!isLoaded) return <SafeAreaView style={styles.page}><Text style={styles.logo}>greencollar.</Text><Text style={styles.muted}>Loading secure sign-in...</Text></SafeAreaView>;
-  if (demoOpen) return <ReadOnlyDemo onExit={()=>setDemoOpen(false)}/>;
+  if (demoOpen) return <WorkingDemo onExit={()=>setDemoOpen(false)}/>;
   if (isSignedIn) return <><GreenCollarDashboard getToken={getToken} userId={userId}/><Pressable accessibilityRole="button" style={{backgroundColor:'#183d2b',padding:10,alignItems:'center'}} onPress={() => void signOut()}><Text style={{color:'#d5f48b'}}>Sign out</Text></Pressable></>;
   return (
     <SafeAreaView style={[styles.page,{justifyContent:'center',padding:24,gap:16}]}>
@@ -1697,8 +1697,8 @@ function AuthGate() {
       <Text style={styles.subtitle}>Your business. On autopilot.</Text>
       <Pressable style={styles.primary} onPress={() => {setAuthError('');void startHostedAuth({mode:'sign-in'}).catch(() => setAuthError('Unable to open sign-in. Check Clerk Native API configuration.'));}}><Text style={styles.primaryText}>Sign in</Text></Pressable>
       <Pressable style={[styles.primary,{backgroundColor:'#f0f5ef'}]} onPress={() => {setAuthError('');void startHostedAuth({mode:'sign-up'}).catch(() => setAuthError('Unable to open sign-up. Check Clerk Native API configuration.'));}}><Text style={styles.primaryText}>Create account</Text></Pressable>
-      <Pressable accessibilityRole="button" style={[styles.primary,{backgroundColor:'#c4d9cc'}]} onPress={()=>setDemoOpen(true)}><Text style={styles.primaryText}>Explore read-only demo</Text></Pressable>
-      <Text style={styles.muted}>Demo uses fictional sample data. Changes are not saved.</Text>
+      <Pressable accessibilityRole="button" style={[styles.primary,{backgroundColor:'#c4d9cc'}]} onPress={()=>setDemoOpen(true)}><Text style={styles.primaryText}>Explore interactive sample</Text></Pressable>
+      <Text style={styles.muted}>Fictional records only. Preview edits stay on this device or browser and can be reset.</Text>
       {!!authError && <Text style={styles.muted}>{authError}</Text>}
       <Text style={styles.muted}>Development build. Customer records are still example data until business onboarding is connected.</Text>
     </SafeAreaView>
@@ -1707,7 +1707,7 @@ function AuthGate() {
 
 export default function App() {
   const previewMode = process.env.EXPO_PUBLIC_GREENCOLLAR_APP_PREVIEW === 'true';
-  if (previewMode) return <GreenCollarDashboard getToken={async () => null} userId={null} previewMode/>;
+  if (previewMode) return <WorkingDemo/>;
   const key = process.env.EXPO_PUBLIC_CLERK_PUBLISHABLE_KEY;
   if (!key) return <DemoEntryOnly/>;
   return <ClerkProvider publishableKey={key} tokenCache={tokenCache}><AuthGate/></ClerkProvider>;
