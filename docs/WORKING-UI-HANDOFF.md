@@ -39,6 +39,18 @@ The worker screen now presents a compact start-of-day summary and a fixed, state
 - The archive includes the static `dist/` export, smoke script, screenshots, and a source patch against stop-deferral commit `73093b582e35bd1ed0a691c7c4d1d64778545681`.
 - No Site was created or updated and nothing was deployed. The current private Site remains at v6. Existing preview review and owner visual acceptance are still required before publication.
 
+## Latest mobile task/action layout correction (2026-10-15)
+
+At default text size, the worker’s complete current-task card and primary action now fit in the main viewport at 390×844 and 320×568. At 390px, the action footer has a measured gap from the main scroll area and bottom navigation. At 320px, the action sits directly below the task in the scroll area, with bottom navigation separate. Enlarged text can reflow and scroll to the action.
+
+- Source branch: `codex/worker-day-ui-redesign`.
+- Source commit: `83ecab608f8aee4da5963c489d0e625f88f5def6`.
+- Export bundle: `dist/_expo/static/js/web/AppEntry-fc1f36378468e5534e45ef8c877060cd.js` (1,197,334 bytes), SHA-256 `ada88c68fd2119377f434793e7465666186a25389630206eeb25148c3b63e50b`.
+- Updated export archive: `docs/ui-preview/worker-day-ui/greencollar-worker-day-ui-export.tar.gz` (975,537 bytes), SHA-256 `9e5305009f45a00493121f358e907bd8161f0bff83e66ed5491f84b2ee25ee32` (also in the adjacent `.sha256` sidecar).
+- Browser verification covered task/action fit, no footer/nav overlap, and repeated overview/continue/tab navigation at both target sizes; route, lunch, delay, deferral, photo, note, timer, and reload flows still pass. It reported 0 JavaScript errors and 0 external requests. `npm run typecheck` passed and all 344 tests passed.
+- [Phone first stop at 320×568](ui-preview/worker-day-ui/phone-first-stop-320x568.png), [phone active visit at 320×568](ui-preview/worker-day-ui/phone-active-visit-320x568.png), and [phone enlarged text at 320×568](ui-preview/worker-day-ui/phone-enlarged-text-320x568.png) were added to the archive.
+- Text enlargement was simulated with CSS in Chromium; native operating-system font settings were not emulated. No Site was updated and nothing was deployed.
+
 ## Build provenance
 
 - Repository: `newssmyrna/greencollar`.
@@ -83,13 +95,16 @@ All example records and names in these images are synthetic.
 - [Phone compact start-of-day summary](ui-preview/worker-day-ui/phone-start-of-day.png)
 - [Phone route, lunch, and delay sheet](ui-preview/worker-day-ui/phone-route-lunch-sheet.png)
 - [Phone first stop with pinned next action](ui-preview/worker-day-ui/phone-first-stop.png)
+- [Phone first stop at 320×568](ui-preview/worker-day-ui/phone-first-stop-320x568.png)
 - [Phone deferral with keyboard-sized viewport](ui-preview/worker-day-ui/phone-deferral-short-keyboard.png)
 - [Phone deferred stop and route sheet](ui-preview/worker-day-ui/phone-deferred-route-sheet.png)
 - [Phone active visit](ui-preview/worker-day-ui/phone-active-visit.png)
+- [Phone active visit at 320×568](ui-preview/worker-day-ui/phone-active-visit-320x568.png)
 - [Phone enlarged text](ui-preview/worker-day-ui/phone-enlarged-text.png)
+- [Phone enlarged text at 320×568](ui-preview/worker-day-ui/phone-enlarged-text-320x568.png)
 - [Desktop next stop](ui-preview/worker-day-ui/desktop-next-stop.png)
 
-The latest worker-day browser smoke covered those screens plus the completed sample visit and compact 320×568 layout. It reported no JavaScript errors or external requests. `npm run typecheck` passed and `npm test` passed all 344 tests.
+The latest worker-day browser smoke verifies complete task/action visibility at both target phone sizes, repeated navigation, enlarged-text reflow, and the existing sample flows. It reported no JavaScript errors or external requests. `npm run typecheck` passed and `npm test` passed all 344 tests.
 
 ## Remaining integration work
 
