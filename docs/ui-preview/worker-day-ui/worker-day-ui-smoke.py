@@ -2,11 +2,12 @@
 Run the Expo export on localhost:8773, then run this script from any directory.
 """
 from base64 import b64decode
+import os
 from pathlib import Path
 from playwright.sync_api import expect, sync_playwright
 
 ROOT = Path(__file__).resolve().parent
-URL = 'http://127.0.0.1:8773'
+URL = os.environ.get('WORKER_PREVIEW_URL', 'http://127.0.0.1:8773')
 # A valid 1x1 PNG fixture; it remains local and is never uploaded.
 PIXEL_PNG = b64decode('iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+/Vb8AAAAASUVORK5CYII=')
 
@@ -36,6 +37,48 @@ def assert_pinned_action(page, name):
     return box
 
 
+def assert_worker_footer_layout(page):
+    scroll = page.get_by_test_id('worker-main-scroll').bounding_box()
+    nav = page.get_by_test_id('worker-bottom-nav').bounding_box()
+    action_bar = page.get_by_test_id('worker-next-action-bar').bounding_box() if page.get_by_test_id('worker-next-action-bar').count() else None
+    assert scroll and nav, 'worker content and bottom navigation are present'
+    if action_bar:
+        assert scroll['y'] + scroll['height'] <= action_bar['y'] + 1, f'main scroll overlaps the action footer: {scroll}, {action_bar}'
+        assert action_bar['y'] + action_bar['height'] <= nav['y'] + 1, f'action footer overlaps bottom navigation: {action_bar}, {nav}'
+    else:
+        assert scroll['y'] + scroll['height'] <= nav['y'] + 1, f'main scroll overlaps bottom navigation: {scroll}, {nav}'
+    assert page.evaluate('document.documentElement.scrollHeight <= window.innerHeight + 1'), 'the shell itself scrolls behind its fixed controls'
+    return scroll, action_bar, nav
+
+
+def assert_briefing_fits(page, heading_text, action_name):
+    scroll, action_bar, _ = assert_worker_footer_layout(page)
+    heading = page.get_by_text(heading_text, exact=True).bounding_box()
+    action = page.get_by_role('button', name=action_name, exact=True).bounding_box()
+    assert heading and scroll['y'] <= heading['y'] and heading['y'] + heading['height'] <= scroll['y'] + scroll['height'], f'{heading_text} is in the main viewport'
+    if action_bar:
+        assert action and action_bar['y'] <= action['y'] and action['y'] + action['height'] <= action_bar['y'] + action_bar['height'], f'{action_name} is fully in its footer'
+    else:
+        inline = page.get_by_test_id('worker-inline-action').bounding_box()
+        assert action and inline and inline['y'] <= action['y'] and action['y'] + action['height'] <= inline['y'] + inline['height'], f'{action_name} is fully in its inline action card'
+        assert inline['y'] >= scroll['y'] and inline['y'] + inline['height'] <= scroll['y'] + scroll['height'] + 1, f'{action_name} is clipped by the main viewport'
+    assert_pinned_action(page, action_name)
+
+
+def assert_current_task_fits(page, action_name='Begin sample travel'):
+    scroll, action_bar, _ = assert_worker_footer_layout(page)
+    task = page.get_by_test_id('worker-current-task').bounding_box()
+    action = page.get_by_role('button', name=action_name, exact=True).bounding_box()
+    assert task and scroll['y'] <= task['y'] and task['y'] + task['height'] <= scroll['y'] + scroll['height'] + 1, f'current task is clipped by the footer: task={task}, scroll={scroll}'
+    if action_bar:
+        assert action and action_bar['y'] <= action['y'] and action['y'] + action['height'] <= action_bar['y'] + action_bar['height'], f'{action_name} is clipped by its footer'
+    else:
+        inline = page.get_by_test_id('worker-inline-action').bounding_box()
+        assert action and inline and inline['y'] <= action['y'] and action['y'] + action['height'] <= inline['y'] + inline['height'], f'{action_name} is clipped by its inline action card'
+        assert inline['y'] >= scroll['y'] and inline['y'] + inline['height'] <= scroll['y'] + scroll['height'] + 1, f'{action_name} is clipped by the main viewport'
+    assert_pinned_action(page, action_name)
+
+
 with sync_playwright() as p:
     browser = p.chromium.launch(headless=True, executable_path='/usr/bin/chromium', args=['--no-sandbox'])
     page = browser.new_page(viewport={'width': 390, 'height': 844}, device_scale_factor=1)
@@ -51,7 +94,7 @@ with sync_playwright() as p:
     page.get_by_role('button', name='Worker', exact=True).click()
     assert 'Start your day.' in page.locator('body').inner_text()
     assert 'EST. RETURN' in page.locator('body').inner_text()
-    assert_pinned_action(page, 'Start my day')
+    assert_briefing_fits(page, 'Start your day.', 'Start my day')
     page.screenshot(path=str(ROOT / 'phone-start-of-day.png'))
 
     page.get_by_role('button', name='Review route, lunch & delays', exact=True).click()
@@ -88,10 +131,41 @@ with sync_playwright() as p:
     state = page.evaluate("JSON.parse(localStorage.getItem('greencollar.preview.workspace.v2')).workdays[0]")
     assert state['dayStartedAt'] is not None and state['workSession'] is None
     expect(page.get_by_role('button', name='Begin sample travel', exact=True)).to_be_enabled()
-    assert_pinned_action(page, 'Begin sample travel')
+    assert_current_task_fits(page)
     assert 'Next stop.' in page.locator('body').inner_text()
     assert '12 min sample drive' in page.locator('body').inner_text()
     page.screenshot(path=str(ROOT / 'phone-first-stop.png'))
+
+    # The complete task card and next action fit without scrolling at both target sizes.
+    # Repeated main-tab navigation must restore the worker's overview and current stop.
+    page.get_by_role('button', name='Back to day overview', exact=True).click()
+    assert_briefing_fits(page, 'Your day is underway.', 'Continue my day')
+    page.get_by_role('button', name='Continue my day', exact=True).click()
+    assert_current_task_fits(page)
+    page.get_by_test_id('worker-main-scroll').evaluate('(element) => { element.scrollTop = element.scrollHeight; }')
+    page.get_by_role('tab', name='Schedule tab', exact=True).click()
+    page.get_by_role('tab', name='Today tab', exact=True).click()
+    assert_briefing_fits(page, 'Your day is underway.', 'Continue my day')
+    page.get_by_role('button', name='Continue my day', exact=True).click()
+    assert_current_task_fits(page)
+
+    page.set_viewport_size({'width': 320, 'height': 568})
+    page.wait_for_timeout(250)
+    assert_current_task_fits(page)
+    page.screenshot(path=str(ROOT / 'phone-first-stop-320x568.png'))
+    page.get_by_role('button', name='Back to day overview', exact=True).click()
+    assert_briefing_fits(page, 'Your day is underway.', 'Continue my day')
+    page.get_by_role('button', name='Continue my day', exact=True).click()
+    assert_current_task_fits(page)
+    page.get_by_test_id('worker-main-scroll').evaluate('(element) => { element.scrollTop = element.scrollHeight; }')
+    page.get_by_role('tab', name='Schedule tab', exact=True).click()
+    page.get_by_role('tab', name='Today tab', exact=True).click()
+    assert_briefing_fits(page, 'Your day is underway.', 'Continue my day')
+    page.get_by_role('button', name='Continue my day', exact=True).click()
+    assert_current_task_fits(page)
+    page.set_viewport_size({'width': 390, 'height': 844})
+    page.wait_for_timeout(250)
+    assert_current_task_fits(page)
 
     # Contact details, route, and photos are reachable without scrolling the work card.
     page.get_by_role('button', name='Contact details', exact=True).click()
@@ -162,12 +236,21 @@ with sync_playwright() as p:
     page.wait_for_timeout(250)
 
     # Travel, arrival, timer, note, pause/resume, completion cancel/confirm, then reload.
+    page.set_viewport_size({'width': 320, 'height': 568})
+    page.wait_for_timeout(250)
     page.get_by_role('button', name='Begin sample travel', exact=True).click()
     page.get_by_role('button', name='Confirm sample arrival', exact=True).click()
     assert_pinned_action(page, 'Start visit timer')
     page.get_by_role('button', name='Start visit timer', exact=True).click()
-    assert_pinned_action(page, 'Pause visit timer')
+    page.wait_for_timeout(550)
     scroll_all_to_top(page)
+    assert_current_task_fits(page, 'Pause visit timer')
+    expect(page.get_by_role('button', name='Pause visit timer', exact=True)).to_be_enabled()
+    scroll_all_to_top(page)
+    page.screenshot(path=str(ROOT / 'phone-active-visit-320x568.png'))
+    page.set_viewport_size({'width': 390, 'height': 844})
+    page.wait_for_timeout(250)
+    assert_current_task_fits(page, 'Pause visit timer')
     page.screenshot(path=str(ROOT / 'phone-active-visit.png'))
     page.get_by_role('button', name='Work note', exact=True).click()
     page.get_by_role('textbox', name='Optional work note').fill('Gate code confirmed in sample')
@@ -212,9 +295,17 @@ with sync_playwright() as p:
     page.set_viewport_size({'width': 390, 'height': 844})
     page.add_style_tag(content='[dir="auto"] { font-size: 150% !important; line-height: 1.35 !important; }')
     page.wait_for_timeout(200)
+    assert_worker_footer_layout(page)
     assert_pinned_action(page, 'Begin sample travel')
     assert page.evaluate('document.documentElement.scrollWidth <= window.innerWidth'), 'enlarged text has horizontal overflow'
     page.screenshot(path=str(ROOT / 'phone-enlarged-text.png'))
+    page.set_viewport_size({'width': 320, 'height': 568})
+    page.wait_for_timeout(200)
+    assert_worker_footer_layout(page)
+    page.get_by_role('button', name='Begin sample travel', exact=True).scroll_into_view_if_needed()
+    assert_pinned_action(page, 'Begin sample travel')
+    assert page.evaluate('document.documentElement.scrollWidth <= window.innerWidth'), 'compact enlarged text has horizontal overflow'
+    page.screenshot(path=str(ROOT / 'phone-enlarged-text-320x568.png'))
 
     assert not js_errors, f'Browser JavaScript errors: {js_errors}'
     assert not external_requests, f'Unexpected external requests: {external_requests}'
@@ -223,7 +314,8 @@ with sync_playwright() as p:
     print('PASS: contacts, notes, and browser-local photos open and persist in the sample flow')
     print('PASS: defer cancel/Other validation, mid-travel deferral, route restore, and visit history preservation')
     print('PASS: deferral actions remain visible in a 320x340 keyboard-shortened viewport; scroll reaches note field')
-    print('PASS: reload/continue restores day progress; 320x568 phone, 150% text enlargement, and desktop have no horizontal overflow')
+    print('PASS: current task and primary action fit at 390x844 and 320x568; footer, bottom nav, and repeated navigation stay clear')
+    print('PASS: reload/continue restores day progress; 150% text reflows at both phone sizes; desktop has no horizontal overflow')
     print(f'PASS: {len(js_errors)} JavaScript errors; {len(external_requests)} external requests')
     print(f'PASS: screenshots saved to {ROOT}')
     browser.close()
