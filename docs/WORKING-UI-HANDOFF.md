@@ -27,6 +27,18 @@ This follow-up fixes the worker’s next-action visibility: the guarded “Start
 - The app continues on the existing owner-private preview; this follow-up has not been published.
 - Hosted visual verification of this change and explicit owner acceptance are pending. Per the repository visual acceptance gate, status remains **INCOMPLETE — OWNER VISUAL ACCEPTANCE PENDING** until the owner checks the updated worker screen at the approved URL. Parent coordination is required before publishing this new export.
 
+## Latest worker-day flow pass (2026-10-15)
+
+The worker screen now presents a compact start-of-day summary and a fixed, state-specific next-action bar. Route, schematic map, inter-stop drive estimates, estimated depot return, lunch selection, and delay controls open in a dedicated sheet. The worker can also open sample contact details, add browser-local photos and work notes, and defer or restore a stop. Deferral remains scrollable with its actions visible in a short keyboard-sized viewport. Day start remains separate from travel, arrival, and the visit timer; a repeated fast tap cannot skip a state.
+
+- Source branch: `codex/worker-day-ui-redesign`, based on the saved `codex/worker-stop-deferral` line.
+- Source commit: `0ba710c5330f4f54197687dd134bdd32afb8020a`.
+- The earlier route/lunch archive remains preserved and verified: `docs/ui-preview/worker-route-lunch/greencollar-worker-route-lunch-export.tar.gz`, SHA-256 `585cc8b1d7bd0bdd1ddb3b063ffbf3a49f174f2d3731ca511a5bd95cc29c6383`.
+- Export bundle: `dist/_expo/static/js/web/AppEntry-8f9f0a61715c9f5280ebe252241c074c.js` (1,195,781 bytes), SHA-256 `82aaf2121c1f87874a246ba875defdeb87962304472c248a5d5e2ffaeb3bcb7c`.
+- New local preview archive: `docs/ui-preview/worker-day-ui/greencollar-worker-day-ui-export.tar.gz`, SHA-256 `57addbff10e545fb3aa40945f4e1615493e98dae32844f6c7901e0c20780602b` (also in the adjacent `.sha256` sidecar).
+- The archive includes the static `dist/` export, smoke script, screenshots, and a source patch against stop-deferral commit `73093b582e35bd1ed0a691c7c4d1d64778545681`.
+- No Site was created or updated and nothing was deployed. The current private Site remains at v6. Existing preview review and owner visual acceptance are still required before publication.
+
 ## Build provenance
 
 - Repository: `newssmyrna/greencollar`.
@@ -68,6 +80,16 @@ All example records and names in these images are synthetic.
 - [Phone lunch conflict with blocked start action](ui-preview/worker-route-lunch/phone-worker-lunch-conflict-footer.png)
 - [Phone first stop after starting the separate timer](ui-preview/worker-route-lunch/phone-worker-first-stop-footer-transition.png)
 - [Desktop worker start action remains visible](ui-preview/worker-route-lunch/desktop-worker-action-footer.png)
+- [Phone compact start-of-day summary](ui-preview/worker-day-ui/phone-start-of-day.png)
+- [Phone route, lunch, and delay sheet](ui-preview/worker-day-ui/phone-route-lunch-sheet.png)
+- [Phone first stop with pinned next action](ui-preview/worker-day-ui/phone-first-stop.png)
+- [Phone deferral with keyboard-sized viewport](ui-preview/worker-day-ui/phone-deferral-short-keyboard.png)
+- [Phone deferred stop and route sheet](ui-preview/worker-day-ui/phone-deferred-route-sheet.png)
+- [Phone active visit](ui-preview/worker-day-ui/phone-active-visit.png)
+- [Phone enlarged text](ui-preview/worker-day-ui/phone-enlarged-text.png)
+- [Desktop next stop](ui-preview/worker-day-ui/desktop-next-stop.png)
+
+The latest worker-day browser smoke covered those screens plus the completed sample visit and compact 320×568 layout. It reported no JavaScript errors or external requests. `npm run typecheck` passed and `npm test` passed all 344 tests.
 
 ## Remaining integration work
 
