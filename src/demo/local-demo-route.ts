@@ -118,6 +118,12 @@ export function estimateIllustrativeRoute(input: {
   travelMinutes: TravelMatrix;
   startMinute: number;
   endMinute: number;
+  /** Sample route origin after the worker has already made progress. */
+  startNodeId?: string;
+  /** Optional lunch anchor at the current position before the first remaining stop. */
+  lunchAtStartAfterVisitId?: string | null;
+  /** Preserve the original shift's lunch threshold when estimating remaining stops. */
+  lunchNotBeforeMinute?: number;
   lunchDurationMinutes?: 30 | 60;
   lunchAfterVisitId?: string | null;
   delayMinutes?: number;
@@ -145,16 +151,28 @@ export function estimateIllustrativeRoute(input: {
     throw new Error('Delay adjustment must be a 15-minute step from 0 to 120 minutes.');
   if (input.lunchDurationMinutes !== undefined && input.lunchDurationMinutes !== 30 && input.lunchDurationMinutes !== 60)
     throw new Error('Choose a 30- or 60-minute sample lunch.');
-  if (input.lunchAfterVisitId && !input.stops.some(stop => stop.id === input.lunchAfterVisitId))
+  if (input.lunchAfterVisitId && !input.stops.some(stop => stop.id === input.lunchAfterVisitId)
+    && input.lunchAtStartAfterVisitId !== input.lunchAfterVisitId)
     conflicts.push({ kind: 'lunch_slot', message: 'The selected lunch slot is no longer on this route. Choose another slot.' });
 
   let clock = input.startMinute;
-  let node = SAMPLE_DEPOT_ID;
+  let node = input.startNodeId ?? SAMPLE_DEPOT_ID;
   let totalDriveMinutes = 0;
   let totalServiceMinutes = 0;
   let returnDriveMinutes = 0;
   let lunch: SampleLunchSchedule | undefined;
   let delay: SampleDelaySchedule | undefined;
+
+  if (input.lunchAtStartAfterVisitId && input.lunchAfterVisitId === input.lunchAtStartAfterVisitId
+    && input.lunchDurationMinutes) {
+    lunch = { afterVisitId: input.lunchAtStartAfterVisitId, startMinute: clock,
+      finishMinute: clock + input.lunchDurationMinutes, durationMinutes: input.lunchDurationMinutes };
+    const lunchThreshold = input.lunchNotBeforeMinute
+      ?? Math.max(input.startMinute + SAMPLE_LUNCH_MINIMUM_AFTER_SHIFT_MINUTES, 11 * 60);
+    if (lunch.startMinute < lunchThreshold)
+      conflicts.push({ kind: 'lunch_slot', message: `Lunch can start after ${formatSampleClock(lunchThreshold)} in this sample schedule.` });
+    clock = lunch.finishMinute;
+  }
 
   for (const stop of input.stops) {
     if (delayMinutes > 0 && input.delayBeforeId === stop.id) {
@@ -198,25 +216,29 @@ export function estimateIllustrativeRoute(input: {
     if (input.lunchAfterVisitId === stop.id && input.lunchDurationMinutes) {
       lunch = { afterVisitId: stop.id, startMinute: clock,
         finishMinute: clock + input.lunchDurationMinutes, durationMinutes: input.lunchDurationMinutes };
-      if (lunch.startMinute < Math.max(input.startMinute + SAMPLE_LUNCH_MINIMUM_AFTER_SHIFT_MINUTES, 11 * 60))
+      if (lunch.startMinute < (input.lunchNotBeforeMinute
+        ?? Math.max(input.startMinute + SAMPLE_LUNCH_MINIMUM_AFTER_SHIFT_MINUTES, 11 * 60)))
         conflicts.push({ kind: 'lunch_slot', stopId: stop.id,
           message: `Lunch can start after ${formatSampleClock(Math.max(input.startMinute + SAMPLE_LUNCH_MINIMUM_AFTER_SHIFT_MINUTES, 11 * 60))} in this sample schedule.` });
       clock = lunch.finishMinute;
     }
   }
 
-  if (input.stops.length && stops.length === input.stops.length) {
-    if (delayMinutes > 0 && input.delayBeforeId === SAMPLE_RETURN_ID) {
+  if (stops.length === input.stops.length) {
+    if ((input.stops.length > 0 || node !== SAMPLE_DEPOT_ID)
+      && delayMinutes > 0 && input.delayBeforeId === SAMPLE_RETURN_ID) {
       delay = { beforeId: SAMPLE_RETURN_ID, startMinute: clock, finishMinute: clock + delayMinutes, durationMinutes: delayMinutes };
       clock += delayMinutes;
     }
-    const driveMinutes = readTravel(input.travelMinutes, node, SAMPLE_DEPOT_ID);
+    const driveMinutes = input.stops.length === 0 && node === SAMPLE_DEPOT_ID
+      ? 0 : readTravel(input.travelMinutes, node, SAMPLE_DEPOT_ID);
     if (driveMinutes === undefined) conflicts.push({ kind: 'missing_travel',
       message: 'No illustrative return-to-depot travel time is available.' });
     else {
       const departureMinute = clock;
       const arrivalMinute = departureMinute + driveMinutes;
-      legs.push({ fromId: node, toId: SAMPLE_DEPOT_ID, driveMinutes, departureMinute, arrivalMinute, isReturn: true });
+      if (input.stops.length > 0 || node !== SAMPLE_DEPOT_ID)
+        legs.push({ fromId: node, toId: SAMPLE_DEPOT_ID, driveMinutes, departureMinute, arrivalMinute, isReturn: true });
       returnDriveMinutes = driveMinutes;
       totalDriveMinutes += driveMinutes;
       clock = arrivalMinute;
@@ -237,21 +259,32 @@ export function findIllustrativeLunchSlots(input: {
   travelMinutes: TravelMatrix;
   startMinute: number;
   endMinute: number;
+  startNodeId?: string;
+  startAfterVisitId?: string | null;
+  lunchNotBeforeMinute?: number;
   durationMinutes: 30 | 60;
   delayMinutes?: number;
   delayBeforeId?: string | null;
 }): SampleLunchSlot[] {
-  return input.stops.map(stop => {
-    const schedule = estimateIllustrativeRoute({ ...input, lunchDurationMinutes: input.durationMinutes, lunchAfterVisitId: stop.id });
+  const candidates = [
+    ...(input.startAfterVisitId ? [{ id: input.startAfterVisitId, atStart: true }] : []),
+    ...input.stops.map(stop => ({ id: stop.id, atStart: false })),
+  ].filter((candidate, index, all) => all.findIndex(item => item.id === candidate.id) === index);
+  return candidates.map(candidate => {
+    const schedule = estimateIllustrativeRoute({ ...input, lunchDurationMinutes: input.durationMinutes,
+      lunchAfterVisitId: candidate.id,
+      ...(candidate.atStart ? { lunchAtStartAfterVisitId: candidate.id } : {}),
+    });
     const lunch = schedule.lunch;
-    const earlyThreshold = Math.max(input.startMinute + SAMPLE_LUNCH_MINIMUM_AFTER_SHIFT_MINUTES, 11 * 60);
+    const earlyThreshold = input.lunchNotBeforeMinute
+      ?? Math.max(input.startMinute + SAMPLE_LUNCH_MINIMUM_AFTER_SHIFT_MINUTES, 11 * 60);
     const tooEarly = lunch !== undefined && lunch.startMinute < earlyThreshold;
     const reason = tooEarly
       ? `Lunch needs to start at or after ${formatSampleClock(earlyThreshold)} in this sample policy.`
       : schedule.conflicts[0]?.message;
     return {
-      afterVisitId: stop.id,
-      startMinute: lunch?.startMinute ?? schedule.stops.find(item => item.id === stop.id)?.finishMinute ?? input.startMinute,
+      afterVisitId: candidate.id,
+      startMinute: lunch?.startMinute ?? schedule.stops.find(item => item.id === candidate.id)?.finishMinute ?? input.startMinute,
       finishMinute: lunch?.finishMinute ?? input.startMinute,
       durationMinutes: input.durationMinutes,
       feasible: schedule.feasible && !tooEarly,

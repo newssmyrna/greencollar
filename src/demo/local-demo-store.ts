@@ -45,8 +45,15 @@ export type LocalDemoWorkday = {
   /** Worker-selected local sample break; it never starts the visit timer. */
   lunchDurationMinutes?: 30 | 60 | null;
   lunchAfterVisitId?: string | null;
+  lunchConsumed?: boolean;
   /** Local delay allowance applied before the next unstarted stop. */
   delayMinutes?: number;
+  /** Last modeled sample route position after a completion or mid-route deferral. */
+  routePositionLocationId?: string | null;
+  routePositionMinute?: number | null;
+  routePositionVisitId?: string | null;
+  /** Worker-deferred assigned stops; kept separate from completed/skipped visit history. */
+  deferredStops?: LocalDemoDeferredStop[];
   plannedVisitIds: string[];
   unscheduledVisitIds: string[];
   approvedQueueKey: string | null;
@@ -59,6 +66,30 @@ export type LocalDemoWorkday = {
   workSession: WorkSession | null;
   visits: DayData['visits'];
   invoiceDrafts: PersistedInvoiceDraft[];
+};
+
+export const LOCAL_DEMO_DEFER_REASONS = [
+  { value: 'customer_unavailable', label: 'Customer unavailable' },
+  { value: 'access_issue', label: 'Access issue' },
+  { value: 'weather_safety', label: 'Weather or safety' },
+  { value: 'equipment_needed', label: 'Equipment needed' },
+  { value: 'worker_delay', label: 'Running behind' },
+  { value: 'other', label: 'Other' },
+] as const;
+
+export type LocalDemoDeferredStopReason = typeof LOCAL_DEMO_DEFER_REASONS[number]['value'];
+
+export type LocalDemoDeferredStop = {
+  visitId: string;
+  reason: LocalDemoDeferredStopReason;
+  note: string | null;
+  deferredAt: number;
+  /** Original assigned-plan index; used for stable stop labels and undo history. */
+  originalIndex: number;
+  previousLunchAfterVisitId: string | null;
+  replacementLunchAfterVisitId: string | null;
+  /** True after a worker has manually selected a lunch slot since this deferral. */
+  lunchChoiceWasManual?: boolean;
 };
 
 export type LocalDemoPhoto = {
@@ -139,7 +170,12 @@ export function createInitialDemoWorkspace(date = localCalendarDate(), includeAs
     dayStartedAt: null,
     lunchDurationMinutes: 30,
     lunchAfterVisitId: `${agreements[2].id}:${date}`,
+    lunchConsumed: false,
     delayMinutes: 0,
+    routePositionLocationId: null,
+    routePositionMinute: null,
+    routePositionVisitId: null,
+    deferredStops: [],
     plannedVisitIds: agreements.map(agreement => `${agreement.id}:${date}`),
     unscheduledVisitIds: [],
     approvedQueueKey: `local-preview-${date}-sample-assignment`,
@@ -246,12 +282,22 @@ function isWorkspace(value: unknown): value is LocalDemoWorkspace | (Omit<LocalD
           && (!Number.isSafeInteger(day.dayStartedAt) || day.dayStartedAt < 0))
         || (day.lunchDurationMinutes !== undefined && day.lunchDurationMinutes !== null
           && day.lunchDurationMinutes !== 30 && day.lunchDurationMinutes !== 60)
+        || (day.lunchConsumed !== undefined && typeof day.lunchConsumed !== 'boolean')
         || (day.lunchAfterVisitId !== undefined && day.lunchAfterVisitId !== null
           && (typeof day.lunchAfterVisitId !== 'string' || !Array.isArray(day.plannedVisitIds) || !day.plannedVisitIds.includes(day.lunchAfterVisitId)))
         || (day.delayMinutes !== undefined
           && (!Number.isInteger(day.delayMinutes) || day.delayMinutes < 0 || day.delayMinutes > 120 || day.delayMinutes % 15 !== 0))
+        || (day.routePositionLocationId !== undefined && day.routePositionLocationId !== null
+          && (typeof day.routePositionLocationId !== 'string' || !locationIds.has(day.routePositionLocationId)))
+        || (day.routePositionMinute !== undefined && day.routePositionMinute !== null
+          && (!Number.isInteger(day.routePositionMinute) || day.routePositionMinute < 0 || day.routePositionMinute > 1440))
+        || ((day.routePositionLocationId === null || day.routePositionLocationId === undefined)
+          !== (day.routePositionMinute === null || day.routePositionMinute === undefined))
+        || (day.routePositionVisitId !== undefined && day.routePositionVisitId !== null
+          && (typeof day.routePositionVisitId !== 'string' || !day.plannedVisitIds?.includes(day.routePositionVisitId)))
         || !Array.isArray(day.plannedVisitIds) || day.plannedVisitIds.some(id => typeof id !== 'string' || !id || id.length > 400)
         || new Set(day.plannedVisitIds).size !== day.plannedVisitIds.length
+        || (day.deferredStops !== undefined && !Array.isArray(day.deferredStops))
         || !Array.isArray(day.unscheduledVisitIds) || day.unscheduledVisitIds.some(id => typeof id !== 'string' || !id || id.length > 400)
         || (day.approvedQueueKey !== null && typeof day.approvedQueueKey !== 'string')
         || (day.arrivedVisitId !== undefined && day.arrivedVisitId !== null
@@ -273,6 +319,31 @@ function isWorkspace(value: unknown): value is LocalDemoWorkspace | (Omit<LocalD
               || typeof photo.createdAt !== 'string' || photo.createdAt.length > 40);
           })))
         || !Array.isArray(day.visits) || !Array.isArray(day.invoiceDrafts)) return false;
+      const deferredIds = new Set<string>();
+      for (const deferred of day.deferredStops ?? []) {
+        const visitSuffix = `:${day.date}`;
+        const deferredAgreementId = typeof deferred?.visitId === 'string' && deferred.visitId.endsWith(visitSuffix)
+          ? deferred.visitId.slice(0, -visitSuffix.length) : '';
+        if (!deferred || typeof deferred !== 'object'
+          || typeof deferred.visitId !== 'string' || !day.plannedVisitIds.includes(deferred.visitId)
+          || !agreementIds.has(deferredAgreementId)
+          || deferredIds.has(deferred.visitId)
+          || !LOCAL_DEMO_DEFER_REASONS.some(item => item.value === deferred.reason)
+          || !(deferred.note === null || (typeof deferred.note === 'string' && deferred.note.length <= 500))
+          || (deferred.reason === 'other' && !(typeof deferred.note === 'string' && deferred.note.trim()))
+          || !Number.isSafeInteger(deferred.deferredAt) || deferred.deferredAt < 0
+          || !Number.isInteger(deferred.originalIndex) || deferred.originalIndex < 0
+          || deferred.originalIndex >= day.plannedVisitIds.length
+          || day.plannedVisitIds[deferred.originalIndex] !== deferred.visitId
+          || !(deferred.previousLunchAfterVisitId === null || day.plannedVisitIds.includes(deferred.previousLunchAfterVisitId))
+          || !(deferred.replacementLunchAfterVisitId === null || day.plannedVisitIds.includes(deferred.replacementLunchAfterVisitId))
+          || (deferred.lunchChoiceWasManual !== undefined && typeof deferred.lunchChoiceWasManual !== 'boolean')) return false;
+        if (day.visits.some(visit => visit.agreement_id === deferredAgreementId && visit.scheduled_date === day.date)) return false;
+        deferredIds.add(deferred.visitId);
+      }
+      if ((day.arrivedVisitId && deferredIds.has(day.arrivedVisitId))
+        || (day.travelingVisitId && deferredIds.has(day.travelingVisitId))
+        || (day.workSession && day.workSession.status !== 'completed' && deferredIds.has(day.workSession.jobId))) return false;
       if (day.workSession !== null) {
         const session = day.workSession;
         if (!session || typeof session !== 'object' || typeof session.jobId !== 'string' || !session.jobId
@@ -396,6 +467,7 @@ export function createEmptyDemoWorkday(date: string, hours = '8', maxJobs = '6')
     lunchDurationMinutes: 30,
     lunchAfterVisitId: null,
     delayMinutes: 0,
+    deferredStops: [],
     plannedVisitIds: [], unscheduledVisitIds: [], approvedQueueKey: null,
     arrivedVisitId: null, travelingVisitId: null, photosByVisitId: {},
     workSession: null, visits: [], invoiceDrafts: [],

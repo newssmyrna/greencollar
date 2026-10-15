@@ -99,3 +99,36 @@ test('a delay after the last service is included before the depot return',()=>{
   assert.equal(delayed.finishMinute,12*60+10);
 });
 
+test('remaining estimates start at the last sample position and still include the depot return',()=>{
+  const result=estimateIllustrativeRoute({
+    stops:[stops[2]],travelMinutes:matrix,startMinute:10*60,endMinute:16*60,
+    startNodeId:locationIds[1],
+  });
+  assert.equal(result.totalServiceMinutes,90);
+  assert.equal(result.totalDriveMinutes,39);
+  assert.equal(result.legs[0].fromId,locationIds[1]);
+  assert.equal(result.legs[0].driveMinutes,15);
+  assert.equal(result.legs[1].isReturn,true);
+  assert.equal(result.legs[1].toId,SAMPLE_DEPOT_ID);
+  assert.equal(result.finishMinute,10*60+15+90+24);
+});
+
+test('lunch can be placed at the current sample position before the remaining return leg',()=>{
+  const options=findIllustrativeLunchSlots({
+    stops:[],travelMinutes:matrix,startMinute:11*60,endMinute:16*60,durationMinutes:30,
+    startNodeId:locationIds[1],startAfterVisitId:stops[1].id,lunchNotBeforeMinute:11*60,
+  });
+  assert.equal(options.length,1);
+  assert.equal(options[0].afterVisitId,stops[1].id);
+  assert.equal(options[0].feasible,true);
+  const route=estimateIllustrativeRoute({
+    stops:[],travelMinutes:matrix,startMinute:11*60,endMinute:16*60,
+    startNodeId:locationIds[1],lunchNotBeforeMinute:11*60,
+    lunchDurationMinutes:30,lunchAfterVisitId:stops[1].id,lunchAtStartAfterVisitId:stops[1].id,
+  });
+  assert.equal(route.totalServiceMinutes,0);
+  assert.equal(route.lunch?.startMinute,11*60);
+  assert.equal(route.returnDriveMinutes,18);
+  assert.equal(route.finishMinute,11*60+30+18);
+});
+
