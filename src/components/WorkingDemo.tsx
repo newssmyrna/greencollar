@@ -28,6 +28,7 @@ import {
 type Tab = 'Today' | 'Customers' | 'Planner' | 'Schedule' | 'Invoices';
 type Role = 'Owner' | 'Worker';
 type WorkerScreen = 'briefing' | 'stop';
+type WorkerSheet = 'route' | 'contact' | 'notes' | 'photos' | null;
 type CustomerDraft = { name: string; address: string; phone: string; email: string; notes: string };
 type JobDraft = { customerId: string; service: string; price: string; minutes: string; date: string; cadence: 'once' | 'weekly' };
 
@@ -110,6 +111,14 @@ function ActionButton({ label, onPress, secondary = false, disabled = false, acc
   ><Text style={[s.actionText, secondary && s.secondaryActionText]}>{label}</Text></Pressable>;
 }
 
+function WorkerTool({ label, onPress, disabled = false }: { label: string; onPress: () => void; disabled?: boolean }) {
+  return <Pressable accessibilityRole="button" accessibilityLabel={label}
+    accessibilityState={{ disabled }} disabled={disabled} onPress={onPress}
+    style={({ pressed }) => [s.workerTool, disabled && s.disabledAction, pressed && !disabled && s.pressed]}>
+    <Text style={s.workerToolText}>{label}</Text>
+  </Pressable>;
+}
+
 function Field({ label, value, onChangeText, placeholder, keyboardType, multiline = false, maxLength, autoCapitalize = 'sentences', accessibilityHint, returnKeyType = 'done', onSubmitEditing }: {
   label: string; value: string; onChangeText: (value: string) => void; placeholder?: string;
   keyboardType?: 'default' | 'email-address' | 'phone-pad' | 'number-pad' | 'decimal-pad';
@@ -134,13 +143,15 @@ function Tag({ children, tone = 'green' }: { children: string; tone?: 'green' | 
 }
 
 export function WorkingDemo({ onExit }: { onExit?: () => void }) {
-  const { width } = useWindowDimensions();
+  const { width, height, fontScale } = useWindowDimensions();
   const wide = width >= 920;
   const compact = width < 430;
   const initial = useMemo(() => loadLocalDemoWorkspace(), []);
   const [loaded, setLoaded] = useState(initial);
   const workspace = loaded.workspace;
   const [role, setRole] = useState<Role>('Owner');
+  const compactWorker = role === 'Worker' && width < 430;
+  const shortPhone = role === 'Worker' && width < 360 && height < 640;
   const [tab, setTab] = useState<Tab>('Today');
   const [workerScreen, setWorkerScreen] = useState<WorkerScreen>('briefing');
   const [date, setDate] = useState(localCalendarDate());
@@ -161,6 +172,7 @@ export function WorkingDemo({ onExit }: { onExit?: () => void }) {
   const [deferReason, setDeferReason] = useState<LocalDemoDeferredStopReason>('customer_unavailable');
   const [deferNote, setDeferNote] = useState('');
   const [deferError, setDeferError] = useState('');
+  const [workerSheet, setWorkerSheet] = useState<WorkerSheet>(null);
   const [noteDraft, setNoteDraft] = useState('');
   const [tick, setTick] = useState(Date.now());
   const [saving, setSaving] = useState(false);
@@ -176,7 +188,9 @@ export function WorkingDemo({ onExit }: { onExit?: () => void }) {
   }, [date, workspace.workdays]);
   useEffect(() => {
     const clearLock = () => { actionLock.current = false; setSaving(false); };
-    const timer = setTimeout(clearLock, 180);
+    // Keep the next state disabled long enough that a rapid double-tap cannot
+    // land on its newly rendered primary action.
+    const timer = setTimeout(clearLock, 500);
     return () => clearTimeout(timer);
   }, [loaded]);
 
@@ -197,6 +211,10 @@ export function WorkingDemo({ onExit }: { onExit?: () => void }) {
   const nextAgreement = session && session.status !== 'completed'
     ? activeAgreement
     : routeAgreements.find(item => !completedIds.has(`${item.id}:${date}`));
+  const workerDetailAgreement = session && session.status !== 'completed' ? activeAgreement : nextAgreement;
+  const workerDetailVisitKey = workerDetailAgreement ? `${workerDetailAgreement.id}:${date}` : null;
+  const workerDetailCustomer = workerDetailAgreement
+    ? workspace.customers.find(item => item.id === workerDetailAgreement.customer_id) : undefined;
   const approved = !!day?.approvedQueueKey && planIds.length > 0;
   const completedCount = completedIds.size;
   const totalVisitCount = dueDay.visits.filter(visit => visit.status !== 'skipped').length;
@@ -279,6 +297,7 @@ export function WorkingDemo({ onExit }: { onExit?: () => void }) {
   useEffect(() => {
     if (role !== 'Worker' || tab !== 'Today' || workerScreen !== 'stop' || form) return;
     const back = BackHandler.addEventListener('hardwareBackPress', () => {
+      if (workerSheet) { setWorkerSheet(null); return true; }
       if (deferOpen) { closeDeferModal(); return true; }
       if (completeOpen) { setCompleteOpen(false); return true; }
       if (discardOpen) { setDiscardOpen(false); return true; }
@@ -288,6 +307,7 @@ export function WorkingDemo({ onExit }: { onExit?: () => void }) {
       const handleKey = (event: KeyboardEvent) => {
         if (event.key !== 'Escape') return;
         event.preventDefault(); event.stopPropagation();
+        if (workerSheet) { setWorkerSheet(null); return; }
         if (deferOpen) { closeDeferModal(); return; }
         if (completeOpen) { setCompleteOpen(false); return; }
         if (discardOpen) { setDiscardOpen(false); return; }
@@ -297,7 +317,7 @@ export function WorkingDemo({ onExit }: { onExit?: () => void }) {
       return () => { back.remove(); document.removeEventListener('keydown', handleKey, true); };
     }
     return () => back.remove();
-  }, [role, tab, workerScreen, form, completeOpen, discardOpen, deferOpen]);
+  }, [role, tab, workerScreen, form, completeOpen, discardOpen, deferOpen, workerSheet]);
 
   function validateCustomer(): string {
     if (!customerDraft.name.trim()) return 'Enter the customer’s name to continue.';
@@ -384,16 +404,18 @@ export function WorkingDemo({ onExit }: { onExit?: () => void }) {
     if (!day || !approved || plannedAgreements.length === 0) return;
     if (workerDayStartedAt !== null) { showWorkerStops(); return; }
     if (dayStartLock.current) return;
+    if (!selectedLunchSlot?.feasible) {
+      setPlanError('Choose an available lunch slot before starting this sample day.');
+      return;
+    }
+    if (!workerRoute.feasible) {
+      setPlanError('Resolve the sample appointment or workday limit conflict before starting.');
+      return;
+    }
     dayStartLock.current = true;
+    actionLock.current = true;
+    setSaving(true);
     try {
-      if (!selectedLunchSlot?.feasible) {
-        setPlanError('Choose an available lunch slot before starting this sample day.');
-        return;
-      }
-      if (!workerRoute.feasible) {
-        setPlanError('Resolve the sample appointment or workday limit conflict before starting.');
-        return;
-      }
       const started = beginLocalDemoWorkday(day, timestampForLocalClock(date, startTimeDraft));
       replaceDay(started);
       showWorkerStops();
@@ -401,8 +423,10 @@ export function WorkingDemo({ onExit }: { onExit?: () => void }) {
       setNotice('Sample day started at the chosen local time. Lunch is planned separately; the visit timer has not started.');
     } catch (error) {
       setPlanError(error instanceof Error ? error.message : 'Choose a valid local start time.');
+      actionLock.current = false;
+      setSaving(false);
     } finally {
-      setTimeout(() => { dayStartLock.current = false; }, 220);
+      setTimeout(() => { dayStartLock.current = false; }, 500);
     }
   }
   function updateSession(
@@ -521,7 +545,7 @@ export function WorkingDemo({ onExit }: { onExit?: () => void }) {
       if (action === 'start') {
         if (role === 'Worker' && workerDayStartedAt === null) { setPlanError('Start your sample day before starting a visit timer.'); return; }
         if (day.arrivedVisitId !== visitKey) { setPlanError('Confirm the sample arrival first.'); return; }
-        replaceDay({ ...day, workSession: startWork(visitKey, Date.now()), approvedQueueKey: day.approvedQueueKey });
+        replaceDay({ ...day, workSession: { ...startWork(visitKey, Date.now()), note: noteDraft.trim() || undefined }, approvedQueueKey: day.approvedQueueKey });
         setNotice('Sample visit started. The timer is running on this device.'); return;
       }
       if (action === 'pause' && session?.status === 'running') {
@@ -581,8 +605,8 @@ export function WorkingDemo({ onExit }: { onExit?: () => void }) {
     if (Platform.OS === 'web' && typeof window !== 'undefined') window.scrollTo({ top: 0, behavior: 'auto' });
   }
 
-  function showWorkerOverview() { setWorkerScreen('briefing'); scrollToTop(); }
-  function showWorkerStops() { setWorkerScreen('stop'); scrollToTop(); }
+  function showWorkerOverview() { setWorkerSheet(null); setWorkerScreen('briefing'); scrollToTop(); }
+  function showWorkerStops() { setWorkerSheet(null); setWorkerScreen('stop'); scrollToTop(); }
 
   const nextIndex = nextAgreement ? plannedAgreements.findIndex(item => item.id === nextAgreement.id) : -1;
   const routeStartInput = workerDayStartedAt !== null
@@ -786,6 +810,51 @@ export function WorkingDemo({ onExit }: { onExit?: () => void }) {
     </View>;
   }
 
+  function renderWorkerDaySummary() {
+    const lunchSummary = lunchConsumed
+      ? `${lunchDurationMinutes}-minute lunch completed`
+      : selectedLunchSlot?.feasible
+        ? `${lunchDurationMinutes}-minute lunch after stop ${planIds.indexOf(selectedLunchSlot.afterVisitId) + 1}`
+        : 'Lunch slot needs attention';
+    return <View style={s.workerDaySummary}>
+      <View style={s.planHeader}>
+        <View><Text style={s.panelTitle}>Today’s sample route</Text><Text style={s.cardBody}>{planIds.length} assigned stops · starts {formatClock(shiftStartMinute)}</Text></View>
+        <Tag tone={workerRoute.feasible ? 'green' : 'amber'}>{workerRoute.feasible ? 'READY' : 'REVIEW'}</Tag>
+      </View>
+      <View style={s.workerSummaryMetrics}>
+        <View style={s.workerSummaryMetric}><Text style={s.workerSummaryValue}>{workerRoute.totalDriveMinutes} min</Text><Text style={s.workerSummaryLabel}>SAMPLE DRIVE</Text></View>
+        <View style={s.workerSummaryMetric}><Text style={s.workerSummaryValue}>{formatClock(workerEstimatedFinish)}</Text><Text style={s.workerSummaryLabel}>EST. RETURN</Text></View>
+      </View>
+      <Text style={s.microCopy}>{lunchSummary} · return to sample depot included</Text>
+      <ActionButton label="Review route, lunch & delays" secondary onPress={() => setWorkerSheet('route')}/>
+    </View>;
+  }
+
+  function renderDeferredStops() {
+    if (!approved || deferredStops.length === 0) return null;
+    return <View style={s.panelSoft}>
+      <Text style={s.panelTitle}>Deferred stops</Text>
+      <Text style={s.cardBody}>These visits stay assigned locally and are excluded from today’s active route. Restoring one recalculates the sample schedule.</Text>
+      {deferredStops.map(stop => {
+        const agreement = plannedAgreements.find(item => `${item.id}:${date}` === stop.visitId);
+        return <View key={stop.visitId} style={s.deferredStopCard}>
+          <View style={s.deferredStopHead}><View style={s.stopText}><Text style={s.stopTitle}>Stop {String(stop.originalIndex + 1).padStart(2, '0')} · {agreement?.service_name ?? 'Sample service'}</Text><Text style={s.stopMeta}>{deferredReasonLabel(stop.reason)}{stop.note ? ` · ${stop.note}` : ''}</Text></View><Tag tone="amber">DEFERRED</Tag></View>
+          <ActionButton label="Restore this stop" secondary disabled={saving} onPress={() => restoreDeferredStop(stop.visitId)}/>
+        </View>;
+      })}
+    </View>;
+  }
+
+  function workerStopAction(): { label: string; action: 'travel' | 'arrive' | 'start' | 'pause' | 'resume' } | null {
+    if (session?.status === 'running') return { label: 'Pause visit timer', action: 'pause' };
+    if (session?.status === 'paused') return { label: 'Resume visit timer', action: 'resume' };
+    if (!nextAgreement || workerDayStartedAt === null) return null;
+    const visitKey = `${nextAgreement.id}:${date}`;
+    if (day?.arrivedVisitId === visitKey) return { label: 'Start visit timer', action: 'start' };
+    if (day?.travelingVisitId === visitKey) return { label: 'Confirm sample arrival', action: 'arrive' };
+    return { label: 'Begin sample travel', action: 'travel' };
+  }
+
   function renderWorkerRoutePanel() {
     if (!workerHasAssignment) return null;
     const originTitle = routeOriginVisitId
@@ -902,7 +971,15 @@ export function WorkingDemo({ onExit }: { onExit?: () => void }) {
 
   return <SafeAreaView style={s.safe}>
     <View style={s.app}>
-      <View style={[s.header, wide && s.headerWide, compact && s.headerCompact]}>
+      {compactWorker ? <View style={[s.header, s.headerShort]}>
+        <View style={s.brandRow}>
+          <View style={[s.brandMark, s.brandMarkShort]}><Text style={s.brandMarkText}>G</Text></View>
+          <View><Text style={s.brand}>greencollar</Text><Text style={s.brandSub}>FIELD OPERATIONS</Text></View>
+        </View>
+        <View style={s.roleSwitch} accessibilityLabel="Choose demo role">
+          {(['Owner', 'Worker'] as Role[]).map(item => <Pressable key={item} accessibilityRole="button" accessibilityState={{ selected: role === item }} onPress={() => { setRole(item); setWorkerScreen('briefing'); if (item === 'Worker' && !['Today', 'Schedule'].includes(tab)) setTab('Today'); scrollToTop(); }} style={[s.roleChoice, role === item && s.roleChoiceSelected]}><Text style={[s.roleChoiceText, role === item && s.roleChoiceTextSelected]}>{item}</Text></Pressable>)}
+        </View>
+      </View> : <View style={[s.header, wide && s.headerWide, compact && s.headerCompact]}>
         <View style={s.brandRow}>
           <View style={s.brandMark}><Text style={s.brandMarkText}>G</Text></View>
           <View><Text style={s.brand}>greencollar</Text><Text style={s.brandSub}>FIELD OPERATIONS</Text></View>
@@ -914,81 +991,81 @@ export function WorkingDemo({ onExit }: { onExit?: () => void }) {
           </View>
           {onExit && <Pressable accessibilityRole="button" accessibilityLabel="Exit preview" onPress={onExit} style={s.exit}><Text style={s.exitText}>Exit</Text></Pressable>}
         </View>
-      </View>
-      <View style={[s.notice, wide && s.noticeWide]} accessibilityRole="summary">
+      </View>}
+      {compactWorker ? <View style={s.noticeShort} accessibilityRole="summary"><Text style={s.noticeShortText}>PRIVATE PREVIEW · FICTIONAL DATA · LOCAL ONLY</Text></View> : <View style={[s.notice, compact && s.noticeCompact, wide && s.noticeWide]} accessibilityRole="summary">
         <Text style={s.noticeTitle}>Demo workspace</Text>
-        <Text style={s.noticeCopy}>Edits are local to this preview. {persistenceLabel}. Nothing is sent, billed, or written to a business account.</Text>
-      </View>
-      {!!(loaded.notice || notice) && <View style={[s.message, s.messageInfo]} accessibilityLiveRegion="polite"><Text style={s.messageText}>{notice || loaded.notice}</Text></View>}
-      <View style={[s.body, wide && s.bodyWide]}>
+        <Text style={[s.noticeCopy, compact && s.noticeCopyCompact]}>Edits are local to this preview. {persistenceLabel}. Nothing is sent, billed, or written to a business account.</Text>
+      </View>}
+      {!!(loaded.notice || notice) && <View style={[s.message, compactWorker && s.messageShort, s.messageInfo]} accessibilityLiveRegion="polite"><Text accessibilityLabel={notice || loaded.notice} numberOfLines={compactWorker && fontScale <= 1.15 ? 1 : undefined} style={s.messageText}>{notice || loaded.notice}</Text></View>}
+      <View style={[s.body, wide && s.bodyWide, shortPhone && s.bodyShort]}>
         {wide && <View style={s.sidebar}>
           <Text style={s.sideCaption}>{role === 'Owner' ? 'WORKSPACE' : 'MY DAY'}</Text>
           {selectedTabs.map(tabButton)}
           <View style={s.sideBottom}><Text style={s.sideCaption}>LOCAL PREVIEW</Text><Text style={s.sideCopy}>{persistenceLabel}. Reset any time.</Text><ActionButton label="Reset sample data" secondary onPress={resetDemo}/></View>
         </View>}
-        <ScrollView ref={contentScroll} style={s.scroller} contentContainerStyle={[s.content, wide && s.contentWide]} keyboardShouldPersistTaps="handled">
+        <ScrollView testID={role === 'Worker' && tab === 'Today' ? 'worker-main-scroll' : undefined} ref={contentScroll} style={s.scroller} contentContainerStyle={[s.content, wide && s.contentWide, compactWorker && s.contentWorkerCompact, shortPhone && s.contentShort]} keyboardShouldPersistTaps="handled">
           {tab === 'Today' && role === 'Worker' && <>
             {workerScreen === 'briefing' ? <>
               <View style={s.eyebrowRow}><Text style={s.eyebrow}>WORKER START OF DAY</Text><Tag tone={workerHasAssignment ? workerDayStartedAt !== null ? 'green' : 'amber' : 'neutral'}>{workerHasAssignment ? workerDayStartedAt !== null ? 'DAY IN PROGRESS' : 'READY TO START' : 'NO ASSIGNMENT'}</Tag></View>
-              <Text style={s.h1}>{workerDayStartedAt !== null ? 'Your day is underway.' : 'Start your day.'}</Text>
-              <Text style={s.lede}>{dateLabel(date)} · {workerHasAssignment ? `${plannedAgreements.length} assigned sample stops` : 'No approved sample route is assigned for this day.'}</Text>
+              <Text style={[s.h1, compactWorker && s.h1Compact]}>{workerDayStartedAt !== null ? 'Your day is underway.' : 'Start your day.'}</Text>
+              <Text style={s.lede}>{compactWorker ? `${plannedAgreements.length} assigned sample stops · ${date}` : `${dateLabel(date)} · ${workerHasAssignment ? `${plannedAgreements.length} assigned sample stops` : 'No approved sample route is assigned for this day.'}`}</Text>
               {!workerHasAssignment ? <View style={s.emptyCard}>
                 <Text style={s.cardEyebrow}>NOTHING ASSIGNED</Text>
                 <Text style={s.cardTitle}>No sample workday is ready.</Text>
                 <Text style={s.cardBody}>This preview does not send a request to a manager. Switch to Owner view to build and approve a sample day on this device.</Text>
                 <ActionButton label="Switch to Owner view" onPress={() => { setRole('Owner'); setTab('Planner'); setNotice('Build and approve a sample plan here, then switch back to Worker view.'); scrollToTop(); }}/>
               </View> : <>
-                <View style={s.assignmentGrid}>
+                {!compactWorker && <View style={s.assignmentGrid}>
                   <View style={s.assignmentCard}><Text style={s.cardEyebrow}>SAMPLE TEAM</Text><Text style={s.assignmentTitle}>Crew Green</Text><Text style={s.cardBody}>Sample worker · you + 1 sample partner</Text></View>
                   <View style={s.assignmentCard}><Text style={s.cardEyebrow}>SAMPLE VEHICLE</Text><Text style={s.assignmentTitle}>Truck 02</Text><Text style={s.cardBody}>Sample work vehicle</Text></View>
-                </View>
-                {renderWorkerRoutePanel()}
+                </View>}
+                {shortPhone && workerHasAssignment && <View testID="worker-inline-action" style={[s.workerInlineAction, s.workerInlineActionCompact]}><Text style={s.workerActionEyebrow}>{workerDayStartedAt !== null ? 'SAMPLE DAY IN PROGRESS' : 'NEXT ACTION'}</Text><ActionButton label={workerDayStartedAt !== null ? 'Continue my day' : 'Start my day'} disabled={saving || (workerDayStartedAt === null && (!startTimeValid || !selectedLunchSlot?.feasible || !workerRoute.feasible))} onPress={startWorkerDay}/></View>}
+                {renderWorkerDaySummary()}
                 {workerDayStartedAt !== null && <View style={s.returningCard}><Text style={s.cardEyebrow}>RETURNING TO THIS SAMPLE DAY</Text><Text style={s.cardTitle}>Started at {formatDayStart(workerDayStartedAt)}</Text><Text style={s.cardBody}>{session?.status === 'running' ? 'A visit timer was running when you left. Review the current stop before continuing.' : session?.status === 'paused' ? 'Your visit timer is paused. Continue to the current stop when ready.' : 'Your sample assignment and completed stops are saved in this browser.'}</Text></View>}
               </>}
             </> : <>
-              <Pressable accessibilityRole="button" accessibilityLabel="Back to day overview" onPress={showWorkerOverview} style={s.workerBack}><Text style={s.workerBackArrow}>‹</Text><Text style={s.workerBackText}>Day overview</Text></Pressable>
-              <View style={s.eyebrowRow}><Text style={s.eyebrow}>YOUR SAMPLE WORKDAY</Text><Tag tone={approved ? 'green' : 'amber'}>{approved ? 'DAY STARTED · LOCAL' : 'REVIEW NEEDED'}</Tag></View>
-              <Text style={s.h1}>{approved ? 'Next stop.' : 'This day needs review.'}</Text>
-              <Text style={s.lede}>{approved ? `${completedCount} complete · ${deferredStops.length} deferred of ${planIds.length} assigned · sample day started ${workerDayStartedAt === null ? '' : formatDayStart(workerDayStartedAt)}` : 'The sample work queue changed. Ask the owner to review it before continuing.'}</Text>
+              <Pressable accessibilityRole="button" accessibilityLabel="Back to day overview" onPress={showWorkerOverview} style={[s.workerBack, shortPhone && s.workerBackShort]}><Text style={[s.workerBackArrow, shortPhone && s.workerBackArrowShort]}>‹</Text><Text style={[s.workerBackText, shortPhone && s.workerBackTextShort]}>Day overview</Text></Pressable>
+                {!shortPhone && <View style={s.eyebrowRow}><Text style={s.eyebrow}>YOUR SAMPLE WORKDAY</Text><Tag tone={approved ? 'green' : 'amber'}>{approved ? 'DAY STARTED · LOCAL' : 'REVIEW NEEDED'}</Tag></View>}
+              <Text style={[s.h1, compactWorker && s.h1Compact]}>{approved ? 'Next stop.' : 'This day needs review.'}</Text>
+              {!shortPhone && <Text style={s.lede}>{approved ? compactWorker ? `${completedCount} complete · Stop ${Math.max(1, nextIndex + 1)} of ${planIds.length}` : `${completedCount} complete · ${deferredStops.length} deferred of ${planIds.length} assigned · sample day started ${workerDayStartedAt === null ? '' : formatDayStart(workerDayStartedAt)}` : 'The sample work queue changed. Ask the owner to review it before continuing.'}</Text>}
               {!approved ? <View style={s.emptyCard}><Text style={s.cardTitle}>Review the sample assignment again.</Text><Text style={s.cardBody}>Undoing a completion clears the local approval. Return to the Owner view to rebuild or approve the sample day again.</Text><ActionButton label="Switch to Owner view" onPress={() => { setRole('Owner'); setTab('Planner'); setNotice('Review and approve the sample workday, then return to Worker view.'); scrollToTop(); }}/></View>
-              : session && session.status !== 'completed' && activeAgreement ? <View style={s.activeCard}>
+              : session && session.status !== 'completed' && activeAgreement ? <View testID="worker-current-task" style={[s.activeCard, compactWorker && s.nextCardCompact]}>
                 <View style={s.activeTop}><Tag>{session.status === 'running' ? 'VISIT TIMER RUNNING' : 'VISIT TIMER PAUSED'}</Tag><Text style={s.timer}>{timeText}</Text></View>
                 <Text style={s.cardEyebrow}>STOP {String(nextIndex + 1).padStart(2, '0')} OF {planIds.length} · CURRENT VISIT</Text>
                 <Text style={s.cardTitle}>{activeAgreement.service_name}</Text>
                 <Text style={s.cardBody}>{workspace.customers.find(item => item.id === activeAgreement.customer_id)?.name ?? 'Sample customer'}</Text>
                 <Text style={s.cardBody}>{activeAgreement.address}</Text>
-                {!!activeAgreement.preferences && <Text style={s.cardBody}>Sample access note: {activeAgreement.preferences}</Text>}
-                <View style={s.assignmentFact}><Text style={s.stopMeta}>Crew Green · Truck 02 · sample assignment</Text></View>
-                <Field label="Optional work note" value={noteDraft} onChangeText={updateVisitNote} placeholder="Add a note for this sample visit" maxLength={1000} multiline accessibilityHint="This note saves in the local preview as you type."/>
-                {renderLocalPhotos(session.jobId, true)}
-                {session.status === 'running' ? <View style={s.actionRow}><ActionButton label="Pause visit timer" disabled={saving} onPress={() => workerAction('pause')}/><ActionButton label="Finish visit" secondary disabled={saving} onPress={() => setCompleteOpen(true)}/></View>
-                  : <View style={s.actionRow}><ActionButton label="Resume visit timer" disabled={saving} onPress={() => workerAction('resume')}/><ActionButton label="Finish visit" secondary disabled={saving} onPress={() => setCompleteOpen(true)}/></View>}
-              </View> : nextAgreement ? <View style={s.nextCard}>
+                {!!activeAgreement.preferences && !compactWorker && <Text style={s.cardBody}>Sample access note: {activeAgreement.preferences}</Text>}
+                {!compactWorker && <View style={s.assignmentFact}><Text style={s.stopMeta}>Crew Green · Truck 02 · sample assignment</Text></View>}
+                {!compactWorker && <Text style={s.microCopy}>The timer stays on this device. Add a work note or sample photos from the controls below.</Text>}
+                <ActionButton label="Finish visit" secondary disabled={saving} onPress={() => setCompleteOpen(true)}/>
+              </View> : nextAgreement ? <View testID="worker-current-task" style={[s.nextCard, compactWorker && s.nextCardCompact]}>
                 {session?.status === 'completed' && <View style={s.assignmentFact}><Text style={s.stopMeta}>Previous stop completed · {session.note ? 'sample note saved' : 'no note'}</Text></View>}
                 <View style={s.nextHeader}><View><Text style={s.cardEyebrow}>STOP {String(nextIndex + 1).padStart(2, '0')} OF {planIds.length}</Text><Text style={s.cardTitle}>{nextAgreement.service_name}</Text></View><Tag>{`${nextAgreement.estimated_minutes} MIN`}</Tag></View>
                 <Text style={s.cardBody}>{workspace.customers.find(item => item.id === nextAgreement.customer_id)?.name ?? 'Sample customer'}</Text>
                 <Text style={s.cardBody}>{nextAgreement.address}</Text>
-                {!!nextAgreement.preferences && <Text style={s.cardBody}>Sample access note: {nextAgreement.preferences}</Text>}
+                {!!nextAgreement.preferences && !compactWorker && <Text style={s.cardBody}>Sample access note: {nextAgreement.preferences}</Text>}
                 <Text style={s.scheduleMeta}>{formatClock(nextRouteStop?.startMinute ?? nextStartMinute)} estimated service start · {nextAgreement.estimated_minutes} service min</Text>
-                <View style={s.assignmentFact}><Text style={s.stopMeta}>Crew Green · Truck 02 · sample assignment</Text></View>
-                {nextRouteLeg && nextRouteStop && <View style={s.routeLeg}><Text style={s.routeLegTitle}>{nextRouteIndex === 0
+                {!compactWorker && <View style={s.assignmentFact}><Text style={s.stopMeta}>Crew Green · Truck 02 · sample assignment</Text></View>}
+                {nextRouteLeg && nextRouteStop && !compactWorker && <View style={s.routeLeg}><Text style={s.routeLegTitle}>{nextRouteIndex === 0
                   ? routeOriginVisitId ? `Stop ${String(routeOriginStopNumber).padStart(2, '0')}` : hasRouteProgress ? 'Current position' : 'Depot'
                   : `Stop ${String(planIds.indexOf(routeStops[nextRouteIndex - 1]?.id ?? '') + 1).padStart(2, '0')}`} → Stop {String(nextIndex + 1).padStart(2, '0')}</Text><Text style={s.routeLegMeta}>{nextRouteLeg.driveMinutes} min sample drive · estimated arrival {formatClock(nextRouteStop.arrivalMinute)}</Text></View>}
                 {day?.arrivedVisitId === `${nextAgreement.id}:${date}`
-                  ? <><Text style={s.arrivalText}>Sample arrival confirmed</Text><ActionButton label="Start visit timer" disabled={saving || workerDayStartedAt === null} onPress={() => workerAction('start')}/></>
+                  ? <Text style={s.arrivalText}>Sample arrival confirmed · visit timer stopped</Text>
                   : day?.travelingVisitId === `${nextAgreement.id}:${date}`
-                    ? <><Tag tone="amber">EN ROUTE · SAMPLE</Tag><Text style={s.microCopy}>Travel state is simulated. No GPS or navigation is active.</Text><ActionButton label="Confirm sample arrival" disabled={saving} onPress={() => workerAction('arrive')}/></>
-                    : <ActionButton label="Begin sample travel" disabled={saving || workerDayStartedAt === null} onPress={() => workerAction('travel')}/>}
-                <ActionButton label="Defer this stop" secondary disabled={saving} onPress={() => openDeferModal(`${nextAgreement.id}:${date}`)}/>
-                <Text style={s.microCopy}>Travel, arrival and service timer are separate local sample actions. No live location, navigation, message, or dispatch is connected.</Text>
+                    ? <><Tag tone="amber">EN ROUTE · SAMPLE</Tag><Text style={s.microCopy}>Travel state is simulated. No GPS or navigation is active.</Text></>
+                    : !compactWorker && <Text style={s.microCopy}>Travel, arrival and service timing are separate local sample steps.</Text>}
               </View> : <View style={s.emptyCard}><Text style={s.emptyMark}>{deferredStops.length ? '↷' : '✓'}</Text><Text style={s.cardTitle}>{deferredStops.length ? 'No active stops remain.' : 'All assigned sample stops are complete.'}</Text><Text style={s.cardBody}>{deferredStops.length ? `${deferredStops.length} deferred sample stop${deferredStops.length === 1 ? ' is' : 's are'} still listed below and can be restored.` : 'Your day start is saved locally. No time or location was sent anywhere.'}</Text></View>}
+              {shortPhone && workerStopAction() && <View testID="worker-inline-action" style={[s.workerInlineAction, s.workerInlineActionCompact]}><Text style={s.workerActionEyebrow}>NEXT ACTION</Text><ActionButton label={workerStopAction()!.label} disabled={saving} onPress={() => workerAction(workerStopAction()!.action)}/></View>}
+              {approved && (workerDetailAgreement || deferredStops.length > 0) && <View style={s.workerTools}>
+                <WorkerTool label="Route & lunch" onPress={() => setWorkerSheet('route')}/>
+                {workerDetailAgreement && <WorkerTool label="Contact details" onPress={() => setWorkerSheet('contact')}/>}
+                {workerDetailVisitKey && <WorkerTool label="Visit photos" onPress={() => setWorkerSheet('photos')}/>}
+                {session && (session.status === 'running' || session.status === 'paused') && <WorkerTool label="Work note" onPress={() => setWorkerSheet('notes')}/>}
+                {nextAgreement && (!session || session.status === 'completed') && <WorkerTool label="Defer this stop" onPress={() => openDeferModal(`${nextAgreement.id}:${date}`)}/>}
+              </View>}
               {session?.status === 'completed' && <View style={s.undoCard}><Text style={s.undoTitle}>Visit marked complete</Text><Text style={s.cardBody}>Completed in the local sample day. Undo is available if that was a mistake.</Text>{renderLocalPhotos(session.jobId, false)}<ActionButton label="Undo completion" secondary disabled={saving} onPress={() => workerAction('undo')}/></View>}
               {approved && <View style={s.panelSoft}><Text style={s.panelTitle}>Remaining stops</Text>{routeAgreements.filter(agreement => !completedIds.has(`${agreement.id}:${date}`) && `${agreement.id}:${date}` !== (session && session.status !== 'completed' ? session.jobId : nextAgreement ? `${nextAgreement.id}:${date}` : null)).map(agreement => <View key={agreement.id} style={s.workerStopRow}><View style={s.stopNumber}><Text style={s.stopNumberText}>{String(planIds.indexOf(`${agreement.id}:${date}`) + 1).padStart(2, '0')}</Text></View><View style={s.stopText}><Text style={s.stopTitle}>{agreement.service_name}</Text><Text style={s.stopMeta}>{workspace.customers.find(item => item.id === agreement.customer_id)?.name ?? 'Sample customer'} · {agreement.estimated_minutes} min</Text></View></View>)}{routeAgreements.every(agreement => completedIds.has(`${agreement.id}:${date}`)) && <Text style={s.cardBody}>No uncompleted stops remain on the active route.</Text>}</View>}
-              {approved && deferredStops.length > 0 && <View style={s.panelSoft}><Text style={s.panelTitle}>Deferred stops</Text><Text style={s.cardBody}>Deferred visits stay assigned locally and are excluded from the current route. Restoring one recalculates the schedule.</Text>{deferredStops.map(stop => {
-                const agreement = plannedAgreements.find(item => `${item.id}:${date}` === stop.visitId);
-                return <View key={stop.visitId} style={s.deferredStopCard}><View style={s.deferredStopHead}><View style={s.stopText}><Text style={s.stopTitle}>Stop {String(stop.originalIndex + 1).padStart(2, '0')} · {agreement?.service_name ?? 'Sample service'}</Text><Text style={s.stopMeta}>{deferredReasonLabel(stop.reason)}{stop.note ? ` · ${stop.note}` : ''}</Text></View><Tag tone="amber">DEFERRED</Tag></View><ActionButton label="Restore this stop" secondary disabled={saving} onPress={() => restoreDeferredStop(stop.visitId)}/></View>;
-              })}</View>}
-              {approved && renderWorkerRoutePanel()}
             </>}
           </>}
 
@@ -1101,7 +1178,7 @@ export function WorkingDemo({ onExit }: { onExit?: () => void }) {
           <View style={s.footer}><Text style={s.footerText}>GREEN COLLAR · LOCAL SAMPLE WORKSPACE</Text><Text style={s.footerText}>{persistenceLabel} · reset from the menu</Text></View>
         </ScrollView>
       </View>
-      {role === 'Worker' && tab === 'Today' && workerScreen === 'briefing' && workerHasAssignment && <View style={[s.workerActionBar, wide && s.workerActionBarWide]}>
+      {!shortPhone && role === 'Worker' && tab === 'Today' && workerScreen === 'briefing' && workerHasAssignment && <View testID="worker-next-action-bar" style={[s.workerActionBar, wide && s.workerActionBarWide]}>
         <View style={s.workerActionInfo}>
           <Text style={s.workerActionEyebrow}>{workerDayStartedAt !== null ? 'SAMPLE DAY IN PROGRESS' : 'NEXT ACTION'}</Text>
           <Text style={s.workerActionSummary}>
@@ -1114,13 +1191,54 @@ export function WorkingDemo({ onExit }: { onExit?: () => void }) {
           </Text>
           <Text style={s.workerActionHint}>{workerDayStartedAt !== null ? 'Continue opens the current or next stop.' : 'Starting records the local day; the visit timer stays stopped.'}</Text>
         </View>
-        <View style={s.workerActionButton}>
+        <View style={[s.workerActionButton, compact && s.workerActionButtonCompact]}>
           <ActionButton label={workerDayStartedAt !== null ? 'Continue my day' : 'Start my day'}
             disabled={saving || (workerDayStartedAt === null && (!startTimeValid || !selectedLunchSlot?.feasible || !workerRoute.feasible))}
             onPress={startWorkerDay}/>
         </View>
       </View>}
-      {!wide && <View style={[s.bottomNav, compact && s.bottomNavCompact]}>{selectedTabs.map(tabButton)}<Pressable accessibilityRole="button" accessibilityLabel="Reset sample data" onPress={resetDemo} style={[s.resetNav, compact && s.resetNavCompact]}><Text style={s.resetNavMark}>↺</Text><Text style={s.resetNavLabel}>Reset</Text></Pressable></View>}
+      {!shortPhone && role === 'Worker' && tab === 'Today' && workerScreen === 'stop' && approved && workerStopAction() && <View testID="worker-next-action-bar" style={[s.workerActionBar, wide && s.workerActionBarWide]}>
+        <View style={s.workerActionInfo}>
+          <Text style={s.workerActionEyebrow}>{session?.status === 'running' ? 'CURRENT VISIT' : session?.status === 'paused' ? 'VISIT PAUSED' : 'NEXT ACTION'}</Text>
+          <Text style={s.workerActionSummary} numberOfLines={3}>
+            {session && session.status !== 'completed'
+              ? `${activeAgreement?.service_name ?? 'Current stop'} · ${timeText} elapsed · return ${formatClock(workerEstimatedFinish)}`
+              : `${nextRouteLeg ? `${nextRouteLeg.driveMinutes} min sample drive · ` : ''}return ${formatClock(workerEstimatedFinish)}`}
+          </Text>
+          <Text style={s.workerActionHint}>Sample action · no GPS, navigation, or message is connected.</Text>
+        </View>
+        <View style={[s.workerActionButton, compact && s.workerActionButtonCompact]}>
+          <ActionButton label={workerStopAction()!.label} disabled={saving} onPress={() => workerAction(workerStopAction()!.action)}/>
+        </View>
+      </View>}
+      {!wide && <View testID="worker-bottom-nav" style={[s.bottomNav, compact && s.bottomNavCompact, shortPhone && s.bottomNavShort]}>{selectedTabs.map(tabButton)}<Pressable accessibilityRole="button" accessibilityLabel="Reset sample data" onPress={resetDemo} style={[s.resetNav, compact && s.resetNavCompact]}><Text style={s.resetNavMark}>↺</Text><Text style={s.resetNavLabel}>Reset</Text></Pressable></View>}
+
+      <Modal visible={workerSheet !== null} transparent animationType="slide" onRequestClose={() => setWorkerSheet(null)}>
+        <KeyboardAvoidingView style={s.sheetBackdrop} behavior={Platform.OS === 'ios' ? 'padding' : undefined}>
+          <View style={[s.sheet, wide && s.sheetWide]}>
+            <View style={s.modalHeader}>
+              <View style={s.modalHeading}><Text style={s.modalEyebrow}>WORKER SAMPLE DETAILS</Text><Text style={s.modalTitle}>{workerSheet === 'route' ? 'Route, lunch & delays' : workerSheet === 'contact' ? 'Sample contact' : workerSheet === 'photos' ? 'Visit photos' : 'Work note'}</Text></View>
+              <Pressable accessibilityRole="button" accessibilityLabel="Close worker details" onPress={() => setWorkerSheet(null)} style={s.closeButton}><Text style={s.closeText}>×</Text></Pressable>
+            </View>
+            <ScrollView style={s.formScroll} contentContainerStyle={s.sheetContent} keyboardShouldPersistTaps="handled">
+              {workerSheet === 'route' && <>{renderWorkerRoutePanel()}{renderDeferredStops()}</>}
+              {workerSheet === 'contact' && workerDetailAgreement && <View style={s.panel}>
+                <Text style={s.cardTitle}>{workerDetailCustomer?.name ?? 'Sample customer'}</Text>
+                <Text style={s.cardBody}>{workerDetailAgreement.address}</Text>
+                <View style={s.contactFact}><Text style={s.fieldLabel}>Phone</Text><Text style={s.cardBody}>{workerDetailCustomer?.phone || 'No phone on this sample profile'}</Text></View>
+                <View style={s.contactFact}><Text style={s.fieldLabel}>Email</Text><Text style={s.cardBody}>{workerDetailCustomer?.email || 'No email on this sample profile'}</Text></View>
+                {!!workerDetailAgreement.preferences && <View style={s.contactFact}><Text style={s.fieldLabel}>Access note</Text><Text style={s.cardBody}>{workerDetailAgreement.preferences}</Text></View>}
+                <Text style={s.photoDisclosure}>Fictional sample details only. This screen does not place calls or send messages.</Text>
+              </View>}
+              {workerSheet === 'notes' && session && (session.status === 'running' || session.status === 'paused') && <View style={s.panel}>
+                <Text style={s.cardBody}>A local note for {activeAgreement?.service_name ?? 'this sample visit'}. It stays in this browser and is not sent to the customer.</Text>
+                <Field label="Optional work note" value={noteDraft} onChangeText={updateVisitNote} placeholder="Add a note for this sample visit" maxLength={1000} multiline accessibilityHint="This note saves in the local preview as you type."/>
+              </View>}
+              {workerSheet === 'photos' && workerDetailVisitKey && renderLocalPhotos(workerDetailVisitKey, true)}
+            </ScrollView>
+          </View>
+        </KeyboardAvoidingView>
+      </Modal>
 
       <Modal visible={!!form} transparent animationType="slide" onRequestClose={backForm}>
         <KeyboardAvoidingView style={s.modalBackdrop} behavior={Platform.OS === 'ios' ? 'padding' : undefined}>
@@ -1168,16 +1286,19 @@ export function WorkingDemo({ onExit }: { onExit?: () => void }) {
         <View style={s.confirmBackdrop}><View style={s.confirmCard}><Text style={s.modalEyebrow}>COMPLETE SAMPLE VISIT</Text><Text style={s.modalTitle}>Finish this visit?</Text><Text style={s.cardBody}>This marks the local sample visit complete. You can undo it from Today. No invoice or customer message is created.</Text><View style={s.actionRow}><ActionButton label="Go back" secondary onPress={() => setCompleteOpen(false)}/><ActionButton label="Finish visit" disabled={saving} onPress={() => workerAction('complete')}/></View></View></View>
       </Modal>
       <Modal visible={deferOpen} transparent animationType="fade" onRequestClose={closeDeferModal}>
-        <View style={s.confirmBackdrop}><View style={s.confirmCard}>
-          <Text style={s.modalEyebrow}>LOCAL SAMPLE CHANGE</Text>
-          <Text style={s.modalTitle}>Defer this stop?</Text>
-          <Text style={s.cardBody}>The stop leaves today’s active route but stays assigned here. Inter-stop drive time, lunch placement, and estimated depot return will recalculate. This does not mark the visit complete or skipped, create an invoice, or contact the customer.</Text>
-          <Text style={s.fieldLabel}>Why are you deferring it?</Text>
-          <View style={s.deferReasonList}>{LOCAL_DEMO_DEFER_REASONS.map(item => <Pressable key={item.value} accessibilityRole="radio" accessibilityState={{ selected: deferReason === item.value }} onPress={() => { setDeferReason(item.value); setDeferError(''); }} style={[s.deferReason, deferReason === item.value && s.deferReasonSelected]}><Text style={[s.deferReasonText, deferReason === item.value && s.deferReasonTextSelected]}>{item.label}</Text></Pressable>)}</View>
-          <View style={s.fieldWrap}><Text style={s.fieldLabel}>{deferReason === 'other' ? 'Short note (required)' : 'Optional note'}</Text><TextInput accessibilityLabel={deferReason === 'other' ? 'Deferral note, required' : 'Optional deferral note'} value={deferNote} onChangeText={value => { setDeferNote(value); setDeferError(''); }} placeholder={deferReason === 'other' ? 'Add a short reason' : 'Add context for this local sample'} maxLength={500} multiline style={[s.input, s.multilineInput]}/></View>
-          {!!deferError && <Text style={s.errorText} accessibilityLiveRegion="polite">{deferError}</Text>}
-          <View style={s.actionRow}><ActionButton label="Cancel" secondary onPress={closeDeferModal}/><ActionButton label="Defer stop" disabled={saving} onPress={confirmDeferStop}/></View>
-        </View></View>
+        <KeyboardAvoidingView style={s.sheetBackdrop} behavior={Platform.OS === 'ios' ? 'padding' : undefined}>
+          <View style={[s.sheet, s.deferSheet, wide && s.sheetWide]}>
+            <View style={s.modalHeader}><View style={s.modalHeading}><Text style={s.modalEyebrow}>LOCAL SAMPLE CHANGE</Text><Text style={s.modalTitle}>Defer this stop?</Text></View><Pressable accessibilityRole="button" accessibilityLabel="Close deferral" onPress={closeDeferModal} style={s.closeButton}><Text style={s.closeText}>×</Text></Pressable></View>
+            <ScrollView style={s.formScroll} contentContainerStyle={s.deferContent} keyboardShouldPersistTaps="handled">
+              <Text style={s.cardBody}>The stop leaves today’s active route but stays assigned here. Drive time, lunch placement, and estimated depot return recalculate. This does not complete or skip the visit, create an invoice, or contact the customer.</Text>
+              <Text style={s.fieldLabel}>Why are you deferring it?</Text>
+              <View style={s.deferReasonList}>{LOCAL_DEMO_DEFER_REASONS.map(item => <Pressable key={item.value} accessibilityRole="radio" accessibilityState={{ selected: deferReason === item.value }} onPress={() => { setDeferReason(item.value); setDeferError(''); }} style={[s.deferReason, deferReason === item.value && s.deferReasonSelected]}><Text style={[s.deferReasonText, deferReason === item.value && s.deferReasonTextSelected]}>{item.label}</Text></Pressable>)}</View>
+              <View style={s.fieldWrap}><Text style={s.fieldLabel}>{deferReason === 'other' ? 'Short note (required)' : 'Optional note'}</Text><TextInput accessibilityLabel={deferReason === 'other' ? 'Deferral note, required' : 'Optional deferral note'} value={deferNote} onChangeText={value => { setDeferNote(value); setDeferError(''); }} placeholder={deferReason === 'other' ? 'Add a short reason' : 'Add context for this local sample'} maxLength={500} multiline style={[s.input, s.multilineInput]}/></View>
+              {!!deferError && <Text style={s.errorText} accessibilityLiveRegion="polite">{deferError}</Text>}
+            </ScrollView>
+            <View style={s.modalActions}><View style={s.actionRow}><ActionButton label="Cancel" secondary onPress={closeDeferModal}/><ActionButton label="Defer stop" disabled={saving} onPress={confirmDeferStop}/></View></View>
+          </View>
+        </KeyboardAvoidingView>
       </Modal>
     </View>
   </SafeAreaView>;
@@ -1199,23 +1320,23 @@ export function DemoEntryOnly() {
 
 const s = StyleSheet.create({
   safe: { flex: 1, backgroundColor: palette.canvas }, app: { flex: 1, width: '100%', maxWidth: 1440, alignSelf: 'center', backgroundColor: palette.canvas },
-  header: { minHeight: 76, paddingHorizontal: 24, paddingVertical: 14, flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', borderBottomWidth: 1, borderBottomColor: palette.line, backgroundColor: palette.paper, flexWrap: 'wrap', gap: 10 },
+  header: { minHeight: 76, paddingHorizontal: 24, paddingVertical: 14, flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', borderBottomWidth: 1, borderBottomColor: palette.line, backgroundColor: palette.paper, flexWrap: 'wrap', gap: 10 }, headerShort: { minHeight: 52, paddingHorizontal: 12, paddingVertical: 7, flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', borderBottomWidth: 1, borderBottomColor: palette.line, backgroundColor: palette.paper, flexWrap: 'wrap', gap: 7 },
   headerWide: { paddingHorizontal: 44, minHeight: 88 }, headerCompact: { paddingHorizontal: 16, paddingVertical: 12 },
-  brandRow: { flexDirection: 'row', alignItems: 'center', gap: 10 }, brandMark: { width: 38, height: 38, borderRadius: 12, alignItems: 'center', justifyContent: 'center', backgroundColor: palette.forest }, brandMarkText: { color: palette.lime, fontSize: 22, fontWeight: '900' },
+  brandRow: { flexDirection: 'row', alignItems: 'center', gap: 10 }, brandMark: { width: 38, height: 38, borderRadius: 12, alignItems: 'center', justifyContent: 'center', backgroundColor: palette.forest }, brandMarkShort: { width: 30, height: 30, borderRadius: 9 }, brandMarkText: { color: palette.lime, fontSize: 22, fontWeight: '900' },
   brand: { color: palette.ink, fontSize: 18, fontWeight: '900', letterSpacing: -0.6 }, brandSub: { color: palette.quiet, fontSize: 9, fontWeight: '800', letterSpacing: 1.5, marginTop: 2 },
   headerRight: { flexDirection: 'row', alignItems: 'center', gap: 12, flexWrap: 'wrap' }, headerRightCompact: { width: '100%', justifyContent: 'space-between' },
-  previewLabel: { flexDirection: 'row', alignItems: 'center', gap: 6, paddingHorizontal: 9, paddingVertical: 7, borderRadius: 20, backgroundColor: palette.amberBg }, previewDot: { width: 6, height: 6, borderRadius: 3, backgroundColor: palette.amber }, previewLabelText: { color: palette.amber, fontSize: 8, fontWeight: '900', letterSpacing: 0.7 },
+  previewLabel: { maxWidth: '100%', flexShrink: 1, flexDirection: 'row', alignItems: 'center', flexWrap: 'wrap', gap: 6, paddingHorizontal: 9, paddingVertical: 7, borderRadius: 20, backgroundColor: palette.amberBg }, previewDot: { width: 6, height: 6, borderRadius: 3, backgroundColor: palette.amber }, previewLabelText: { maxWidth: '100%', flexShrink: 1, flexWrap: 'wrap', color: palette.amber, fontSize: 8, fontWeight: '900', letterSpacing: 0.7 },
   roleSwitch: { flexDirection: 'row', padding: 3, borderRadius: 12, backgroundColor: palette.soft }, roleChoice: { minHeight: 34, justifyContent: 'center', paddingHorizontal: 12, borderRadius: 9 }, roleChoiceSelected: { backgroundColor: palette.forest }, roleChoiceText: { color: palette.quiet, fontSize: 12, fontWeight: '700' }, roleChoiceTextSelected: { color: palette.paper },
   exit: { minHeight: 38, justifyContent: 'center', paddingHorizontal: 12, borderWidth: 1, borderColor: palette.line, borderRadius: 10 }, exitText: { color: palette.quiet, fontSize: 12, fontWeight: '700' },
-  notice: { marginHorizontal: 20, marginTop: 16, padding: 12, flexDirection: 'row', alignItems: 'center', gap: 9, borderRadius: 12, backgroundColor: palette.mint }, noticeWide: { marginHorizontal: 44, paddingHorizontal: 16 }, noticeTitle: { color: palette.forest, fontSize: 11, fontWeight: '900' }, noticeCopy: { flex: 1, color: palette.quiet, fontSize: 11, lineHeight: 16 },
-  message: { marginHorizontal: 20, marginTop: 10, padding: 11, borderRadius: 10 }, messageInfo: { backgroundColor: '#E6F1E8' }, messageText: { color: palette.forest, fontSize: 12, lineHeight: 18, fontWeight: '600' },
-  body: { flex: 1, flexDirection: 'row', minHeight: 0 }, bodyWide: { paddingHorizontal: 28, paddingTop: 24, gap: 22 }, sidebar: { width: 214, paddingTop: 8, paddingBottom: 18, paddingHorizontal: 8, borderRightWidth: 1, borderRightColor: palette.line }, sideCaption: { color: palette.quiet, fontSize: 9, fontWeight: '900', letterSpacing: 1.3, marginHorizontal: 10, marginTop: 10, marginBottom: 12 }, sideBottom: { marginTop: 'auto', paddingHorizontal: 8, gap: 8 }, sideCopy: { color: palette.quiet, fontSize: 11, lineHeight: 16, marginHorizontal: 10 },
-  scroller: { flex: 1 }, content: { width: '100%', maxWidth: 760, alignSelf: 'center', paddingHorizontal: 20, paddingTop: 24, paddingBottom: 32, gap: 14 }, contentWide: { paddingHorizontal: 12, paddingTop: 2, paddingBottom: 44 },
-  eyebrowRow: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', gap: 10 }, eyebrow: { color: palette.pine, fontSize: 10, fontWeight: '900', letterSpacing: 1.5 }, h1: { color: palette.ink, fontSize: 30, lineHeight: 36, fontWeight: '800', letterSpacing: -1.1 }, lede: { color: palette.quiet, fontSize: 14, lineHeight: 21, marginTop: -7 },
-  tag: { alignSelf: 'flex-start', paddingHorizontal: 9, paddingVertical: 5, borderRadius: 20, backgroundColor: palette.mint }, tagText: { color: palette.forest, fontSize: 9, fontWeight: '900', letterSpacing: 0.6 }, tagAmber: { backgroundColor: palette.amberBg }, tagAmberText: { color: palette.amber }, tagNeutral: { backgroundColor: palette.soft }, tagNeutralText: { color: palette.quiet },
+  notice: { marginHorizontal: 20, marginTop: 16, padding: 12, flexDirection: 'row', alignItems: 'center', gap: 9, borderRadius: 12, backgroundColor: palette.mint }, noticeCompact: { flexDirection: 'column', alignItems: 'flex-start', gap: 4 }, noticeWide: { marginHorizontal: 44, paddingHorizontal: 16 }, noticeShort: { minHeight: 25, marginHorizontal: 12, marginTop: 5, paddingHorizontal: 7, justifyContent: 'center', borderRadius: 8, backgroundColor: palette.amberBg }, noticeShortText: { color: palette.amber, fontSize: 8, lineHeight: 12, fontWeight: '900', letterSpacing: 0.3, textAlign: 'center' }, noticeTitle: { color: palette.forest, fontSize: 11, fontWeight: '900' }, noticeCopy: { flex: 1, color: palette.quiet, fontSize: 11, lineHeight: 16 }, noticeCopyCompact: { flex: 0, alignSelf: 'stretch' },
+  message: { marginHorizontal: 20, marginTop: 10, padding: 11, borderRadius: 10 }, messageShort: { marginHorizontal: 12, marginTop: 4, paddingVertical: 5, paddingHorizontal: 8 }, messageInfo: { backgroundColor: '#E6F1E8' }, messageText: { color: palette.forest, fontSize: 12, lineHeight: 18, fontWeight: '600' },
+  body: { flex: 1, flexDirection: 'row', minHeight: 0 }, bodyWide: { paddingHorizontal: 28, paddingTop: 24, gap: 22 }, bodyShort: { minHeight: 0 }, sidebar: { width: 214, paddingTop: 8, paddingBottom: 18, paddingHorizontal: 8, borderRightWidth: 1, borderRightColor: palette.line }, sideCaption: { color: palette.quiet, fontSize: 9, fontWeight: '900', letterSpacing: 1.3, marginHorizontal: 10, marginTop: 10, marginBottom: 12 }, sideBottom: { marginTop: 'auto', paddingHorizontal: 8, gap: 8 }, sideCopy: { color: palette.quiet, fontSize: 11, lineHeight: 16, marginHorizontal: 10 },
+  scroller: { flex: 1, minHeight: 0 }, content: { width: '100%', maxWidth: 760, alignSelf: 'center', paddingHorizontal: 20, paddingTop: 24, paddingBottom: 32, gap: 14 }, contentWide: { paddingHorizontal: 12, paddingTop: 2, paddingBottom: 44 }, contentWorkerCompact: { paddingHorizontal: 16, paddingTop: 12, paddingBottom: 18, gap: 10 }, contentShort: { paddingHorizontal: 12, paddingTop: 8, paddingBottom: 12, gap: 8 },
+  eyebrowRow: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', gap: 10 }, eyebrow: { color: palette.pine, fontSize: 10, fontWeight: '900', letterSpacing: 1.5 }, h1: { color: palette.ink, fontSize: 30, lineHeight: 36, fontWeight: '800', letterSpacing: -1.1 }, h1Compact: { fontSize: 24, lineHeight: 29, letterSpacing: -0.5 }, lede: { color: palette.quiet, fontSize: 14, lineHeight: 21, marginTop: -7 },
+  tag: { maxWidth: '48%', flexShrink: 1, alignSelf: 'flex-start', paddingHorizontal: 9, paddingVertical: 5, borderRadius: 20, backgroundColor: palette.mint }, tagText: { flexShrink: 1, flexWrap: 'wrap', textAlign: 'center', color: palette.forest, fontSize: 9, fontWeight: '900', letterSpacing: 0.6 }, tagAmber: { backgroundColor: palette.amberBg }, tagAmberText: { color: palette.amber }, tagNeutral: { backgroundColor: palette.soft }, tagNeutralText: { color: palette.quiet },
   statsRow: { flexDirection: 'row', gap: 9, marginVertical: 2 }, stat: { flex: 1, minHeight: 78, padding: 12, justifyContent: 'center', gap: 5, borderRadius: 14, backgroundColor: palette.paper, borderWidth: 1, borderColor: palette.line }, statValue: { color: palette.ink, fontSize: 20, fontWeight: '800', letterSpacing: -0.4 }, statLabel: { color: palette.quiet, fontSize: 8, fontWeight: '900', letterSpacing: 0.9 },
   activeCard: { padding: 18, gap: 9, borderRadius: 18, backgroundColor: '#E8F1E5', borderWidth: 1, borderColor: '#CFE0CE' }, activeTop: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center' }, timer: { color: palette.forest, fontSize: 22, fontWeight: '800', fontVariant: ['tabular-nums'] }, cardEyebrow: { color: palette.pine, fontSize: 9, fontWeight: '900', letterSpacing: 1.2 }, cardTitle: { color: palette.ink, fontSize: 18, fontWeight: '800', lineHeight: 24 }, cardBody: { color: palette.quiet, fontSize: 13, lineHeight: 19 },
-  nextCard: { padding: 18, gap: 9, borderRadius: 18, backgroundColor: palette.paper, borderWidth: 1, borderColor: palette.line, borderTopWidth: 4, borderTopColor: palette.pine }, nextHeader: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'flex-start', gap: 12 }, arrivalText: { color: palette.forest, fontWeight: '800', fontSize: 12 }, microCopy: { color: palette.quiet, fontSize: 11, lineHeight: 16 },
+  nextCard: { padding: 18, gap: 9, borderRadius: 18, backgroundColor: palette.paper, borderWidth: 1, borderColor: palette.line, borderTopWidth: 4, borderTopColor: palette.pine }, nextCardCompact: { padding: 12, gap: 6 }, nextHeader: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'flex-start', gap: 12 }, arrivalText: { color: palette.forest, fontWeight: '800', fontSize: 12 }, microCopy: { color: palette.quiet, fontSize: 11, lineHeight: 16 },
   photoPanel: { padding: 12, gap: 9, borderRadius: 12, borderWidth: 1, borderColor: palette.line, backgroundColor: '#FFFFFF' }, photoPanelHead: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', gap: 8 }, photoRow: { flexDirection: 'row', flexWrap: 'wrap', gap: 8 }, photoCard: { width: 112, padding: 6, gap: 4, borderRadius: 9, backgroundColor: palette.soft }, photoThumb: { width: 100, height: 76, borderRadius: 6, backgroundColor: '#E3E8E2' }, photoName: { color: palette.ink, fontSize: 9, lineHeight: 12 }, photoRemove: { minHeight: 32, justifyContent: 'center', paddingHorizontal: 4 }, photoRemoveText: { color: palette.red, fontSize: 10, fontWeight: '800' }, photoDisclosure: { color: palette.quiet, fontSize: 10, lineHeight: 14 },
   action: { minHeight: 50, paddingHorizontal: 18, paddingVertical: 13, alignItems: 'center', justifyContent: 'center', backgroundColor: palette.forest, borderRadius: 12, flex: 1 }, actionText: { color: palette.paper, fontSize: 14, fontWeight: '800', textAlign: 'center' }, secondaryAction: { backgroundColor: palette.paper, borderWidth: 1, borderColor: palette.line }, secondaryActionText: { color: palette.forest }, disabledAction: { opacity: 0.45 }, pressed: { opacity: 0.8, transform: [{ scale: 0.99 }] }, actionRow: { flexDirection: 'row', gap: 9 },
   emptyCard: { padding: 20, gap: 9, borderRadius: 18, backgroundColor: palette.paper, borderWidth: 1, borderColor: palette.line }, emptyMark: { color: palette.pine, fontSize: 26, fontWeight: '900' }, emptyCopy: { color: palette.quiet, fontSize: 13, paddingVertical: 8 }, undoCard: { padding: 16, gap: 8, borderRadius: 14, backgroundColor: '#F4F0E8', borderWidth: 1, borderColor: '#E4D8BE' }, undoTitle: { color: palette.ink, fontSize: 14, fontWeight: '800' },
@@ -1223,13 +1344,15 @@ const s = StyleSheet.create({
   panel: { padding: 17, gap: 13, borderRadius: 17, backgroundColor: palette.paper, borderWidth: 1, borderColor: palette.line }, panelSoft: { padding: 16, gap: 9, borderRadius: 16, backgroundColor: palette.mint }, panelTitle: { color: palette.ink, fontSize: 16, fontWeight: '800' }, planHeader: { flexDirection: 'row', alignItems: 'flex-start', justifyContent: 'space-between', gap: 12, flexWrap: 'wrap' }, metrics: { flexDirection: 'row', justifyContent: 'space-between', gap: 8, paddingVertical: 10, borderTopWidth: 1, borderBottomWidth: 1, borderColor: palette.line }, metricText: { color: palette.quiet, fontSize: 11, fontWeight: '700' }, planStop: { flexDirection: 'row', alignItems: 'center', gap: 10, paddingVertical: 10, borderBottomWidth: 1, borderBottomColor: palette.line }, planIndex: { color: palette.pine, fontSize: 10, fontWeight: '900', width: 26 }, servicePrice: { color: palette.ink, fontSize: 12, fontWeight: '800' }, warning: { padding: 12, gap: 3, borderRadius: 12, backgroundColor: palette.amberBg }, warningTitle: { color: palette.amber, fontSize: 12, fontWeight: '900' }, warningCopy: { color: palette.quiet, fontSize: 11, lineHeight: 16 }, approvedCopy: { color: palette.forest, fontSize: 12, fontWeight: '700' }, errorText: { color: palette.red, fontSize: 12, lineHeight: 18, fontWeight: '700' }, errorBox: { padding: 10, borderRadius: 10, backgroundColor: palette.redBg },
   fieldWrap: { flex: 1, gap: 6 }, fieldLabel: { color: palette.ink, fontSize: 12, fontWeight: '700' }, input: { minHeight: 48, paddingHorizontal: 12, paddingVertical: 11, borderWidth: 1, borderColor: palette.line, borderRadius: 10, backgroundColor: '#FCFDFB', color: palette.ink, fontSize: 14 }, multilineInput: { minHeight: 78, textAlignVertical: 'top' }, fieldRow: { flexDirection: 'row', gap: 10 }, fieldFlex: { flex: 1 }, dateControls: { gap: 8 },
   customerCard: { padding: 16, gap: 10, borderRadius: 16, backgroundColor: palette.paper, borderWidth: 1, borderColor: palette.line }, customerTop: { flexDirection: 'row', alignItems: 'center', gap: 10 }, avatar: { width: 42, height: 42, borderRadius: 14, backgroundColor: palette.mint, alignItems: 'center', justifyContent: 'center' }, avatarText: { color: palette.forest, fontSize: 12, fontWeight: '900' }, customerInfo: { flex: 1, gap: 3 }, customerName: { color: palette.ink, fontSize: 15, fontWeight: '800' }, customerAddress: { color: palette.quiet, fontSize: 11, lineHeight: 16 }, customerContact: { color: palette.quiet, fontSize: 11, lineHeight: 16 }, customerServices: { borderTopWidth: 1, borderTopColor: palette.line, paddingTop: 8, gap: 6 }, serviceLine: { flexDirection: 'row', justifyContent: 'space-between', gap: 8 }, serviceName: { color: palette.ink, fontSize: 11, fontWeight: '700', flex: 1 },
-  assignmentGrid: { flexDirection: 'row', flexWrap: 'wrap', gap: 9 }, assignmentCard: { flex: 1, minWidth: 140, minHeight: 94, justifyContent: 'center', padding: 14, gap: 5, borderRadius: 15, backgroundColor: palette.paper, borderWidth: 1, borderColor: palette.line }, assignmentTitle: { color: palette.ink, fontSize: 16, fontWeight: '800' }, assignmentFact: { paddingVertical: 8, paddingHorizontal: 10, borderRadius: 10, backgroundColor: palette.soft }, workerStopRow: { flexDirection: 'row', alignItems: 'flex-start', gap: 10, paddingVertical: 12, borderBottomWidth: 1, borderBottomColor: palette.line }, workerBack: { flexDirection: 'row', alignItems: 'center', alignSelf: 'flex-start', minHeight: 42, gap: 5, paddingRight: 10 }, workerBackArrow: { color: palette.forest, fontSize: 28, lineHeight: 32, fontWeight: '700' }, workerBackText: { color: palette.forest, fontSize: 12, fontWeight: '800' }, returningCard: { padding: 16, gap: 7, borderRadius: 15, backgroundColor: palette.amberBg, borderWidth: 1, borderColor: '#E9D9B8' },
+  assignmentGrid: { flexDirection: 'row', flexWrap: 'wrap', gap: 9 }, assignmentCard: { flex: 1, minWidth: 140, minHeight: 94, justifyContent: 'center', padding: 14, gap: 5, borderRadius: 15, backgroundColor: palette.paper, borderWidth: 1, borderColor: palette.line }, assignmentTitle: { color: palette.ink, fontSize: 16, fontWeight: '800' }, assignmentFact: { paddingVertical: 8, paddingHorizontal: 10, borderRadius: 10, backgroundColor: palette.soft }, workerStopRow: { flexDirection: 'row', alignItems: 'flex-start', gap: 10, paddingVertical: 12, borderBottomWidth: 1, borderBottomColor: palette.line }, workerBack: { flexDirection: 'row', alignItems: 'center', alignSelf: 'flex-start', minHeight: 42, gap: 5, paddingRight: 10 }, workerBackShort: { minHeight: 30, gap: 3 }, workerBackArrow: { color: palette.forest, fontSize: 28, lineHeight: 32, fontWeight: '700' }, workerBackArrowShort: { fontSize: 22, lineHeight: 26 }, workerBackText: { color: palette.forest, fontSize: 12, fontWeight: '800' }, workerBackTextShort: { fontSize: 11 }, returningCard: { padding: 16, gap: 7, borderRadius: 15, backgroundColor: palette.amberBg, borderWidth: 1, borderColor: '#E9D9B8' },
+  workerDaySummary: { padding: 15, gap: 11, borderRadius: 16, backgroundColor: palette.paper, borderWidth: 1, borderColor: palette.line }, workerSummaryMetrics: { flexDirection: 'row', gap: 8 }, workerSummaryMetric: { flex: 1, minWidth: 0, padding: 11, gap: 3, borderRadius: 11, backgroundColor: palette.soft }, workerSummaryValue: { color: palette.forest, fontSize: 16, fontWeight: '900' }, workerSummaryLabel: { color: palette.quiet, fontSize: 8, letterSpacing: 0.8, fontWeight: '800' }, workerInlineAction: { padding: 12, gap: 8, borderRadius: 12, backgroundColor: palette.paper, borderWidth: 1, borderColor: palette.line }, workerInlineActionCompact: { padding: 8, gap: 4 }, workerTools: { flexDirection: 'row', flexWrap: 'wrap', gap: 8 }, workerTool: { width: '48%', minHeight: 46, paddingHorizontal: 10, paddingVertical: 8, alignItems: 'center', justifyContent: 'center', borderRadius: 11, borderWidth: 1, borderColor: palette.line, backgroundColor: palette.paper }, workerToolText: { color: palette.forest, fontSize: 12, lineHeight: 16, fontWeight: '800', textAlign: 'center' }, contactFact: { paddingTop: 10, borderTopWidth: 1, borderColor: palette.line, gap: 4 },
   routePanel: { padding: 16, gap: 13, borderRadius: 17, backgroundColor: palette.paper, borderWidth: 1, borderColor: palette.line }, mapCanvas: { minHeight: 150, position: 'relative', overflow: 'hidden', justifyContent: 'center', padding: 12, gap: 4, borderRadius: 14, borderWidth: 1, borderColor: '#D4E1D5', backgroundColor: '#EAF1EA' }, mapStreetHorizontal: { position: 'absolute', left: 0, right: 0, top: '51%', height: 7, backgroundColor: '#DCE7DD' }, mapStreetVertical: { position: 'absolute', top: 0, bottom: 0, left: '49%', width: 7, backgroundColor: '#DCE7DD' }, mapStreetDiagonal: { position: 'absolute', top: '32%', left: '18%', width: '74%', height: 5, backgroundColor: '#DCE7DD', transform: [{ rotate: '-17deg' }] }, mapNodeRow: { minHeight: 39, zIndex: 1, flexDirection: 'row', alignItems: 'center', gap: 8 }, mapNodeRowReverse: { flexDirection: 'row-reverse' }, mapPin: { width: 32, height: 32, borderRadius: 16, alignItems: 'center', justifyContent: 'center', borderWidth: 2, borderColor: '#FFFFFF', backgroundColor: palette.pine }, mapPinDepot: { backgroundColor: palette.forest }, mapPinText: { color: '#FFFFFF', fontSize: 9, fontWeight: '900' }, mapNodeText: { maxWidth: '78%', paddingVertical: 5, paddingHorizontal: 8, borderRadius: 8, backgroundColor: 'rgba(255,255,255,0.92)' }, mapNodeTitle: { color: palette.ink, fontSize: 10, fontWeight: '800' }, mapNodeDetail: { color: palette.quiet, fontSize: 9 }, mapDisclosure: { color: palette.quiet, fontSize: 10, lineHeight: 15 }, routeMetrics: { flexDirection: 'row', flexWrap: 'wrap', gap: 8 }, routeMetric: { flex: 1, minWidth: 86, padding: 10, gap: 3, borderRadius: 11, backgroundColor: palette.soft }, routeMetricValue: { color: palette.forest, fontSize: 15, fontWeight: '900' }, routeMetricLabel: { color: palette.quiet, fontSize: 8, letterSpacing: 0.8, fontWeight: '800' }, routeSchedule: { gap: 6 }, routeLeg: { paddingVertical: 7, paddingHorizontal: 10, gap: 2, borderRadius: 9, backgroundColor: '#F2F5F0' }, routeLegTitle: { color: palette.forest, fontSize: 10, fontWeight: '900' }, routeLegMeta: { color: palette.quiet, fontSize: 10, lineHeight: 15 }, routeStopCard: { padding: 11, gap: 5, borderRadius: 12, borderWidth: 1, borderColor: palette.line, backgroundColor: '#FFFFFF' }, routeStopHead: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', gap: 8 }, routeStopTitle: { flex: 1, color: palette.ink, fontSize: 12, lineHeight: 17, fontWeight: '800' }, routeStopMeta: { color: palette.quiet, fontSize: 10, lineHeight: 15 }, routeStopTime: { color: palette.forest, fontSize: 10, lineHeight: 15, fontWeight: '800' }, routeEvent: { padding: 10, gap: 3, borderRadius: 10, borderWidth: 1, borderColor: '#E9D9B8', backgroundColor: palette.amberBg }, lunchEvent: { padding: 10, gap: 3, borderRadius: 10, borderWidth: 1, borderColor: '#C8DCA8', backgroundColor: '#F2F8E8' }, routeEventTitle: { color: palette.ink, fontSize: 10, fontWeight: '900' }, routeEventMeta: { color: palette.quiet, fontSize: 10 }, lunchControls: { gap: 9, padding: 13, borderRadius: 13, backgroundColor: '#F7F9F5', borderWidth: 1, borderColor: palette.line }, choiceRow: { flexDirection: 'row', flexWrap: 'wrap', gap: 7 }, choiceChip: { minHeight: 44, paddingHorizontal: 13, justifyContent: 'center', borderRadius: 11, borderWidth: 1, borderColor: palette.line, backgroundColor: palette.paper }, choiceChipSelected: { backgroundColor: palette.mint, borderColor: palette.pine }, choiceChipText: { color: palette.quiet, fontSize: 12, fontWeight: '700' }, choiceChipTextSelected: { color: palette.forest, fontWeight: '900' }, lunchSlotList: { gap: 7 }, lunchSlot: { minHeight: 52, padding: 10, gap: 3, borderRadius: 10, borderWidth: 1, borderColor: palette.line, backgroundColor: palette.paper }, lunchSlotSelected: { borderColor: palette.pine, backgroundColor: palette.mint }, lunchSlotUnavailable: { borderColor: '#E8C7C2', backgroundColor: '#FFF8F6' }, lunchSlotTitle: { color: palette.ink, fontSize: 11, fontWeight: '900' }, lunchSlotMeta: { color: palette.forest, fontSize: 10, fontWeight: '700' }, lunchSlotReason: { color: palette.red, fontSize: 10, lineHeight: 15 },
   scheduleCard: { flexDirection: 'row', gap: 12, minHeight: 110 }, scheduleRail: { width: 18, alignItems: 'center' }, scheduleDot: { width: 12, height: 12, borderRadius: 6, marginTop: 8, backgroundColor: '#B8C9B8', borderWidth: 2, borderColor: palette.canvas }, scheduleDotDone: { backgroundColor: palette.pine }, scheduleDotActive: { backgroundColor: '#E5AA43' }, scheduleLine: { width: 2, flex: 1, backgroundColor: palette.line, marginVertical: 4 }, scheduleBody: { flex: 1, padding: 14, gap: 6, borderRadius: 15, backgroundColor: palette.paper, borderWidth: 1, borderColor: palette.line }, scheduleTop: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center' }, scheduleIndex: { color: palette.quiet, fontSize: 9, fontWeight: '900', letterSpacing: 1 }, scheduleMeta: { color: palette.forest, fontSize: 11, fontWeight: '700' },
   invoiceRow: { flexDirection: 'row', alignItems: 'center', gap: 12, paddingVertical: 13, borderBottomWidth: 1, borderBottomColor: palette.line }, emptyInline: { paddingVertical: 20, gap: 6 }, footer: { paddingTop: 16, gap: 4, alignItems: 'center' }, footerText: { color: '#7D8980', fontSize: 8, letterSpacing: 1.1, fontWeight: '800' },
-  workerActionBar: { width: '100%', maxWidth: 800, alignSelf: 'center', minHeight: 80, flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', gap: 12, paddingHorizontal: 16, paddingVertical: 8, borderTopWidth: 1, borderTopColor: palette.line, backgroundColor: palette.paper }, workerActionBarWide: { paddingHorizontal: 24 }, workerActionInfo: { flex: 1, minWidth: 0, gap: 2 }, workerActionEyebrow: { color: palette.pine, fontSize: 8, fontWeight: '900', letterSpacing: 1 }, workerActionSummary: { color: palette.ink, fontSize: 11, lineHeight: 15, fontWeight: '800' }, workerActionHint: { color: palette.quiet, fontSize: 9, lineHeight: 13 }, workerActionButton: { width: 156, flexShrink: 0 },
-  bottomNav: { minHeight: 65, flexDirection: 'row', alignItems: 'stretch', paddingHorizontal: 7, paddingTop: 6, paddingBottom: Platform.OS === 'ios' ? 12 : 6, backgroundColor: palette.paper, borderTopWidth: 1, borderTopColor: palette.line }, bottomNavCompact: { paddingHorizontal: 4 }, navItem: { minHeight: 48, minWidth: 52, flex: 1, alignItems: 'center', justifyContent: 'center', paddingHorizontal: 4, borderRadius: 11, gap: 2 }, sideNavItem: { width: '100%', flex: 0, minWidth: 0, flexDirection: 'row', alignItems: 'center', justifyContent: 'flex-start', paddingHorizontal: 12, gap: 12 }, navItemSelected: { backgroundColor: palette.mint }, navPressed: { opacity: 0.7 }, navMark: { color: '#839087', fontSize: 8, fontWeight: '900', letterSpacing: 0.7 }, navMarkSelected: { color: palette.forest }, navLabel: { color: palette.quiet, fontSize: 10, fontWeight: '700' }, navLabelSelected: { color: palette.forest, fontWeight: '900' }, resetNav: { minWidth: 48, minHeight: 48, alignItems: 'center', justifyContent: 'center', borderRadius: 11, gap: 1 }, resetNavCompact: { minWidth: 40 }, resetNavMark: { color: palette.quiet, fontSize: 17, lineHeight: 20 }, resetNavLabel: { color: palette.quiet, fontSize: 9, fontWeight: '700' },
+  workerActionBar: { width: '100%', maxWidth: 800, alignSelf: 'center', minHeight: 80, flexShrink: 0, flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', gap: 12, paddingHorizontal: 16, paddingVertical: 8, borderTopWidth: 1, borderTopColor: palette.line, backgroundColor: palette.paper }, workerActionBarWide: { paddingHorizontal: 24 }, workerActionInfo: { flex: 1, minWidth: 0, gap: 2 }, workerActionEyebrow: { color: palette.pine, fontSize: 8, fontWeight: '900', letterSpacing: 1 }, workerActionSummary: { color: palette.ink, fontSize: 11, lineHeight: 15, fontWeight: '800' }, workerActionHint: { color: palette.quiet, fontSize: 9, lineHeight: 13 }, workerActionButton: { width: 156, flexShrink: 0 }, workerActionButtonCompact: { width: 122 },
+  bottomNav: { minHeight: 65, flexShrink: 0, flexDirection: 'row', alignItems: 'stretch', paddingHorizontal: 7, paddingTop: 6, paddingBottom: Platform.OS === 'ios' ? 12 : 6, backgroundColor: palette.paper, borderTopWidth: 1, borderTopColor: palette.line }, bottomNavCompact: { paddingHorizontal: 4 }, bottomNavShort: { minHeight: 56, paddingTop: 3, paddingBottom: 3 }, navItem: { minHeight: 48, minWidth: 52, flex: 1, alignItems: 'center', justifyContent: 'center', paddingHorizontal: 4, borderRadius: 11, gap: 2 }, sideNavItem: { width: '100%', flex: 0, minWidth: 0, flexDirection: 'row', alignItems: 'center', justifyContent: 'flex-start', paddingHorizontal: 12, gap: 12 }, navItemSelected: { backgroundColor: palette.mint }, navPressed: { opacity: 0.7 }, navMark: { color: '#839087', fontSize: 8, fontWeight: '900', letterSpacing: 0.7 }, navMarkSelected: { color: palette.forest }, navLabel: { color: palette.quiet, fontSize: 10, fontWeight: '700' }, navLabelSelected: { color: palette.forest, fontWeight: '900' }, resetNav: { minWidth: 48, minHeight: 48, alignItems: 'center', justifyContent: 'center', borderRadius: 11, gap: 1 }, resetNavCompact: { minWidth: 40 }, resetNavMark: { color: palette.quiet, fontSize: 17, lineHeight: 20 }, resetNavLabel: { color: palette.quiet, fontSize: 9, fontWeight: '700' },
   modalBackdrop: { flex: 1, justifyContent: 'flex-end', backgroundColor: 'rgba(16, 34, 26, 0.42)' }, modal: { width: '100%', maxHeight: '94%', paddingTop: 14, paddingBottom: 12, borderTopLeftRadius: 22, borderTopRightRadius: 22, backgroundColor: palette.paper, overflow: 'hidden' }, modalWide: { maxWidth: 640, maxHeight: '90%', alignSelf: 'center', marginVertical: 'auto', borderRadius: 22 }, modalHeader: { flexDirection: 'row', alignItems: 'center', gap: 10, paddingHorizontal: 18, paddingBottom: 12, borderBottomWidth: 1, borderBottomColor: palette.line }, backButton: { width: 40, height: 40, borderRadius: 12, alignItems: 'center', justifyContent: 'center', backgroundColor: palette.soft }, backText: { color: palette.forest, fontSize: 28, lineHeight: 30 }, modalHeading: { flex: 1, gap: 3 }, modalEyebrow: { color: palette.pine, fontSize: 9, fontWeight: '900', letterSpacing: 1.2 }, modalTitle: { color: palette.ink, fontSize: 20, lineHeight: 26, fontWeight: '800' }, closeButton: { width: 40, height: 40, alignItems: 'center', justifyContent: 'center' }, closeText: { color: palette.quiet, fontSize: 28 }, formScroll: { flexShrink: 1 }, formContent: { paddingHorizontal: 18, paddingTop: 14, paddingBottom: 18, gap: 13 }, formIntro: { color: palette.quiet, fontSize: 13, lineHeight: 19 }, modalActions: { paddingHorizontal: 18, paddingTop: 12, borderTopWidth: 1, borderTopColor: palette.line }, cadenceWrap: { gap: 8 }, cadenceRow: { flexDirection: 'row', gap: 8 }, cadence: { minHeight: 44, flex: 1, justifyContent: 'center', alignItems: 'center', borderWidth: 1, borderColor: palette.line, borderRadius: 10 }, cadenceSelected: { backgroundColor: palette.mint, borderColor: palette.pine }, cadenceText: { color: palette.quiet, fontSize: 13, fontWeight: '700' }, cadenceTextSelected: { color: palette.forest, fontWeight: '900' }, customerChoices: { flexDirection: 'row', flexWrap: 'wrap', gap: 7 }, customerChoice: { minHeight: 40, paddingHorizontal: 11, justifyContent: 'center', borderWidth: 1, borderColor: palette.line, borderRadius: 10, backgroundColor: palette.paper }, customerChoiceSelected: { backgroundColor: palette.mint, borderColor: palette.pine }, customerChoiceText: { color: palette.quiet, fontSize: 11, fontWeight: '700' }, customerChoiceTextSelected: { color: palette.forest, fontWeight: '900' }, confirmBackdrop: { flex: 1, justifyContent: 'center', padding: 22, backgroundColor: 'rgba(16, 34, 26, 0.48)' }, confirmCard: { width: '100%', maxWidth: 460, alignSelf: 'center', padding: 20, gap: 12, borderRadius: 18, backgroundColor: palette.paper },
+  sheetBackdrop: { flex: 1, justifyContent: 'flex-end', backgroundColor: 'rgba(16, 34, 26, 0.42)' }, sheet: { width: '100%', maxHeight: '94%', flexShrink: 1, paddingTop: 14, paddingBottom: 10, borderTopLeftRadius: 22, borderTopRightRadius: 22, backgroundColor: palette.paper, overflow: 'hidden' }, sheetWide: { maxWidth: 680, maxHeight: '90%', alignSelf: 'center', marginVertical: 'auto', borderRadius: 22 }, sheetContent: { paddingHorizontal: 16, paddingTop: 14, paddingBottom: 22, gap: 12 }, deferSheet: { maxHeight: '96%' }, deferContent: { paddingHorizontal: 18, paddingTop: 14, paddingBottom: 18, gap: 13 },
   deferredStopCard: { padding: 11, gap: 9, borderRadius: 11, borderWidth: 1, borderColor: '#E9D9B8', backgroundColor: '#FFFCF5' }, deferredStopHead: { flexDirection: 'row', alignItems: 'flex-start', justifyContent: 'space-between', gap: 8 },
   deferReasonList: { flexDirection: 'row', flexWrap: 'wrap', gap: 7 }, deferReason: { minHeight: 44, minWidth: 120, flexGrow: 1, paddingHorizontal: 10, justifyContent: 'center', borderRadius: 10, borderWidth: 1, borderColor: palette.line, backgroundColor: palette.paper }, deferReasonSelected: { borderColor: palette.pine, backgroundColor: palette.mint }, deferReasonText: { color: palette.quiet, fontSize: 11, fontWeight: '700', textAlign: 'center' }, deferReasonTextSelected: { color: palette.forest, fontWeight: '900' },
   entrySafe: { flex: 1, backgroundColor: palette.canvas, justifyContent: 'center', padding: 22 }, entry: { width: '100%', maxWidth: 560, alignSelf: 'center', gap: 18 }, entryTitle: { color: palette.ink, fontSize: 38, lineHeight: 44, letterSpacing: -1.5, fontWeight: '800', marginTop: 8 }, entryCopy: { color: palette.quiet, fontSize: 16, lineHeight: 24, marginTop: -10 }, entryCard: { padding: 17, borderRadius: 16, backgroundColor: palette.paper, borderWidth: 1, borderColor: palette.line, gap: 7 }, entryCardTitle: { color: palette.ink, fontSize: 14, fontWeight: '800' }, entryCardCopy: { color: palette.quiet, fontSize: 13, lineHeight: 20 }, entryFoot: { color: palette.quiet, fontSize: 11, lineHeight: 17, textAlign: 'center' },
