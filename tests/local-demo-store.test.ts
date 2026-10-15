@@ -13,7 +13,8 @@ import {
   MAX_LOCAL_DEMO_PHOTOS_PER_VISIT,
   type DemoStorage,
 } from '../src/demo/local-demo-store';
-import {beginLocalDemoTravel,beginLocalDemoWorkday,buildLocalDemoPlan,confirmLocalDemoArrival,prepareLocalDemoInvoiceDrafts} from '../src/demo/local-demo-workday';
+import {beginLocalDemoTravel,beginLocalDemoWorkday,buildLocalDemoPlan,confirmLocalDemoArrival,deferLocalDemoStop,prepareLocalDemoInvoiceDrafts,undoLocalDemoStopDefer} from '../src/demo/local-demo-workday';
+import {buildIllustrativeTravelMatrix,estimateIllustrativeRoute,findIllustrativeLunchSlots,type IllustrativeRouteStop} from '../src/demo/local-demo-route';
 import {createSavedQueueReview,canApproveSavedQueueReview,isSavedQueueApproved} from '../src/domain/saved-queue-review';
 import {invoiceTotals} from '../src/domain/invoice';
 import {startWork} from '../src/domain/work-session';
@@ -125,6 +126,100 @@ test('worker travel and arrival are separate local transitions and survive reloa
   const restored=loadLocalDemoWorkspace(storage,date).workspace.workdays[0];
   assert.equal(restored.travelingVisitId,visitId,'in-progress sample travel survives reload');
   assert.equal(restored.arrivedVisitId,null);
+});
+
+test('an uncompleted stop can be deferred after travel or arrival and clears the in-progress leg',()=>{
+  const storage=memoryStorage();
+  const date='2026-10-13';
+  const workspace=createInitialDemoWorkspace(date,true);
+  const day=workspace.workdays[0];
+  const visitId=day.plannedVisitIds[2];
+  const locationId=workspace.agreements.find(item=>`${item.id}:${date}`===visitId)!.location_id;
+  const started=beginLocalDemoWorkday(day,1000);
+  const traveling=beginLocalDemoTravel(started,visitId);
+  const deferredInTransit=deferLocalDemoStop(traveling,visitId,'customer_unavailable','',2000,visitId,
+    {locationId,minute:9*60+20,visitId});
+  assert.equal(deferredInTransit.travelingVisitId,null);
+  assert.equal(deferredInTransit.arrivedVisitId,null);
+  assert.equal(deferredInTransit.routePositionLocationId,locationId);
+  assert.equal(deferredInTransit.routePositionMinute,9*60+20);
+  assert.equal(deferredInTransit.lunchAfterVisitId,visitId,'lunch can remain anchored at the current position');
+  assert.deepEqual(deferredInTransit.visits,day.visits);
+  assert.equal(saveLocalDemoWorkspace({...workspace,workdays:[deferredInTransit]},storage),true);
+  const restored=loadLocalDemoWorkspace(storage,date).workspace.workdays[0];
+  assert.equal(restored.routePositionVisitId,visitId);
+  assert.equal(restored.deferredStops?.[0].reason,'customer_unavailable');
+
+  const freshStarted=beginLocalDemoWorkday(day,1000);
+  const arrived=confirmLocalDemoArrival(beginLocalDemoTravel(freshStarted,visitId),visitId);
+  const deferredOnsite=deferLocalDemoStop(arrived,visitId,'access_issue','Gate code missing',3000,null,
+    {locationId,minute:9*60+25,visitId});
+  assert.equal(deferredOnsite.arrivedVisitId,null);
+  assert.equal(deferredOnsite.travelingVisitId,null);
+  assert.equal(deferredOnsite.deferredStops?.[0].note,'Gate code missing');
+});
+
+test('deferring a stop preserves assignment and visit history, recalculates lunch and return, and supports undo after reload',()=>{
+  const storage=memoryStorage();
+  const date='2026-10-13';
+  const workspace=createInitialDemoWorkspace(date,true);
+  const workday=workspace.workdays[0];
+  const stopIds=workday.plannedVisitIds;
+  const routeStops:IllustrativeRouteStop[]=stopIds.map(id=>{
+    const agreement=workspace.agreements.find(item=>`${item.id}:${date}`===id)!;
+    return {id,locationId:agreement.location_id,serviceMinutes:agreement.estimated_minutes};
+  });
+  const travelMinutes=buildIllustrativeTravelMatrix(workspace.locations.map(item=>item.id));
+  const baseline=estimateIllustrativeRoute({stops:routeStops,travelMinutes,startMinute:workday.startMinute,endMinute:workday.endMinute,lunchDurationMinutes:30,lunchAfterVisitId:workday.lunchAfterVisitId});
+  const afterDeferralStops=routeStops.filter(stop=>stop.id!==stopIds[2]);
+  const candidateSlots=findIllustrativeLunchSlots({stops:afterDeferralStops,travelMinutes,startMinute:workday.startMinute,endMinute:workday.endMinute,durationMinutes:30});
+  const replacementLunch=candidateSlots.find(slot=>slot.feasible)?.afterVisitId??candidateSlots.at(-1)?.afterVisitId??null;
+  const deferred=deferLocalDemoStop(workday,stopIds[2],'customer_unavailable','',12345,replacementLunch);
+  const recalculated=estimateIllustrativeRoute({stops:afterDeferralStops,travelMinutes,startMinute:workday.startMinute,endMinute:workday.endMinute,lunchDurationMinutes:30,lunchAfterVisitId:deferred.lunchAfterVisitId});
+  assert.deepEqual(deferred.plannedVisitIds,stopIds,'deferral keeps the approved assignment record');
+  assert.deepEqual(deferred.visits,workday.visits,'deferral does not create or rewrite a completed/skipped visit');
+  assert.equal(deferred.deferredStops?.[0].visitId,stopIds[2]);
+  assert.equal(deferred.deferredStops?.[0].previousLunchAfterVisitId,stopIds[2]);
+  assert.equal(deferred.deferredStops?.[0].replacementLunchAfterVisitId,replacementLunch);
+  assert.equal(recalculated.stops.some(stop=>stop.id===stopIds[2]),false);
+  assert.equal(recalculated.lunch?.afterVisitId,replacementLunch);
+  assert.ok(recalculated.finishMinute<baseline.finishMinute,'the route finish reflects the removed service and new lunch slot');
+  assert.equal(saveLocalDemoWorkspace({...workspace,workdays:[deferred]},storage),true);
+  const restoredFromStorage=loadLocalDemoWorkspace(storage,date).workspace.workdays[0];
+  assert.equal(restoredFromStorage.deferredStops?.[0].reason,'customer_unavailable');
+  const originalSlots=findIllustrativeLunchSlots({stops:routeStops,travelMinutes,startMinute:workday.startMinute,endMinute:workday.endMinute,durationMinutes:30});
+  const restored=undoLocalDemoStopDefer(restoredFromStorage,stopIds[2],originalSlots.map(slot=>slot.afterVisitId),originalSlots.filter(slot=>slot.feasible).map(slot=>slot.afterVisitId));
+  assert.deepEqual(restored.deferredStops,[]);
+  assert.equal(restored.lunchAfterVisitId,stopIds[2],'undo restores the worker’s earlier lunch choice');
+  assert.deepEqual(restored.visits,workday.visits);
+});
+
+test('stop deferral rejects active or visited work, requires an Other note, and preserves a newer lunch choice on undo',()=>{
+  const date='2026-10-13';
+  const workspace=createInitialDemoWorkspace(date,true);
+  const workday=workspace.workdays[0];
+  const [first,second,third]=workday.plannedVisitIds;
+  assert.throws(()=>deferLocalDemoStop({...workday,workSession:startWork(first,1000)},first,'customer_unavailable','',2000,third),/active sample visit/);
+  assert.throws(()=>deferLocalDemoStop(workday,third,'other','  ',2000,second),/short note/);
+  const deferred=deferLocalDemoStop(workday,third,'weather_safety','Storm nearby',2000,second);
+  const currentAfterManualChoice={...deferred,lunchAfterVisitId:first};
+  const restored=undoLocalDemoStopDefer(currentAfterManualChoice,third,[first,second,third],[first,second,third]);
+  assert.equal(restored.lunchAfterVisitId,first,'undo does not overwrite a lunch choice made after deferral');
+  const sameSlotChosenAgain=undoLocalDemoStopDefer({...deferred,deferredStops:deferred.deferredStops?.map(stop=>({...stop,lunchChoiceWasManual:true}))},third,[first,second,third],[first,second,third]);
+  assert.equal(sameSlotChosenAgain.lunchAfterVisitId,second,'even reselecting the automatic slot is treated as a manual choice');
+  assert.throws(()=>beginLocalDemoTravel({...deferred,dayStartedAt:1000},third),/deferred sample stop/);
+});
+
+test('rebuilding a sample day preserves deferral markers for stops that remain due',()=>{
+  const date='2026-10-13';
+  const workspace=createInitialDemoWorkspace(date,true);
+  const workday=workspace.workdays[0];
+  const deferred=deferLocalDemoStop(workday,workday.plannedVisitIds[1],'access_issue','',2000,workday.plannedVisitIds[2]);
+  const rebuilt=buildLocalDemoPlan({...workspace,workdays:[deferred]},date,'8','6').workday;
+  assert.equal(rebuilt.deferredStops?.length,1);
+  assert.equal(rebuilt.deferredStops?.[0].visitId,workday.plannedVisitIds[1]);
+  assert.equal(rebuilt.deferredStops?.[0].originalIndex,1);
+  assert.equal(rebuilt.approvedQueueKey,null,'a rebuilt workday still needs fresh approval');
 });
 
 test('compressed local sample photos are bounded, keyed by visit, and persist in the browser workspace',()=>{

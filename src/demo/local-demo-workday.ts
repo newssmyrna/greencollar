@@ -4,7 +4,7 @@ import { billableCompletedServices, invoiceFromCompletedService } from '../domai
 import { buildDailyWorkflow } from '../domain/daily-workflow';
 import { setInvoiceDueDays } from '../domain/invoice';
 import type { Agreement } from '../domain/recurrence';
-import type { LocalDemoWorkspace, LocalDemoWorkday } from './local-demo-store';
+import { LOCAL_DEMO_DEFER_REASONS, type LocalDemoDeferredStop, type LocalDemoDeferredStopReason, type LocalDemoWorkspace, type LocalDemoWorkday } from './local-demo-store';
 
 function agreementsFor(workspace: LocalDemoWorkspace): Agreement[] {
   return workspace.agreements.map(agreement => ({
@@ -81,17 +81,30 @@ export function buildLocalDemoPlan(
     endMinute,
     dayStartedAt: existing?.dayStartedAt ?? (existing?.workSession ? existing.workSession.startedAt : null),
     plannedVisitIds: due.stops.map(stop => stop.jobId),
+    deferredStops: (existing?.deferredStops ?? [])
+      .filter(stop => due.stops.some(item => item.jobId === stop.visitId)
+        && !existing?.visits.some(visit => visit.agreement_id === stop.visitId.slice(0, -(`:${date}`).length)
+          && visit.scheduled_date === date))
+      .map(stop => ({ ...stop, originalIndex: due.stops.findIndex(item => item.jobId === stop.visitId) })),
     lunchDurationMinutes: existing?.lunchDurationMinutes ?? 30,
+    lunchConsumed: existing?.lunchConsumed ?? false,
     lunchAfterVisitId: existing
       ? existing.lunchAfterVisitId && due.stops.some(stop => stop.jobId === existing.lunchAfterVisitId)
+        && !(existing.deferredStops ?? []).some(stop => stop.visitId === existing.lunchAfterVisitId)
         ? existing.lunchAfterVisitId : null
       : due.stops[due.stops.length - 1]?.jobId ?? null,
     delayMinutes: existing?.delayMinutes ?? 0,
+    routePositionLocationId: existing?.routePositionLocationId ?? null,
+    routePositionMinute: existing?.routePositionMinute ?? null,
+    routePositionVisitId: existing?.routePositionVisitId && due.stops.some(stop => stop.jobId === existing.routePositionVisitId)
+      ? existing.routePositionVisitId : null,
     unscheduledVisitIds: due.unscheduledVisitIds,
     approvedQueueKey: null,
     arrivedVisitId: existing?.arrivedVisitId && due.stops.some(stop => stop.jobId === existing.arrivedVisitId)
+      && !(existing.deferredStops ?? []).some(stop => stop.visitId === existing.arrivedVisitId)
       ? existing.arrivedVisitId : null,
     travelingVisitId: existing?.travelingVisitId && due.stops.some(stop => stop.jobId === existing.travelingVisitId)
+      && !(existing.deferredStops ?? []).some(stop => stop.visitId === existing.travelingVisitId)
       ? existing.travelingVisitId : null,
     photosByVisitId: existing?.photosByVisitId ?? {},
     workSession: existing?.workSession?.status === 'completed' ? existing.workSession : null,
@@ -112,6 +125,7 @@ export function beginLocalDemoWorkday(workday: LocalDemoWorkday, startedAt: numb
 export function beginLocalDemoTravel(workday: LocalDemoWorkday, visitId: string): LocalDemoWorkday {
   if (workday.dayStartedAt == null) throw new Error('Start the sample day before beginning travel.');
   if (!workday.plannedVisitIds.includes(visitId)) throw new Error('Choose an assigned sample stop.');
+  if ((workday.deferredStops ?? []).some(stop => stop.visitId === visitId)) throw new Error('Restore this deferred sample stop before beginning travel.');
   if (workday.workSession && workday.workSession.status !== 'completed')
     throw new Error('Pause or finish the active sample visit before traveling.');
   if (workday.arrivedVisitId === visitId) return workday;
@@ -125,11 +139,103 @@ export function beginLocalDemoTravel(workday: LocalDemoWorkday, visitId: string)
 export function confirmLocalDemoArrival(workday: LocalDemoWorkday, visitId: string): LocalDemoWorkday {
   if (workday.dayStartedAt == null) throw new Error('Start the sample day before confirming arrival.');
   if (!workday.plannedVisitIds.includes(visitId)) throw new Error('Choose an assigned sample stop.');
+  if ((workday.deferredStops ?? []).some(stop => stop.visitId === visitId)) throw new Error('Restore this deferred sample stop before confirming arrival.');
   if (workday.workSession && workday.workSession.status !== 'completed')
     throw new Error('Finish the active sample visit before confirming another arrival.');
   if (workday.travelingVisitId !== visitId)
     throw new Error('Begin sample travel to this stop before confirming arrival.');
   return { ...workday, travelingVisitId: null, arrivedVisitId: visitId };
+}
+
+/** Defer an uncompleted assigned stop in the local preview without changing visit history. */
+export function deferLocalDemoStop(
+  workday: LocalDemoWorkday,
+  visitId: string,
+  reason: LocalDemoDeferredStopReason,
+  note: string,
+  deferredAt: number,
+  replacementLunchAfterVisitId: string | null,
+  routePosition?: { locationId: string; minute: number; visitId?: string | null } | null,
+): LocalDemoWorkday {
+  if (!workday.plannedVisitIds.includes(visitId)) throw new Error('Choose an assigned sample stop.');
+  if (!LOCAL_DEMO_DEFER_REASONS.some(item => item.value === reason)) throw new Error('Choose a deferral reason.');
+  if (!Number.isSafeInteger(deferredAt) || deferredAt < 0) throw new Error('Deferral time must be a valid timestamp.');
+  if (note.trim().length > 500) throw new Error('Keep the deferral note under 500 characters.');
+  if (reason === 'other' && !note.trim()) throw new Error('Add a short note when the reason is Other.');
+  if (workday.workSession && workday.workSession.status !== 'completed')
+    throw new Error('Pause or finish the active sample visit before deferring another stop.');
+  if ((workday.visits ?? []).some(visit => visit.agreement_id === visitId.slice(0, -(`:${workday.date}`).length)
+    && visit.scheduled_date === workday.date)) throw new Error('Completed or skipped visits cannot be deferred.');
+  if ((workday.deferredStops ?? []).some(stop => stop.visitId === visitId))
+    throw new Error('This sample stop is already deferred.');
+  if (replacementLunchAfterVisitId !== null
+    && (!workday.plannedVisitIds.includes(replacementLunchAfterVisitId)
+      || (replacementLunchAfterVisitId === visitId && routePosition?.visitId !== visitId)
+      || (workday.deferredStops ?? []).some(stop => stop.visitId === replacementLunchAfterVisitId)))
+    throw new Error('Choose a lunch slot on a remaining sample stop.');
+
+  const stop: LocalDemoDeferredStop = {
+    visitId,
+    reason,
+    note: note.trim() || null,
+    deferredAt,
+    originalIndex: workday.plannedVisitIds.indexOf(visitId),
+    previousLunchAfterVisitId: workday.lunchAfterVisitId ?? null,
+    replacementLunchAfterVisitId,
+    lunchChoiceWasManual: false,
+  };
+  if (routePosition && (!routePosition.locationId.trim()
+    || !Number.isInteger(routePosition.minute) || routePosition.minute < 0 || routePosition.minute > 1440))
+    throw new Error('The sample route position is invalid.');
+  return {
+    ...workday,
+    deferredStops: [...(workday.deferredStops ?? []), stop],
+    lunchAfterVisitId: replacementLunchAfterVisitId,
+    ...(routePosition ? {
+      routePositionLocationId: routePosition.locationId,
+      routePositionMinute: routePosition.minute,
+      routePositionVisitId: routePosition.visitId ?? null,
+      arrivedVisitId: workday.arrivedVisitId === visitId ? null : workday.arrivedVisitId,
+      travelingVisitId: workday.travelingVisitId === visitId ? null : workday.travelingVisitId,
+    } : {}),
+  };
+}
+
+/** Restore a deferred stop and reconcile lunch without overwriting a newer worker choice. */
+export function undoLocalDemoStopDefer(
+  workday: LocalDemoWorkday,
+  visitId: string,
+  availableLunchAfterVisitIds: readonly string[],
+  feasibleLunchAfterVisitIds: readonly string[],
+): LocalDemoWorkday {
+  const record = (workday.deferredStops ?? []).find(stop => stop.visitId === visitId);
+  if (!record) return workday;
+  if ((workday.visits ?? []).some(visit => visit.agreement_id === visitId.slice(0, -(`:${workday.date}`).length)
+    && visit.scheduled_date === workday.date)) throw new Error('Completed or skipped visits cannot be restored as planned work.');
+  const available = new Set(availableLunchAfterVisitIds);
+  const current = workday.lunchAfterVisitId ?? null;
+  const previous = record.previousLunchAfterVisitId;
+  const currentIsAvailable = current !== null && available.has(current);
+  const previousIsAvailable = previous !== null && available.has(previous);
+  let lunchAfterVisitId: string | null;
+  if (record.lunchChoiceWasManual && currentIsAvailable) lunchAfterVisitId = current;
+  else if (current === record.replacementLunchAfterVisitId && previousIsAvailable) lunchAfterVisitId = previous;
+  else if (currentIsAvailable) lunchAfterVisitId = current;
+  else if (previousIsAvailable) lunchAfterVisitId = previous;
+  else if (previous !== null) lunchAfterVisitId = chooseFallbackLunch(availableLunchAfterVisitIds, feasibleLunchAfterVisitIds);
+  else lunchAfterVisitId = null;
+
+  return {
+    ...workday,
+    deferredStops: (workday.deferredStops ?? []).filter(stop => stop.visitId !== visitId),
+    lunchAfterVisitId,
+  };
+}
+
+function chooseFallbackLunch(available: readonly string[], feasible: readonly string[]): string | null {
+  return feasible.find(id => available.includes(id))
+    ?? available[available.length - 1]
+    ?? null;
 }
 
 export function prepareLocalDemoInvoiceDrafts(

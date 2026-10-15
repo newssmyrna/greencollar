@@ -13,11 +13,12 @@ import {
   clearLocalDemoWorkspace, createDemoRecordId, createInitialDemoWorkspace,
   createDemoVisitId, demoDayForDate, loadLocalDemoWorkspace, saveLocalDemoWorkspace,
   MAX_LOCAL_DEMO_PHOTOS_PER_VISIT, MAX_LOCAL_DEMO_PHOTO_DATA_URL_LENGTH,
+  LOCAL_DEMO_DEFER_REASONS, type LocalDemoDeferredStopReason,
   type LocalDemoPhoto, type LocalDemoWorkday, type LocalDemoWorkspace,
 } from '../demo/local-demo-store';
 import {
-  beginLocalDemoTravel, beginLocalDemoWorkday, buildLocalDemoPlan,
-  confirmLocalDemoArrival,
+  beginLocalDemoTravel, beginLocalDemoWorkday, buildLocalDemoPlan, deferLocalDemoStop,
+  confirmLocalDemoArrival, undoLocalDemoStopDefer,
 } from '../demo/local-demo-workday';
 import {
   buildIllustrativeTravelMatrix, estimateIllustrativeRoute, findIllustrativeLunchSlots,
@@ -40,6 +41,9 @@ const palette = {
 };
 
 function money(cents: number) { return `$${(cents / 100).toFixed(2)}`; }
+function deferredReasonLabel(reason: LocalDemoDeferredStopReason) {
+  return LOCAL_DEMO_DEFER_REASONS.find(item => item.value === reason)?.label ?? 'Other';
+}
 function dateLabel(value: string) {
   const date = new Date(`${value}T12:00:00`);
   return Number.isNaN(date.valueOf()) ? value : date.toLocaleDateString(undefined, { weekday: 'long', month: 'long', day: 'numeric' });
@@ -82,6 +86,17 @@ function safeElapsedMinutes(session: WorkSession, now: number) {
     : session.completedAt ?? session.startedAt;
   try { return getElapsedMinutes(session, Math.max(now, lowerBound)); }
   catch { return Math.ceil(session.elapsedMs / 60_000); }
+}
+function illustrativeStopFor(agreement: SavedServiceAgreement, date: string, day?: LocalDemoWorkday): IllustrativeRouteStop {
+  const completed = day?.visits.find(visit => visit.agreement_id === agreement.id && visit.status === 'completed');
+  return {
+    id: `${agreement.id}:${date}`,
+    locationId: agreement.location_id,
+    serviceMinutes: completed?.actual_minutes ?? agreement.estimated_minutes,
+    earliestStartMinute: agreement.preferred_start_minute ?? undefined,
+    latestFinishMinute: agreement.preferred_finish_minute ?? undefined,
+    fixedStartMinute: agreement.fixed_start_minute ?? undefined,
+  };
 }
 function initials(name: string) { return name.trim().split(/\s+/).slice(0, 2).map(part => part[0]?.toUpperCase() ?? '').join('') || 'GC'; }
 
@@ -141,6 +156,11 @@ export function WorkingDemo({ onExit }: { onExit?: () => void }) {
   const [formError, setFormError] = useState('');
   const [discardOpen, setDiscardOpen] = useState(false);
   const [completeOpen, setCompleteOpen] = useState(false);
+  const [deferOpen, setDeferOpen] = useState(false);
+  const [deferVisitId, setDeferVisitId] = useState<string | null>(null);
+  const [deferReason, setDeferReason] = useState<LocalDemoDeferredStopReason>('customer_unavailable');
+  const [deferNote, setDeferNote] = useState('');
+  const [deferError, setDeferError] = useState('');
   const [noteDraft, setNoteDraft] = useState('');
   const [tick, setTick] = useState(Date.now());
   const [saving, setSaving] = useState(false);
@@ -163,8 +183,11 @@ export function WorkingDemo({ onExit }: { onExit?: () => void }) {
   const day = workspace.workdays.find(item => item.date === date);
   const customers = workspace.customers;
   const planIds = day?.plannedVisitIds ?? [];
+  const deferredStops = day?.deferredStops ?? [];
+  const deferredIds = new Set(deferredStops.map(stop => stop.visitId));
   const completedIds = new Set((day?.visits ?? []).filter(visit => visit.status === 'completed').map(visit => `${visit.agreement_id}:${date}`));
   const plannedAgreements = planIds.map(id => workspace.agreements.find(agreement => `${agreement.id}:${date}` === id)).filter((item): item is SavedServiceAgreement => !!item);
+  const routeAgreements = plannedAgreements.filter(item => !deferredIds.has(`${item.id}:${date}`));
   const dueDay = useMemo(() => demoDayForDate(workspace, date), [workspace, date]);
   const awaitingPlan = dueDay.visits.filter(visit => visit.status === 'pending' && !planIds.includes(`${visit.agreement_id}:${date}`))
     .map(visit => workspace.agreements.find(agreement => agreement.id === visit.agreement_id)).filter((item): item is SavedServiceAgreement => !!item);
@@ -173,7 +196,7 @@ export function WorkingDemo({ onExit }: { onExit?: () => void }) {
   const activeAgreement = session ? workspace.agreements.find(item => `${item.id}:${date}` === session.jobId) : undefined;
   const nextAgreement = session && session.status !== 'completed'
     ? activeAgreement
-    : plannedAgreements.find(item => !completedIds.has(`${item.id}:${date}`));
+    : routeAgreements.find(item => !completedIds.has(`${item.id}:${date}`));
   const approved = !!day?.approvedQueueKey && planIds.length > 0;
   const completedCount = completedIds.size;
   const totalVisitCount = dueDay.visits.filter(visit => visit.status !== 'skipped').length;
@@ -256,6 +279,7 @@ export function WorkingDemo({ onExit }: { onExit?: () => void }) {
   useEffect(() => {
     if (role !== 'Worker' || tab !== 'Today' || workerScreen !== 'stop' || form) return;
     const back = BackHandler.addEventListener('hardwareBackPress', () => {
+      if (deferOpen) { closeDeferModal(); return true; }
       if (completeOpen) { setCompleteOpen(false); return true; }
       if (discardOpen) { setDiscardOpen(false); return true; }
       showWorkerOverview(); return true;
@@ -264,6 +288,7 @@ export function WorkingDemo({ onExit }: { onExit?: () => void }) {
       const handleKey = (event: KeyboardEvent) => {
         if (event.key !== 'Escape') return;
         event.preventDefault(); event.stopPropagation();
+        if (deferOpen) { closeDeferModal(); return; }
         if (completeOpen) { setCompleteOpen(false); return; }
         if (discardOpen) { setDiscardOpen(false); return; }
         showWorkerOverview();
@@ -272,7 +297,7 @@ export function WorkingDemo({ onExit }: { onExit?: () => void }) {
       return () => { back.remove(); document.removeEventListener('keydown', handleKey, true); };
     }
     return () => back.remove();
-  }, [role, tab, workerScreen, form, completeOpen, discardOpen]);
+  }, [role, tab, workerScreen, form, completeOpen, discardOpen, deferOpen]);
 
   function validateCustomer(): string {
     if (!customerDraft.name.trim()) return 'Enter the customer’s name to continue.';
@@ -509,19 +534,34 @@ export function WorkingDemo({ onExit }: { onExit?: () => void }) {
       }
       if (action === 'complete' && session && (session.status === 'running' || session.status === 'paused')) {
         const finished = { ...completeWork(session, Date.now()), note: noteDraft.trim() || undefined };
+        const actualMinutes = getElapsedMinutes(finished, finished.completedAt ?? Date.now());
+        const scheduled = workerRoute.stops.find(stop => stop.id === visitKey);
+        const routePositionMinute = Math.min(1440, (scheduled?.startMinute ?? routeOriginMinute)
+          + actualMinutes
+          + (day.lunchAfterVisitId === visitKey && !day.lunchConsumed ? lunchDurationMinutes : 0));
         const customer = workspace.customers.find(item => item.id === selected.customer_id);
         updateSession(finished, {
           id: createDemoVisitId(selected.id, date), agreement_id: selected.id, scheduled_date: date,
-          status: 'completed', actual_minutes: getElapsedMinutes(finished, finished.completedAt ?? Date.now()),
+          status: 'completed', actual_minutes: actualMinutes,
           work_note: noteDraft.trim() || undefined,
           completed_customer_id: customer?.id ?? null, completed_customer_name: customer?.name ?? null,
           completed_service_name: selected.service_name, completed_rate_cents: selected.rate_cents,
-        }, { arrivedVisitId: null, travelingVisitId: null });
+        }, {
+          arrivedVisitId: null, travelingVisitId: null,
+          routePositionLocationId: selected.location_id,
+          routePositionMinute,
+          routePositionVisitId: visitKey,
+          lunchConsumed: day.lunchConsumed || day.lunchAfterVisitId === visitKey
+            || (!!day.lunchAfterVisitId && (completedIds.has(day.lunchAfterVisitId)
+              || day.lunchAfterVisitId === day.routePositionVisitId)),
+        });
         setNoteDraft(''); setCompleteOpen(false); setNotice('Visit marked complete in this sample workday. Undo remains available below.'); return;
       }
       if (action === 'undo' && session?.status === 'completed') {
         const visits = day.visits.filter(visit => !(visit.agreement_id === selected.id && visit.scheduled_date === date));
-        replaceDay({ ...day, workSession: null, visits, approvedQueueKey: null, arrivedVisitId: null });
+        replaceDay({ ...day, workSession: null, visits, approvedQueueKey: null, arrivedVisitId: null,
+          routePositionLocationId: null, routePositionMinute: null, routePositionVisitId: null,
+          lunchConsumed: day.lunchConsumed && day.lunchAfterVisitId !== visitKey });
         setNoteDraft(session.note ?? ''); setNotice('Sample completion removed. Review and approve the day again before continuing.');
       }
     });
@@ -548,68 +588,187 @@ export function WorkingDemo({ onExit }: { onExit?: () => void }) {
   const routeStartInput = workerDayStartedAt !== null
     ? localMinuteFromTimestamp(workerDayStartedAt) : parseEditableClock(startTimeDraft);
   const startTimeValid = routeStartInput !== undefined;
-  const routeStartMinute = routeStartInput ?? day?.startMinute ?? 8 * 60;
+  const shiftStartMinute = routeStartInput ?? day?.startMinute ?? 8 * 60;
   const travelMatrix = buildIllustrativeTravelMatrix(workspace.locations.map(location => location.id));
-  const routeStops: IllustrativeRouteStop[] = plannedAgreements.map(agreement => {
-    const completed = day?.visits.find(visit => visit.agreement_id === agreement.id && visit.status === 'completed');
-    return {
-      id: `${agreement.id}:${date}`,
-      locationId: agreement.location_id,
-      serviceMinutes: completed?.actual_minutes ?? agreement.estimated_minutes,
-      earliestStartMinute: agreement.preferred_start_minute ?? undefined,
-      latestFinishMinute: agreement.preferred_finish_minute ?? undefined,
-      fixedStartMinute: agreement.fixed_start_minute ?? undefined,
-    };
-  });
-  const activeRouteVisitId = session && session.status !== 'completed' ? session.jobId : null;
-  const delayTargetStop = plannedAgreements.find(agreement =>
-    !completedIds.has(`${agreement.id}:${date}`) && `${agreement.id}:${date}` !== activeRouteVisitId);
-  const delayBeforeId = delayTargetStop ? `${delayTargetStop.id}:${date}` : SAMPLE_RETURN_ID;
+  const allRouteStops: IllustrativeRouteStop[] = routeAgreements.map(agreement => illustrativeStopFor(agreement, date, day));
   const lunchDurationMinutes: 30 | 60 = day?.lunchDurationMinutes === 60 ? 60 : 30;
   const delayMinutes = day?.delayMinutes ?? 0;
-  const routeOptions = {
-    stops: routeStops,
-    travelMinutes: travelMatrix,
-    startMinute: routeStartMinute,
-    endMinute: day?.endMinute ?? 16 * 60,
-    delayMinutes,
-    delayBeforeId,
-  };
-  const lunchSlots = routeStops.length
+  type RouteOrigin = { startMinute: number; startNodeId: string; startAfterVisitId?: string | null };
+  function routeOptionsFor(
+    stops: IllustrativeRouteStop[],
+    agreements: SavedServiceAgreement[],
+    sourceDay = day,
+    origin: RouteOrigin = { startMinute: shiftStartMinute, startNodeId: SAMPLE_DEPOT_ID },
+  ) {
+    const activeId = sourceDay?.workSession && sourceDay.workSession.status !== 'completed'
+      ? sourceDay.workSession.jobId : null;
+    const target = agreements.find(agreement => !completedIds.has(`${agreement.id}:${date}`)
+      && `${agreement.id}:${date}` !== activeId);
+    return {
+      stops,
+      travelMinutes: travelMatrix,
+      startMinute: origin.startMinute,
+      startNodeId: origin.startNodeId,
+      startAfterVisitId: origin.startAfterVisitId ?? null,
+      lunchNotBeforeMinute: Math.max(shiftStartMinute + 180, 11 * 60),
+      endMinute: sourceDay?.endMinute ?? 16 * 60,
+      delayMinutes: sourceDay?.delayMinutes ?? 0,
+      delayBeforeId: target ? `${target.id}:${date}` : SAMPLE_RETURN_ID,
+    };
+  }
+  const fullDayRouteOptions = routeOptionsFor(allRouteStops, routeAgreements, day, {
+    startMinute: shiftStartMinute, startNodeId: SAMPLE_DEPOT_ID,
+  });
+  const fullDayRoute = estimateIllustrativeRoute({
+    ...fullDayRouteOptions,
+    ...(day?.lunchAfterVisitId && !deferredIds.has(day.lunchAfterVisitId)
+      ? { lunchDurationMinutes, lunchAfterVisitId: day.lunchAfterVisitId } : {}),
+  });
+  const lastCompletedAgreement = [...routeAgreements].reverse()
+    .find(agreement => completedIds.has(`${agreement.id}:${date}`));
+  const lastCompletedId = lastCompletedAgreement ? `${lastCompletedAgreement.id}:${date}` : null;
+  const inferredLunchConsumed = day?.lunchConsumed === undefined
+    && !!day?.lunchAfterVisitId && completedIds.has(day.lunchAfterVisitId)
+    && routeAgreements.findIndex(agreement => `${agreement.id}:${date}` === day.lunchAfterVisitId)
+      <= routeAgreements.findIndex(agreement => `${agreement.id}:${date}` === lastCompletedId);
+  const lunchConsumed = day?.lunchConsumed ?? inferredLunchConsumed;
+  const lastCompletedSchedule = lastCompletedId
+    ? fullDayRoute.stops.find(stop => stop.id === lastCompletedId) : undefined;
+  const derivedProgressMinute = lastCompletedSchedule
+    ? fullDayRoute.lunch?.afterVisitId === lastCompletedId
+      ? fullDayRoute.lunch.finishMinute
+      : lastCompletedSchedule.finishMinute
+    : shiftStartMinute;
+  const routeOriginId = day?.routePositionLocationId ?? lastCompletedAgreement?.location_id ?? SAMPLE_DEPOT_ID;
+  const hasRouteProgress = routeOriginId !== SAMPLE_DEPOT_ID;
+  const routeOriginVisitId = day?.routePositionLocationId
+    ? day.routePositionVisitId ?? null
+    : lastCompletedId;
+  const routeOriginStopNumber = routeOriginVisitId ? planIds.indexOf(routeOriginVisitId) + 1 : 0;
+  const routeOriginMinute = day?.routePositionMinute ?? derivedProgressMinute;
+  const remainingRouteAgreements = routeAgreements.filter(agreement => !completedIds.has(`${agreement.id}:${date}`));
+  const routeStops: IllustrativeRouteStop[] = remainingRouteAgreements.map(agreement => illustrativeStopFor(agreement, date, day));
+  const routeOptions = routeOptionsFor(routeStops, remainingRouteAgreements, day, {
+    startMinute: routeOriginMinute, startNodeId: routeOriginId, startAfterVisitId: routeOriginVisitId,
+  });
+  const lunchSlots = !lunchConsumed && (routeStops.length || routeOriginVisitId)
     ? findIllustrativeLunchSlots({ ...routeOptions, durationMinutes: lunchDurationMinutes }) : [];
   const selectedLunchSlot = lunchSlots.find(slot => slot.afterVisitId === day?.lunchAfterVisitId);
+  const lunchAtCurrentPosition = !!routeOriginVisitId && day?.lunchAfterVisitId === routeOriginVisitId;
   const workerRoute = estimateIllustrativeRoute({
     ...routeOptions,
-    ...(day?.lunchAfterVisitId ? { lunchDurationMinutes, lunchAfterVisitId: day.lunchAfterVisitId } : {}),
+    ...(day?.lunchAfterVisitId && !lunchConsumed && !deferredIds.has(day.lunchAfterVisitId)
+      ? { lunchDurationMinutes, lunchAfterVisitId: day.lunchAfterVisitId,
+        ...(lunchAtCurrentPosition ? { lunchAtStartAfterVisitId: routeOriginVisitId } : {}) }
+      : day?.lunchAfterVisitId && !lunchConsumed && lunchAtCurrentPosition
+        ? { lunchDurationMinutes, lunchAfterVisitId: day.lunchAfterVisitId,
+          lunchAtStartAfterVisitId: routeOriginVisitId }
+        : {}),
   });
   const nextRouteStop = workerRoute.stops.find(stop => stop.id === `${nextAgreement?.id}:${date}`);
-  const nextRouteLeg = workerRoute.legs.find(leg => leg.toId === nextAgreement?.location_id && !leg.isReturn);
-  const totalMinutes = routeStops.reduce((sum, item) => sum + item.serviceMinutes, 0);
+  const nextRouteIndex = routeStops.findIndex(stop => stop.id === `${nextAgreement?.id}:${date}`);
+  const nextRouteLeg = nextRouteIndex >= 0 ? workerRoute.legs.filter(leg => !leg.isReturn)[nextRouteIndex] : undefined;
+  const remainingServiceMinutes = routeStops.reduce((sum, item) => sum + item.serviceMinutes, 0);
+  const plannedServiceMinutes = allRouteStops.reduce((sum, item) => sum + item.serviceMinutes, 0);
   const plannedValue = plannedAgreements.reduce((sum, item) => sum + item.rate_cents, 0);
   const elapsed = session ? safeElapsedMinutes(session, tick) : 0;
   const timeText = `${Math.floor(elapsed / 60)}:${String(elapsed % 60).padStart(2, '0')}`;
-  const nextStartMinute = workerRoute.stops.find(stop => stop.id === `${nextAgreement?.id}:${date}`)?.startMinute ?? routeStartMinute;
+  const nextStartMinute = workerRoute.stops.find(stop => stop.id === `${nextAgreement?.id}:${date}`)?.startMinute ?? routeOriginMinute;
   const workerHasAssignment = approved && plannedAgreements.length > 0;
   const workerEstimatedFinish = workerRoute.finishMinute;
   const selectedTabs = role === 'Owner' ? tabs : ['Today', 'Schedule'] as Tab[];
 
   function chooseLunchDuration(durationMinutes: 30 | 60) {
     if (!day) return;
-    replaceDay({ ...day, lunchDurationMinutes: durationMinutes });
+    replaceDay({ ...day, lunchDurationMinutes: durationMinutes, lunchConsumed: false });
     setPlanError('');
   }
   function chooseLunchSlot(afterVisitId: string) {
     if (!day) return;
     const slot = lunchSlots.find(item => item.afterVisitId === afterVisitId);
     if (!slot?.feasible) return;
-    replaceDay({ ...day, lunchDurationMinutes, lunchAfterVisitId: afterVisitId });
+    replaceDay({ ...day, lunchDurationMinutes, lunchAfterVisitId: afterVisitId, lunchConsumed: false,
+      deferredStops: (day.deferredStops ?? []).map(stop => ({ ...stop, lunchChoiceWasManual: true })) });
     setPlanError('');
-    setNotice(`Lunch planned after stop ${routeStops.findIndex(stop => stop.id === afterVisitId) + 1}. The visit timer is unchanged.`);
+    setNotice(`Lunch planned after stop ${planIds.indexOf(afterVisitId) + 1}. The visit timer is unchanged.`);
   }
   function chooseDelay(minutes: number) {
     if (!day) return;
     replaceDay({ ...day, delayMinutes: minutes });
     setPlanError('');
+  }
+
+  function openDeferModal(visitId: string) {
+    setDeferVisitId(visitId);
+    setDeferReason('customer_unavailable');
+    setDeferNote('');
+    setDeferError('');
+    setDeferOpen(true);
+  }
+  function closeDeferModal() {
+    setDeferOpen(false);
+    setDeferError('');
+  }
+  function confirmDeferStop() {
+    if (!day || !deferVisitId) return;
+    if (deferReason === 'other' && !deferNote.trim()) {
+      setDeferError('Add a short note for Other.');
+      return;
+    }
+    runOnce(() => {
+      const remainingAgreements = remainingRouteAgreements.filter(item => `${item.id}:${date}` !== deferVisitId);
+      const remainingStops = routeStops.filter(item => item.id !== deferVisitId);
+      const deferAgreement = plannedAgreements.find(item => `${item.id}:${date}` === deferVisitId);
+      const isInProgress = day.travelingVisitId === deferVisitId || day.arrivedVisitId === deferVisitId;
+      const deferSchedule = workerRoute.stops.find(stop => stop.id === deferVisitId);
+      const deferredPosition = isInProgress && deferAgreement ? {
+        locationId: deferAgreement.location_id,
+        minute: deferSchedule?.arrivalMinute ?? routeOriginMinute,
+        visitId: deferVisitId,
+      } : undefined;
+      const remainingOptions = routeOptionsFor(remainingStops, remainingAgreements, day,
+        deferredPosition
+          ? { startMinute: deferredPosition.minute, startNodeId: deferredPosition.locationId, startAfterVisitId: deferredPosition.visitId }
+          : { startMinute: routeOriginMinute, startNodeId: routeOriginId, startAfterVisitId: routeOriginVisitId });
+      const slots = !lunchConsumed && (remainingStops.length || remainingOptions.startAfterVisitId)
+        ? findIllustrativeLunchSlots({ ...remainingOptions, durationMinutes: lunchDurationMinutes }) : [];
+      const previousLunch = day.lunchAfterVisitId ?? null;
+      const stillFeasible = slots.find(slot => slot.afterVisitId === previousLunch && slot.feasible);
+      const replacementLunch = lunchConsumed || previousLunch === null ? null
+        : stillFeasible?.afterVisitId
+          ?? slots.find(slot => slot.feasible)?.afterVisitId
+          ?? slots[slots.length - 1]?.afterVisitId
+          ?? null;
+      const nextDay = deferLocalDemoStop(day, deferVisitId, deferReason, deferNote, Date.now(), replacementLunch, deferredPosition);
+      replaceDay(nextDay);
+      closeDeferModal();
+      setPlanError('');
+      setNotice('Stop deferred in this local sample day. The remaining route, lunch, and estimated depot return were recalculated. No customer message was sent.');
+    });
+  }
+  function restoreDeferredStop(visitId: string) {
+    if (!day) return;
+    runOnce(() => {
+      const remainingDeferred = deferredStops.filter(stop => stop.visitId !== visitId);
+      const stillDeferred = new Set(remainingDeferred.map(stop => stop.visitId));
+      const restoredAgreements = plannedAgreements.filter(item => !stillDeferred.has(`${item.id}:${date}`)
+        && !completedIds.has(`${item.id}:${date}`));
+      const restoredStops = restoredAgreements.map(item => illustrativeStopFor(item, date, day));
+      const restoredOptions = routeOptionsFor(restoredStops, restoredAgreements, day, {
+        startMinute: routeOriginMinute, startNodeId: routeOriginId, startAfterVisitId: routeOriginVisitId,
+      });
+      const slots = !lunchConsumed && (restoredStops.length || routeOriginVisitId)
+        ? findIllustrativeLunchSlots({ ...restoredOptions, durationMinutes: lunchDurationMinutes }) : [];
+      const nextDay = undoLocalDemoStopDefer(
+        day,
+        visitId,
+        slots.map(slot => slot.afterVisitId),
+        slots.filter(slot => slot.feasible).map(slot => slot.afterVisitId),
+      );
+      replaceDay(nextDay);
+      setPlanError('');
+      setNotice('Stop restored to its assigned position. The route and lunch estimate were recalculated locally.');
+    });
   }
 
   function renderLocalPhotos(visitKey: string, editable: boolean) {
@@ -629,21 +788,28 @@ export function WorkingDemo({ onExit }: { onExit?: () => void }) {
 
   function renderWorkerRoutePanel() {
     if (!workerHasAssignment) return null;
+    const originTitle = routeOriginVisitId
+      ? `Sample position after Stop ${String(routeOriginStopNumber).padStart(2, '0')}`
+      : hasRouteProgress ? 'Current sample position' : 'Sample depot';
     const mapNodes = [
-      { id: 'depot-start', mark: 'D', title: 'Sample depot', detail: 'Route starts here' },
-      ...plannedAgreements.map((agreement, index) => ({
-        id: `${agreement.id}:${date}`, mark: String(index + 1).padStart(2, '0'),
-        title: agreement.service_name,
-        detail: workspace.customers.find(item => item.id === agreement.customer_id)?.name ?? 'Sample customer',
-      })),
+      { id: 'route-start', mark: routeOriginVisitId ? String(routeOriginStopNumber).padStart(2, '0') : hasRouteProgress ? '•' : 'D', title: originTitle,
+        detail: hasRouteProgress ? `Estimated position · ${formatClock(routeOriginMinute)}` : 'Route starts here' },
+      ...routeStops.map(stop => {
+        const agreement = routeAgreements.find(item => `${item.id}:${date}` === stop.id);
+        return {
+        id: stop.id, mark: String(planIds.indexOf(stop.id) + 1).padStart(2, '0'),
+        title: agreement?.service_name ?? 'Sample stop',
+        detail: agreement ? workspace.customers.find(item => item.id === agreement.customer_id)?.name ?? 'Sample customer' : 'Sample stop',
+        };
+      }),
       { id: 'depot-return', mark: 'D', title: 'Sample depot', detail: 'Return included in finish estimate' },
     ];
     return <View style={s.routePanel}>
       <View style={s.planHeader}>
-        <View><Text style={s.panelTitle}>Map & route estimate</Text><Text style={s.cardBody}>Illustrative local map · stop order stays as assigned</Text></View>
+        <View><Text style={s.panelTitle}>Map & route estimate</Text><Text style={s.cardBody}>Schematic sample · completed and deferred stops are excluded from the remaining estimate</Text></View>
         <Tag tone="neutral">SAMPLE MATRIX</Tag>
       </View>
-      <View accessible accessibilityRole="image" accessibilityLabel={`Illustrative sample route map from depot through ${plannedAgreements.length} assigned stops and back to depot`} style={s.mapCanvas}>
+      <View accessible accessibilityRole="image" accessibilityLabel={`Schematic sample route from ${originTitle} through ${routeStops.length} remaining stops and back to depot`} style={s.mapCanvas}>
         <View pointerEvents="none" style={s.mapStreetHorizontal}/><View pointerEvents="none" style={s.mapStreetVertical}/>
         <View pointerEvents="none" style={s.mapStreetDiagonal}/>
         {mapNodes.map((node, index) => <View key={node.id} style={[s.mapNodeRow, index % 2 === 1 && s.mapNodeRowReverse]}>
@@ -654,25 +820,30 @@ export function WorkingDemo({ onExit }: { onExit?: () => void }) {
       <Text style={s.mapDisclosure}>Schematic only · not to scale · no coordinates, GPS, traffic, or map provider. The sample matrix below has no routing-service connection.</Text>
       <View style={s.routeMetrics}>
         <View style={s.routeMetric}><Text style={s.routeMetricValue}>{workerRoute.totalDriveMinutes}m</Text><Text style={s.routeMetricLabel}>SAMPLE DRIVE</Text></View>
-        <View style={s.routeMetric}><Text style={s.routeMetricValue}>{totalMinutes}m</Text><Text style={s.routeMetricLabel}>SERVICE</Text></View>
+        <View style={s.routeMetric}><Text style={s.routeMetricValue}>{remainingServiceMinutes}m</Text><Text style={s.routeMetricLabel}>{completedCount ? 'REMAINING SERVICE' : 'SERVICE'}</Text></View>
         <View style={s.routeMetric}><Text style={s.routeMetricValue}>{formatClock(workerEstimatedFinish)}</Text><Text style={s.routeMetricLabel}>EST. RETURN</Text></View>
       </View>
       {workerDayStartedAt === null
         ? <Field label="Chosen local start time (24-hour)" value={startTimeDraft} onChangeText={setStartTimeDraft} placeholder="08:00" maxLength={5} autoCapitalize="none" accessibilityHint="Choose the sample start time used to calculate stop arrivals and estimated return."/>
-        : <Text style={s.cardBody}>Started at {formatDayStart(workerDayStartedAt)} · schedule continues from this saved start.</Text>}
+        : <Text style={s.cardBody}>{routeOriginVisitId
+          ? `Remaining estimate starts from ${originTitle.toLowerCase()} at ${formatClock(routeOriginMinute)}. No live location is used.`
+          : `Started at ${formatDayStart(workerDayStartedAt)} · schedule continues from this saved start.`}</Text>}
       {!startTimeValid && workerDayStartedAt === null && <Text style={s.errorText}>Enter a valid local time such as 08:00.</Text>}
       <View style={s.routeSchedule}>
+        {workerRoute.lunch && lunchAtCurrentPosition && <View style={s.lunchEvent}><Text style={s.routeEventTitle}>Lunch at current sample position · {workerRoute.lunch.durationMinutes} min</Text><Text style={s.routeEventMeta}>{formatClock(workerRoute.lunch.startMinute)}–{formatClock(workerRoute.lunch.finishMinute)}</Text></View>}
         {routeStops.map((stop, index) => {
-          const leg = workerRoute.legs.find(item => item.toId === stop.locationId && !item.isReturn);
+          const leg = workerRoute.legs.filter(item => !item.isReturn)[index];
           const scheduled = workerRoute.stops.find(item => item.id === stop.id);
-          const agreement = plannedAgreements[index];
+          const agreement = routeAgreements.find(item => `${item.id}:${date}` === stop.id)!;
+          const stopNumber = planIds.indexOf(stop.id) + 1;
+          const previousStopNumber = index > 0 ? planIds.indexOf(routeStops[index - 1].id) + 1 : 0;
           const lunch = workerRoute.lunch?.afterVisitId === stop.id ? workerRoute.lunch : undefined;
           const delay = workerRoute.delay?.beforeId === stop.id ? workerRoute.delay : undefined;
           return <React.Fragment key={stop.id}>
-            {delay && <View style={s.routeEvent}><Text style={s.routeEventTitle}>Added delay · {delay.durationMinutes} min before stop {index + 1}</Text><Text style={s.routeEventMeta}>{formatClock(delay.startMinute)}–{formatClock(delay.finishMinute)}</Text></View>}
-            <View style={s.routeLeg}><Text style={s.routeLegTitle}>{index === 0 ? 'Depot' : `Stop ${String(index).padStart(2, '0')}`} → Stop {String(index + 1).padStart(2, '0')}</Text><Text style={s.routeLegMeta}>{leg ? `${leg.driveMinutes} min sample drive · arrives ${formatClock(leg.arrivalMinute)}` : 'Sample travel unavailable'}</Text></View>
+            {delay && <View style={s.routeEvent}><Text style={s.routeEventTitle}>Added delay · {delay.durationMinutes} min before stop {stopNumber}</Text><Text style={s.routeEventMeta}>{formatClock(delay.startMinute)}–{formatClock(delay.finishMinute)}</Text></View>}
+            <View style={s.routeLeg}><Text style={s.routeLegTitle}>{index === 0 ? (routeOriginVisitId ? `Stop ${String(routeOriginStopNumber).padStart(2, '0')}` : hasRouteProgress ? 'Current position' : 'Depot') : `Stop ${String(previousStopNumber).padStart(2, '0')}`} → Stop {String(stopNumber).padStart(2, '0')}</Text><Text style={s.routeLegMeta}>{leg ? `${leg.driveMinutes} min sample drive · arrives ${formatClock(leg.arrivalMinute)}` : 'Sample travel unavailable'}</Text></View>
             <View style={s.routeStopCard}>
-              <View style={s.routeStopHead}><Text style={s.routeStopTitle}>Stop {String(index + 1).padStart(2, '0')} · {agreement.service_name}</Text><Tag tone={completedIds.has(stop.id) ? 'green' : 'neutral'}>{completedIds.has(stop.id) ? 'DONE' : `${stop.serviceMinutes} MIN`}</Tag></View>
+              <View style={s.routeStopHead}><Text style={s.routeStopTitle}>Stop {String(stopNumber).padStart(2, '0')} · {agreement.service_name}</Text><Tag tone={completedIds.has(stop.id) ? 'green' : 'neutral'}>{completedIds.has(stop.id) ? 'DONE' : `${stop.serviceMinutes} MIN`}</Tag></View>
               <Text style={s.routeStopMeta}>{workspace.customers.find(item => item.id === agreement.customer_id)?.name ?? 'Sample customer'} · {agreement.address}</Text>
               {scheduled && <Text style={s.routeStopTime}>Arrive {formatClock(scheduled.arrivalMinute)} · service {formatClock(scheduled.startMinute)}–{formatClock(scheduled.finishMinute)}</Text>}
               {(agreement.fixed_start_minute !== null || agreement.preferred_start_minute !== null || agreement.preferred_finish_minute !== null)
@@ -682,19 +853,25 @@ export function WorkingDemo({ onExit }: { onExit?: () => void }) {
           </React.Fragment>;
         })}
         {workerRoute.delay?.beforeId === SAMPLE_RETURN_ID && <View style={s.routeEvent}><Text style={s.routeEventTitle}>Added delay before depot return · {delayMinutes} min</Text><Text style={s.routeEventMeta}>{formatClock(workerRoute.delay.startMinute)}–{formatClock(workerRoute.delay.finishMinute)}</Text></View>}
-        {workerRoute.legs.length > 0 && <View style={s.routeLeg}><Text style={s.routeLegTitle}>Stop {String(routeStops.length).padStart(2, '0')} → Depot</Text><Text style={s.routeLegMeta}>{workerRoute.returnDriveMinutes} min sample return drive · estimated return {formatClock(workerRoute.finishMinute)}</Text></View>}
+        {workerRoute.legs.length > 0 && <View style={s.routeLeg}><Text style={s.routeLegTitle}>{routeStops.length
+          ? `Stop ${String(planIds.indexOf(routeStops[routeStops.length - 1].id) + 1).padStart(2, '0')} → Depot`
+          : `${originTitle} → Depot`}</Text><Text style={s.routeLegMeta}>{workerRoute.returnDriveMinutes} min sample return drive · estimated return {formatClock(workerRoute.finishMinute)}</Text></View>}
       </View>
-      <View style={s.lunchControls}>
+      {lunchConsumed
+        ? <View style={s.lunchControls}><Text style={s.panelTitle}>Lunch completed</Text><Text style={s.cardBody}>{lunchDurationMinutes}-minute lunch is included in the sample route history.</Text></View>
+        : <View style={s.lunchControls}>
         <Text style={s.panelTitle}>Choose a lunch</Text>
         <Text style={s.cardBody}>Choose 30 or 60 minutes, then choose a feasible slot after a stop. The sample policy offers lunch after 3 hours on shift, no earlier than 11:00 AM.</Text>
         <View style={s.choiceRow}>
           {([30, 60] as const).map(minutes => <Pressable key={minutes} accessibilityRole="radio" accessibilityState={{ selected: lunchDurationMinutes === minutes }} onPress={() => chooseLunchDuration(minutes)} style={[s.choiceChip, lunchDurationMinutes === minutes && s.choiceChipSelected]}><Text style={[s.choiceChipText, lunchDurationMinutes === minutes && s.choiceChipTextSelected]}>{minutes} minutes</Text></Pressable>)}
         </View>
         <View style={s.lunchSlotList}>
-          {lunchSlots.map((slot, index) => {
+          {lunchSlots.map(slot => {
             const selected = slot.afterVisitId === day?.lunchAfterVisitId;
             return <Pressable key={slot.afterVisitId} accessibilityRole="radio" accessibilityState={{ selected, disabled: !slot.feasible }} disabled={!slot.feasible} onPress={() => chooseLunchSlot(slot.afterVisitId)} style={[s.lunchSlot, selected && slot.feasible && s.lunchSlotSelected, !slot.feasible && s.lunchSlotUnavailable]}>
-              <Text style={s.lunchSlotTitle}>{slot.feasible ? `After stop ${index + 1}` : `Unavailable · after stop ${index + 1}`}</Text>
+              <Text style={s.lunchSlotTitle}>{routeOriginVisitId === slot.afterVisitId
+                ? `${slot.feasible ? 'At current position' : 'Unavailable · current position'} · Stop ${planIds.indexOf(slot.afterVisitId) + 1}`
+                : `${slot.feasible ? 'After stop' : 'Unavailable · after stop'} ${planIds.indexOf(slot.afterVisitId) + 1}`}</Text>
               <Text style={s.lunchSlotMeta}>{formatClock(slot.startMinute)}–{formatClock(slot.finishMinute)} · {slot.durationMinutes} min</Text>
               {!slot.feasible && !!slot.reason && <Text style={s.lunchSlotReason}>{slot.reason}</Text>}
             </Pressable>;
@@ -706,7 +883,7 @@ export function WorkingDemo({ onExit }: { onExit?: () => void }) {
         <View style={s.choiceRow}>
           {([0, 15, 30, 45, 60] as const).map(minutes => <Pressable key={minutes} accessibilityRole="radio" accessibilityState={{ selected: delayMinutes === minutes }} onPress={() => chooseDelay(minutes)} style={[s.choiceChip, delayMinutes === minutes && s.choiceChipSelected]}><Text style={[s.choiceChipText, delayMinutes === minutes && s.choiceChipTextSelected]}>{minutes === 0 ? 'No delay' : `+${minutes} min`}</Text></Pressable>)}
         </View>
-      </View>
+      </View>}
       {workerRoute.conflicts.length > 0 && <View style={s.warning}><Text style={s.warningTitle}>Schedule needs attention</Text>{workerRoute.conflicts.map((conflict, index) => <Text key={`${conflict.kind}:${conflict.stopId ?? index}`} style={s.warningCopy}>{conflict.message}</Text>)}</View>}
       <View style={s.panelSoft}><Text style={s.panelTitle}>What this estimate includes</Text><Text style={s.cardBody}>Chosen start time + sample drive legs + service estimates + selected lunch + added delay + return-to-depot drive. Stop order stays as approved. This is not live routing, traffic, GPS, or route optimization; real delays and actual service times can change the day.</Text></View>
     </View>;
@@ -772,7 +949,7 @@ export function WorkingDemo({ onExit }: { onExit?: () => void }) {
               <Pressable accessibilityRole="button" accessibilityLabel="Back to day overview" onPress={showWorkerOverview} style={s.workerBack}><Text style={s.workerBackArrow}>‹</Text><Text style={s.workerBackText}>Day overview</Text></Pressable>
               <View style={s.eyebrowRow}><Text style={s.eyebrow}>YOUR SAMPLE WORKDAY</Text><Tag tone={approved ? 'green' : 'amber'}>{approved ? 'DAY STARTED · LOCAL' : 'REVIEW NEEDED'}</Tag></View>
               <Text style={s.h1}>{approved ? 'Next stop.' : 'This day needs review.'}</Text>
-              <Text style={s.lede}>{approved ? `${completedCount} of ${planIds.length} stops complete · sample day started ${workerDayStartedAt === null ? '' : formatDayStart(workerDayStartedAt)}` : 'The sample work queue changed. Ask the owner to review it before continuing.'}</Text>
+              <Text style={s.lede}>{approved ? `${completedCount} complete · ${deferredStops.length} deferred of ${planIds.length} assigned · sample day started ${workerDayStartedAt === null ? '' : formatDayStart(workerDayStartedAt)}` : 'The sample work queue changed. Ask the owner to review it before continuing.'}</Text>
               {!approved ? <View style={s.emptyCard}><Text style={s.cardTitle}>Review the sample assignment again.</Text><Text style={s.cardBody}>Undoing a completion clears the local approval. Return to the Owner view to rebuild or approve the sample day again.</Text><ActionButton label="Switch to Owner view" onPress={() => { setRole('Owner'); setTab('Planner'); setNotice('Review and approve the sample workday, then return to Worker view.'); scrollToTop(); }}/></View>
               : session && session.status !== 'completed' && activeAgreement ? <View style={s.activeCard}>
                 <View style={s.activeTop}><Tag>{session.status === 'running' ? 'VISIT TIMER RUNNING' : 'VISIT TIMER PAUSED'}</Tag><Text style={s.timer}>{timeText}</Text></View>
@@ -792,18 +969,25 @@ export function WorkingDemo({ onExit }: { onExit?: () => void }) {
                 <Text style={s.cardBody}>{workspace.customers.find(item => item.id === nextAgreement.customer_id)?.name ?? 'Sample customer'}</Text>
                 <Text style={s.cardBody}>{nextAgreement.address}</Text>
                 {!!nextAgreement.preferences && <Text style={s.cardBody}>Sample access note: {nextAgreement.preferences}</Text>}
-                <Text style={s.scheduleMeta}>{formatClock((day?.startMinute ?? 8 * 60) + plannedAgreements.slice(0, Math.max(0, nextIndex)).reduce((sum, item) => sum + item.estimated_minutes, 0))} · {nextAgreement.estimated_minutes} service min</Text>
+                <Text style={s.scheduleMeta}>{formatClock(nextRouteStop?.startMinute ?? nextStartMinute)} estimated service start · {nextAgreement.estimated_minutes} service min</Text>
                 <View style={s.assignmentFact}><Text style={s.stopMeta}>Crew Green · Truck 02 · sample assignment</Text></View>
-                {nextRouteLeg && nextRouteStop && <View style={s.routeLeg}><Text style={s.routeLegTitle}>{nextIndex === 0 ? 'Depot → Stop' : `Stop ${String(nextIndex).padStart(2, '0')} → Stop ${String(nextIndex + 1).padStart(2, '0')}`}</Text><Text style={s.routeLegMeta}>{nextRouteLeg.driveMinutes} min sample drive · estimated arrival {formatClock(nextRouteStop.arrivalMinute)}</Text></View>}
+                {nextRouteLeg && nextRouteStop && <View style={s.routeLeg}><Text style={s.routeLegTitle}>{nextRouteIndex === 0
+                  ? routeOriginVisitId ? `Stop ${String(routeOriginStopNumber).padStart(2, '0')}` : hasRouteProgress ? 'Current position' : 'Depot'
+                  : `Stop ${String(planIds.indexOf(routeStops[nextRouteIndex - 1]?.id ?? '') + 1).padStart(2, '0')}`} → Stop {String(nextIndex + 1).padStart(2, '0')}</Text><Text style={s.routeLegMeta}>{nextRouteLeg.driveMinutes} min sample drive · estimated arrival {formatClock(nextRouteStop.arrivalMinute)}</Text></View>}
                 {day?.arrivedVisitId === `${nextAgreement.id}:${date}`
                   ? <><Text style={s.arrivalText}>Sample arrival confirmed</Text><ActionButton label="Start visit timer" disabled={saving || workerDayStartedAt === null} onPress={() => workerAction('start')}/></>
                   : day?.travelingVisitId === `${nextAgreement.id}:${date}`
                     ? <><Tag tone="amber">EN ROUTE · SAMPLE</Tag><Text style={s.microCopy}>Travel state is simulated. No GPS or navigation is active.</Text><ActionButton label="Confirm sample arrival" disabled={saving} onPress={() => workerAction('arrive')}/></>
                     : <ActionButton label="Begin sample travel" disabled={saving || workerDayStartedAt === null} onPress={() => workerAction('travel')}/>}
+                <ActionButton label="Defer this stop" secondary disabled={saving} onPress={() => openDeferModal(`${nextAgreement.id}:${date}`)}/>
                 <Text style={s.microCopy}>Travel, arrival and service timer are separate local sample actions. No live location, navigation, message, or dispatch is connected.</Text>
-              </View> : <View style={s.emptyCard}><Text style={s.emptyMark}>✓</Text><Text style={s.cardTitle}>All assigned sample stops are complete.</Text><Text style={s.cardBody}>Your day start is saved locally. No time or location was sent anywhere.</Text></View>}
+              </View> : <View style={s.emptyCard}><Text style={s.emptyMark}>{deferredStops.length ? '↷' : '✓'}</Text><Text style={s.cardTitle}>{deferredStops.length ? 'No active stops remain.' : 'All assigned sample stops are complete.'}</Text><Text style={s.cardBody}>{deferredStops.length ? `${deferredStops.length} deferred sample stop${deferredStops.length === 1 ? ' is' : 's are'} still listed below and can be restored.` : 'Your day start is saved locally. No time or location was sent anywhere.'}</Text></View>}
               {session?.status === 'completed' && <View style={s.undoCard}><Text style={s.undoTitle}>Visit marked complete</Text><Text style={s.cardBody}>Completed in the local sample day. Undo is available if that was a mistake.</Text>{renderLocalPhotos(session.jobId, false)}<ActionButton label="Undo completion" secondary disabled={saving} onPress={() => workerAction('undo')}/></View>}
-              {approved && <View style={s.panelSoft}><Text style={s.panelTitle}>Remaining stops</Text>{plannedAgreements.slice(Math.max(0, nextIndex + (session?.status !== 'completed' && session ? 1 : 0))).map((agreement, index) => <View key={agreement.id} style={s.workerStopRow}><View style={s.stopNumber}><Text style={s.stopNumberText}>{String(Math.max(0, nextIndex + index + 2)).padStart(2, '0')}</Text></View><View style={s.stopText}><Text style={s.stopTitle}>{agreement.service_name}</Text><Text style={s.stopMeta}>{workspace.customers.find(item => item.id === agreement.customer_id)?.name ?? 'Sample customer'} · {agreement.estimated_minutes} min</Text></View></View>)}{!nextAgreement && <Text style={s.cardBody}>No remaining stops.</Text>}</View>}
+              {approved && <View style={s.panelSoft}><Text style={s.panelTitle}>Remaining stops</Text>{routeAgreements.filter(agreement => !completedIds.has(`${agreement.id}:${date}`) && `${agreement.id}:${date}` !== (session && session.status !== 'completed' ? session.jobId : nextAgreement ? `${nextAgreement.id}:${date}` : null)).map(agreement => <View key={agreement.id} style={s.workerStopRow}><View style={s.stopNumber}><Text style={s.stopNumberText}>{String(planIds.indexOf(`${agreement.id}:${date}`) + 1).padStart(2, '0')}</Text></View><View style={s.stopText}><Text style={s.stopTitle}>{agreement.service_name}</Text><Text style={s.stopMeta}>{workspace.customers.find(item => item.id === agreement.customer_id)?.name ?? 'Sample customer'} · {agreement.estimated_minutes} min</Text></View></View>)}{routeAgreements.every(agreement => completedIds.has(`${agreement.id}:${date}`)) && <Text style={s.cardBody}>No uncompleted stops remain on the active route.</Text>}</View>}
+              {approved && deferredStops.length > 0 && <View style={s.panelSoft}><Text style={s.panelTitle}>Deferred stops</Text><Text style={s.cardBody}>Deferred visits stay assigned locally and are excluded from the current route. Restoring one recalculates the schedule.</Text>{deferredStops.map(stop => {
+                const agreement = plannedAgreements.find(item => `${item.id}:${date}` === stop.visitId);
+                return <View key={stop.visitId} style={s.deferredStopCard}><View style={s.deferredStopHead}><View style={s.stopText}><Text style={s.stopTitle}>Stop {String(stop.originalIndex + 1).padStart(2, '0')} · {agreement?.service_name ?? 'Sample service'}</Text><Text style={s.stopMeta}>{deferredReasonLabel(stop.reason)}{stop.note ? ` · ${stop.note}` : ''}</Text></View><Tag tone="amber">DEFERRED</Tag></View><ActionButton label="Restore this stop" secondary disabled={saving} onPress={() => restoreDeferredStop(stop.visitId)}/></View>;
+              })}</View>}
               {approved && renderWorkerRoutePanel()}
             </>}
           </>}
@@ -814,7 +998,7 @@ export function WorkingDemo({ onExit }: { onExit?: () => void }) {
             <Text style={s.lede}>{dateLabel(date)} · {approved ? `${completedCount} of ${totalVisitCount} visits complete` : 'Review and approve a sample plan before work begins.'}</Text>
             <View style={s.statsRow}>
               <View style={s.stat}><Text style={s.statValue}>{approved ? `${completedCount}/${totalVisitCount}` : '—'}</Text><Text style={s.statLabel}>VISITS DONE</Text></View>
-              <View style={s.stat}><Text style={s.statValue}>{approved ? `${totalMinutes}m` : '—'}</Text><Text style={s.statLabel}>EST. SERVICE</Text></View>
+              <View style={s.stat}><Text style={s.statValue}>{approved ? `${plannedServiceMinutes}m` : '—'}</Text><Text style={s.statLabel}>EST. SERVICE</Text></View>
               <View style={s.stat}><Text style={s.statValue}>{approved ? money(plannedValue) : '—'}</Text><Text style={s.statLabel}>SAMPLE TOTAL</Text></View>
             </View>
             {session && session.status !== 'completed' && activeAgreement ? <View style={s.activeCard}>
@@ -842,8 +1026,8 @@ export function WorkingDemo({ onExit }: { onExit?: () => void }) {
             <View style={s.sectionHeader}><Text style={s.sectionTitle}>Coming up</Text>{approved && <Pressable accessibilityRole="button" onPress={() => chooseTab('Schedule')}><Text style={s.link}>View schedule</Text></Pressable>}</View>
             {approved ? plannedAgreements.slice(0, 3).map((agreement, index) => <View key={agreement.id} style={s.compactStop}>
               <View style={[s.stopNumber, completedIds.has(`${agreement.id}:${date}`) && s.stopNumberDone]}><Text style={[s.stopNumberText, completedIds.has(`${agreement.id}:${date}`) && s.stopNumberTextDone]}>{completedIds.has(`${agreement.id}:${date}`) ? '✓' : String(index + 1).padStart(2, '0')}</Text></View>
-              <View style={s.stopText}><Text style={s.stopTitle}>{agreement.service_name}</Text><Text style={s.stopMeta}>{workspace.customers.find(item => item.id === agreement.customer_id)?.name ?? 'Sample customer'} · {agreement.estimated_minutes} min</Text></View>
-              <Tag tone={completedIds.has(`${agreement.id}:${date}`) ? 'green' : 'neutral'}>{completedIds.has(`${agreement.id}:${date}`) ? 'DONE' : 'UP NEXT'}</Tag>
+              <View style={s.stopText}><Text style={s.stopTitle}>{agreement.service_name}</Text><Text style={s.stopMeta}>{workspace.customers.find(item => item.id === agreement.customer_id)?.name ?? 'Sample customer'} · {agreement.estimated_minutes} min{deferredIds.has(`${agreement.id}:${date}`) ? ` · ${deferredReasonLabel(deferredStops.find(stop => stop.visitId === `${agreement.id}:${date}`)!.reason)}` : ''}</Text></View>
+              <Tag tone={completedIds.has(`${agreement.id}:${date}`) ? 'green' : deferredIds.has(`${agreement.id}:${date}`) ? 'amber' : 'neutral'}>{completedIds.has(`${agreement.id}:${date}`) ? 'DONE' : deferredIds.has(`${agreement.id}:${date}`) ? 'DEFERRED' : 'UP NEXT'}</Tag>
             </View>) : <Text style={s.emptyCopy}>Build a plan to see the stops for this day.</Text>}
           </>}
 
@@ -876,7 +1060,7 @@ export function WorkingDemo({ onExit }: { onExit?: () => void }) {
             </View>
             {day && <View style={s.panel}>
               <View style={s.planHeader}><View><Text style={s.panelTitle}>Review this day</Text><Text style={s.cardBody}>{dateLabel(date)}</Text></View><Tag tone={approved ? 'green' : 'amber'}>{approved ? 'APPROVED' : 'DRAFT'}</Tag></View>
-              <View style={s.metrics}><Text style={s.metricText}>{planIds.length} planned · {totalMinutes} service min</Text><Text style={s.metricText}>{money(plannedValue)} estimated value</Text></View>
+              <View style={s.metrics}><Text style={s.metricText}>{planIds.length} planned · {plannedServiceMinutes} service min</Text><Text style={s.metricText}>{money(plannedValue)} estimated value</Text></View>
               {completedCount > 0 && <Text style={s.approvedCopy}>{completedCount} completed visit{completedCount === 1 ? '' : 's'} kept out of this replan.</Text>}
               {plannedAgreements.map((agreement, index) => <View key={agreement.id} style={s.planStop}><Text style={s.planIndex}>{String(index + 1).padStart(2, '0')}</Text><View style={s.stopText}><Text style={s.stopTitle}>{agreement.service_name}</Text><Text style={s.stopMeta}>{workspace.customers.find(item => item.id === agreement.customer_id)?.name ?? 'Sample customer'} · {agreement.estimated_minutes} min</Text></View><Text style={s.servicePrice}>{money(agreement.rate_cents)}</Text></View>)}
               {day.unscheduledVisitIds.length > 0 && <View style={s.warning}><Text style={s.warningTitle}>{day.unscheduledVisitIds.length} sample visit{day.unscheduledVisitIds.length === 1 ? '' : 's'} don’t fit</Text><Text style={s.warningCopy}>The job limit or service hours held these visits out of the draft. Increase capacity and rebuild to review them.</Text></View>}
@@ -894,10 +1078,12 @@ export function WorkingDemo({ onExit }: { onExit?: () => void }) {
             {!approved ? <View style={s.emptyCard}><Text style={s.cardTitle}>This day needs a review.</Text><Text style={s.cardBody}>A draft becomes ready for the worker after the owner approves it.</Text>{role === 'Owner' && <ActionButton label="Review sample plan" onPress={() => chooseTab('Planner')}/>}</View>
               : plannedAgreements.map((agreement, index) => {
                 const complete = completedIds.has(`${agreement.id}:${date}`);
+                const deferred = deferredStops.find(stop => stop.visitId === `${agreement.id}:${date}`);
                 const active = session?.jobId === `${agreement.id}:${date}` && session.status !== 'completed';
+                const scheduled = fullDayRoute.stops.find(stop => stop.id === `${agreement.id}:${date}`);
                 return <View key={agreement.id} style={s.scheduleCard}>
                   <View style={s.scheduleRail}><View style={[s.scheduleDot, complete && s.scheduleDotDone, active && s.scheduleDotActive]}/>{index < plannedAgreements.length - 1 && <View style={s.scheduleLine}/>}</View>
-                  <View style={s.scheduleBody}><View style={s.scheduleTop}><Text style={s.scheduleIndex}>STOP {String(index + 1).padStart(2, '0')}</Text><Tag tone={complete ? 'green' : active ? 'amber' : 'neutral'}>{complete ? 'COMPLETE' : active ? 'IN PROGRESS' : 'PLANNED'}</Tag></View><Text style={s.cardTitle}>{agreement.service_name}</Text><Text style={s.cardBody}>{workspace.customers.find(item => item.id === agreement.customer_id)?.name ?? 'Sample customer'}</Text><Text style={s.cardBody}>{agreement.address}</Text><Text style={s.scheduleMeta}>{formatClock(8 * 60 + plannedAgreements.slice(0, index).reduce((sum, item) => sum + item.estimated_minutes, 0))} sample start · {agreement.estimated_minutes} min service{role === 'Owner' ? ` · ${money(agreement.rate_cents)} sample value` : ''}</Text></View>
+                  <View style={s.scheduleBody}><View style={s.scheduleTop}><Text style={s.scheduleIndex}>STOP {String(index + 1).padStart(2, '0')}</Text><Tag tone={complete ? 'green' : active || deferred ? 'amber' : 'neutral'}>{complete ? 'COMPLETE' : active ? 'IN PROGRESS' : deferred ? 'DEFERRED' : 'PLANNED'}</Tag></View><Text style={s.cardTitle}>{agreement.service_name}</Text><Text style={s.cardBody}>{workspace.customers.find(item => item.id === agreement.customer_id)?.name ?? 'Sample customer'}</Text><Text style={s.cardBody}>{agreement.address}</Text><Text style={s.scheduleMeta}>{deferred ? `${deferredReasonLabel(deferred.reason)} · removed from active route` : scheduled ? `Arrive ${formatClock(scheduled.arrivalMinute)} · service ${formatClock(scheduled.startMinute)}–${formatClock(scheduled.finishMinute)}` : `Schedule estimate unavailable`} · {agreement.estimated_minutes} min service{role === 'Owner' ? ` · ${money(agreement.rate_cents)} sample value` : ''}</Text></View>
                 </View>;
               })}
             {approved && <View style={s.panelSoft}><Text style={s.panelTitle}>Planning note</Text><Text style={s.cardBody}>Stops are ordered by the app’s local sample planner. No road routing, drive time or live location is used.</Text></View>}
@@ -924,7 +1110,7 @@ export function WorkingDemo({ onExit }: { onExit?: () => void }) {
               : !startTimeValid ? 'Enter a valid local start time in the route plan below.'
                 : !selectedLunchSlot?.feasible ? 'Choose a feasible lunch slot in the route plan below.'
                   : !workerRoute.feasible ? 'Resolve the schedule conflict in the route plan below.'
-                    : `${lunchDurationMinutes} min after stop ${routeStops.findIndex(stop => stop.id === selectedLunchSlot?.afterVisitId) + 1} · return ${formatClock(workerEstimatedFinish)}`}
+                    : `${lunchDurationMinutes} min after stop ${planIds.indexOf(selectedLunchSlot?.afterVisitId ?? '') + 1} · return ${formatClock(workerEstimatedFinish)}`}
           </Text>
           <Text style={s.workerActionHint}>{workerDayStartedAt !== null ? 'Continue opens the current or next stop.' : 'Starting records the local day; the visit timer stays stopped.'}</Text>
         </View>
@@ -981,6 +1167,18 @@ export function WorkingDemo({ onExit }: { onExit?: () => void }) {
       <Modal visible={completeOpen} transparent animationType="fade" onRequestClose={() => setCompleteOpen(false)}>
         <View style={s.confirmBackdrop}><View style={s.confirmCard}><Text style={s.modalEyebrow}>COMPLETE SAMPLE VISIT</Text><Text style={s.modalTitle}>Finish this visit?</Text><Text style={s.cardBody}>This marks the local sample visit complete. You can undo it from Today. No invoice or customer message is created.</Text><View style={s.actionRow}><ActionButton label="Go back" secondary onPress={() => setCompleteOpen(false)}/><ActionButton label="Finish visit" disabled={saving} onPress={() => workerAction('complete')}/></View></View></View>
       </Modal>
+      <Modal visible={deferOpen} transparent animationType="fade" onRequestClose={closeDeferModal}>
+        <View style={s.confirmBackdrop}><View style={s.confirmCard}>
+          <Text style={s.modalEyebrow}>LOCAL SAMPLE CHANGE</Text>
+          <Text style={s.modalTitle}>Defer this stop?</Text>
+          <Text style={s.cardBody}>The stop leaves today’s active route but stays assigned here. Inter-stop drive time, lunch placement, and estimated depot return will recalculate. This does not mark the visit complete or skipped, create an invoice, or contact the customer.</Text>
+          <Text style={s.fieldLabel}>Why are you deferring it?</Text>
+          <View style={s.deferReasonList}>{LOCAL_DEMO_DEFER_REASONS.map(item => <Pressable key={item.value} accessibilityRole="radio" accessibilityState={{ selected: deferReason === item.value }} onPress={() => { setDeferReason(item.value); setDeferError(''); }} style={[s.deferReason, deferReason === item.value && s.deferReasonSelected]}><Text style={[s.deferReasonText, deferReason === item.value && s.deferReasonTextSelected]}>{item.label}</Text></Pressable>)}</View>
+          <View style={s.fieldWrap}><Text style={s.fieldLabel}>{deferReason === 'other' ? 'Short note (required)' : 'Optional note'}</Text><TextInput accessibilityLabel={deferReason === 'other' ? 'Deferral note, required' : 'Optional deferral note'} value={deferNote} onChangeText={value => { setDeferNote(value); setDeferError(''); }} placeholder={deferReason === 'other' ? 'Add a short reason' : 'Add context for this local sample'} maxLength={500} multiline style={[s.input, s.multilineInput]}/></View>
+          {!!deferError && <Text style={s.errorText} accessibilityLiveRegion="polite">{deferError}</Text>}
+          <View style={s.actionRow}><ActionButton label="Cancel" secondary onPress={closeDeferModal}/><ActionButton label="Defer stop" disabled={saving} onPress={confirmDeferStop}/></View>
+        </View></View>
+      </Modal>
     </View>
   </SafeAreaView>;
 }
@@ -1032,5 +1230,7 @@ const s = StyleSheet.create({
   workerActionBar: { width: '100%', maxWidth: 800, alignSelf: 'center', minHeight: 80, flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', gap: 12, paddingHorizontal: 16, paddingVertical: 8, borderTopWidth: 1, borderTopColor: palette.line, backgroundColor: palette.paper }, workerActionBarWide: { paddingHorizontal: 24 }, workerActionInfo: { flex: 1, minWidth: 0, gap: 2 }, workerActionEyebrow: { color: palette.pine, fontSize: 8, fontWeight: '900', letterSpacing: 1 }, workerActionSummary: { color: palette.ink, fontSize: 11, lineHeight: 15, fontWeight: '800' }, workerActionHint: { color: palette.quiet, fontSize: 9, lineHeight: 13 }, workerActionButton: { width: 156, flexShrink: 0 },
   bottomNav: { minHeight: 65, flexDirection: 'row', alignItems: 'stretch', paddingHorizontal: 7, paddingTop: 6, paddingBottom: Platform.OS === 'ios' ? 12 : 6, backgroundColor: palette.paper, borderTopWidth: 1, borderTopColor: palette.line }, bottomNavCompact: { paddingHorizontal: 4 }, navItem: { minHeight: 48, minWidth: 52, flex: 1, alignItems: 'center', justifyContent: 'center', paddingHorizontal: 4, borderRadius: 11, gap: 2 }, sideNavItem: { width: '100%', flex: 0, minWidth: 0, flexDirection: 'row', alignItems: 'center', justifyContent: 'flex-start', paddingHorizontal: 12, gap: 12 }, navItemSelected: { backgroundColor: palette.mint }, navPressed: { opacity: 0.7 }, navMark: { color: '#839087', fontSize: 8, fontWeight: '900', letterSpacing: 0.7 }, navMarkSelected: { color: palette.forest }, navLabel: { color: palette.quiet, fontSize: 10, fontWeight: '700' }, navLabelSelected: { color: palette.forest, fontWeight: '900' }, resetNav: { minWidth: 48, minHeight: 48, alignItems: 'center', justifyContent: 'center', borderRadius: 11, gap: 1 }, resetNavCompact: { minWidth: 40 }, resetNavMark: { color: palette.quiet, fontSize: 17, lineHeight: 20 }, resetNavLabel: { color: palette.quiet, fontSize: 9, fontWeight: '700' },
   modalBackdrop: { flex: 1, justifyContent: 'flex-end', backgroundColor: 'rgba(16, 34, 26, 0.42)' }, modal: { width: '100%', maxHeight: '94%', paddingTop: 14, paddingBottom: 12, borderTopLeftRadius: 22, borderTopRightRadius: 22, backgroundColor: palette.paper, overflow: 'hidden' }, modalWide: { maxWidth: 640, maxHeight: '90%', alignSelf: 'center', marginVertical: 'auto', borderRadius: 22 }, modalHeader: { flexDirection: 'row', alignItems: 'center', gap: 10, paddingHorizontal: 18, paddingBottom: 12, borderBottomWidth: 1, borderBottomColor: palette.line }, backButton: { width: 40, height: 40, borderRadius: 12, alignItems: 'center', justifyContent: 'center', backgroundColor: palette.soft }, backText: { color: palette.forest, fontSize: 28, lineHeight: 30 }, modalHeading: { flex: 1, gap: 3 }, modalEyebrow: { color: palette.pine, fontSize: 9, fontWeight: '900', letterSpacing: 1.2 }, modalTitle: { color: palette.ink, fontSize: 20, lineHeight: 26, fontWeight: '800' }, closeButton: { width: 40, height: 40, alignItems: 'center', justifyContent: 'center' }, closeText: { color: palette.quiet, fontSize: 28 }, formScroll: { flexShrink: 1 }, formContent: { paddingHorizontal: 18, paddingTop: 14, paddingBottom: 18, gap: 13 }, formIntro: { color: palette.quiet, fontSize: 13, lineHeight: 19 }, modalActions: { paddingHorizontal: 18, paddingTop: 12, borderTopWidth: 1, borderTopColor: palette.line }, cadenceWrap: { gap: 8 }, cadenceRow: { flexDirection: 'row', gap: 8 }, cadence: { minHeight: 44, flex: 1, justifyContent: 'center', alignItems: 'center', borderWidth: 1, borderColor: palette.line, borderRadius: 10 }, cadenceSelected: { backgroundColor: palette.mint, borderColor: palette.pine }, cadenceText: { color: palette.quiet, fontSize: 13, fontWeight: '700' }, cadenceTextSelected: { color: palette.forest, fontWeight: '900' }, customerChoices: { flexDirection: 'row', flexWrap: 'wrap', gap: 7 }, customerChoice: { minHeight: 40, paddingHorizontal: 11, justifyContent: 'center', borderWidth: 1, borderColor: palette.line, borderRadius: 10, backgroundColor: palette.paper }, customerChoiceSelected: { backgroundColor: palette.mint, borderColor: palette.pine }, customerChoiceText: { color: palette.quiet, fontSize: 11, fontWeight: '700' }, customerChoiceTextSelected: { color: palette.forest, fontWeight: '900' }, confirmBackdrop: { flex: 1, justifyContent: 'center', padding: 22, backgroundColor: 'rgba(16, 34, 26, 0.48)' }, confirmCard: { width: '100%', maxWidth: 460, alignSelf: 'center', padding: 20, gap: 12, borderRadius: 18, backgroundColor: palette.paper },
+  deferredStopCard: { padding: 11, gap: 9, borderRadius: 11, borderWidth: 1, borderColor: '#E9D9B8', backgroundColor: '#FFFCF5' }, deferredStopHead: { flexDirection: 'row', alignItems: 'flex-start', justifyContent: 'space-between', gap: 8 },
+  deferReasonList: { flexDirection: 'row', flexWrap: 'wrap', gap: 7 }, deferReason: { minHeight: 44, minWidth: 120, flexGrow: 1, paddingHorizontal: 10, justifyContent: 'center', borderRadius: 10, borderWidth: 1, borderColor: palette.line, backgroundColor: palette.paper }, deferReasonSelected: { borderColor: palette.pine, backgroundColor: palette.mint }, deferReasonText: { color: palette.quiet, fontSize: 11, fontWeight: '700', textAlign: 'center' }, deferReasonTextSelected: { color: palette.forest, fontWeight: '900' },
   entrySafe: { flex: 1, backgroundColor: palette.canvas, justifyContent: 'center', padding: 22 }, entry: { width: '100%', maxWidth: 560, alignSelf: 'center', gap: 18 }, entryTitle: { color: palette.ink, fontSize: 38, lineHeight: 44, letterSpacing: -1.5, fontWeight: '800', marginTop: 8 }, entryCopy: { color: palette.quiet, fontSize: 16, lineHeight: 24, marginTop: -10 }, entryCard: { padding: 17, borderRadius: 16, backgroundColor: palette.paper, borderWidth: 1, borderColor: palette.line, gap: 7 }, entryCardTitle: { color: palette.ink, fontSize: 14, fontWeight: '800' }, entryCardCopy: { color: palette.quiet, fontSize: 13, lineHeight: 20 }, entryFoot: { color: palette.quiet, fontSize: 11, lineHeight: 17, textAlign: 'center' },
 });
